@@ -1,0 +1,40 @@
+# Dev overrides: hot reload, expose ports, skip nginx, RW mounts
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#    or: make dev
+
+services:
+  db:
+    ports:
+      - "5432:5432"  # Expose for local pgAdmin / DBeaver
+    command:
+      - postgres
+      - -c
+      - log_statement=all   # log every query in dev
+      - -c
+      - shared_buffers=1GB
+
+  app:
+    build:
+      target: runtime
+    command: >
+      uvicorn app:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app
+      --log-level debug
+    environment:
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+    volumes:
+      # Hot-reload: bind-mount source code into container
+      - .:/app
+      # Override read-only dataset mounts with read-write in dev
+      - ${MUSIC_FILES_PATH:-./music_files}:/app/music_files
+      - ${ALBUM_ART_PATH:-./album_art}:/app/album_art
+    ports:
+      - "8000:8000"  # Direct access without nginx
+
+  nginx:
+    profiles:
+      - donotstart  # Nginx disabled in dev

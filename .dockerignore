@@ -1,0 +1,68 @@
+# Virtual envs & caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.hypothesis/
+htmlcov/
+
+# Large runtime data — bind-mounted at runtime (see §7 of PLAN_DOCKERIZATION)
+music_files/
+album_art/
+artist_images/
+models_cache/
+checkpoints/
+data/*.npy
+data/*.parquet
+var/
+logs/
+*.log
+
+# Git & IDE
+.git/
+.github/workflows/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets — never bake into image
+.env
+.env.dev
+.env.local
+.env.*.local
+.env.production
+.env.staging
+secrets/
+*.pem
+*.key
+cookies.txt
+
+# Docs & tests (keep README for metadata)
+docs/
+test/
+*.md
+!README.md
+
+# Docker meta
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+._*
+
+# Misc
+*.bak
+*.tmp
+*.part
+node_modules/

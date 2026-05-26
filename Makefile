@@ -19,6 +19,9 @@ init: ## Create var/ structure + secrets on first setup
 	fi
 	@echo "Brightify directory structure ready"
 
+setup: ## First-time full setup (init + db + migrate + seed + warmup + start)
+	bash scripts/initial-setup.sh
+
 dev: init ## Start dev stack with hot reload (foreground)
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 

@@ -1,0 +1,193 @@
+name: brightify
+
+x-app-base: &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      BUILDKIT_INLINE_CACHE: 1
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    REDIS_URL: redis://redis:6379/0
+    ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,https://localhost}
+    BRIGHTIFY_ADMIN_KEY: ${BRIGHTIFY_ADMIN_KEY:-}
+    HF_HOME: /models/huggingface
+    TRANSFORMERS_CACHE: /models/huggingface
+    ESSENTIA_MODEL_CACHE: /app/models_cache
+    PYTHONUNBUFFERED: "1"
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  # ===========================================================================
+  # PostgreSQL + pgvector
+  # ===========================================================================
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: brightify_db
+    restart: unless-stopped
+    shm_size: 2gb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=4GB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - work_mem=64MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend
+
+  # ===========================================================================
+  # Redis (rate limiter + cache)
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: brightify_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend
+
+  # ===========================================================================
+  # Migration (one-shot sidecar)
+  # ===========================================================================
+  migrate:
+    <<: *app-base
+    container_name: brightify_migrate
+    command: alembic upgrade head
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - backend
+
+  # ===========================================================================
+  # App (FastAPI + uvicorn)
+  # ===========================================================================
+  app:
+    <<: *app-base
+    container_name: brightify_app
+    expose:
+      - "8000"
+    volumes:
+      # Dataset bind mounts — read-only; paths driven by .env (see .env.example)
+      - ${MUSIC_FILES_PATH:-./music_files}:/app/music_files:ro
+      - ${ALBUM_ART_PATH:-./album_art}:/app/album_art:ro
+      - ${ARTIST_IMAGES_PATH:-./artist_images}:/app/artist_images:ro
+      - ${CHECKPOINTS_PATH:-./checkpoints}:/app/checkpoints:ro
+      - ${PROCESSED_PATH:-./data}:/app/data:ro
+      - ${ESSENTIA_MODELS_PATH:-./models_cache}:/app/models_cache:ro
+      - ${ANNOTATIONS_PATH:-./var/runtime/annotations}:/app/annotations:ro
+      - ${TRAINED_MODELS_PATH:-./var/runtime/trained_models}:/app/var/trained_models:ro
+      # Backtest reports (writable for CI)
+      - ${BACKTEST_PATH:-./var/runtime/backtest}:/app/var/backtest
+      # HuggingFace model cache (named volume, bind-backed)
+      - hf_cache:/models/huggingface
+      # App logs (writable)
+      - ${LOGS_PATH:-./logs}/app:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - frontend
+      - backend
+
+  # ===========================================================================
+  # Nginx reverse proxy
+  # ===========================================================================
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: brightify_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/letsencrypt:ro
+      - ./nginx/www:/var/www/certbot:ro
+      - ./static:/var/www/static:ro
+      - ${LOGS_PATH:-./logs}/nginx:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - frontend
+
+# =============================================================================
+# Named volumes (bind-backed — portable, backup like a folder)
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DB_DATA_PATH:-./var/volumes/postgres_data}
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:-./var/volumes/redis_data}
+  hf_cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${HF_CACHE_PATH:-./var/volumes/hf_cache}
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true  # no internet egress from db/redis
