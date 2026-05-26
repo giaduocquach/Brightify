@@ -5,7 +5,7 @@
 services:
   db:
     ports:
-      - "5432:5432"  # Expose for local pgAdmin / DBeaver
+      - "5433:5432"  # Port 5432 may be taken by local postgres; use 5433 on host
     command:
       - postgres
       - -c

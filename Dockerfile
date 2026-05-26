@@ -2,7 +2,10 @@
 # =============================================================================
 # Stage 1: Builder — compile Python wheels
 # =============================================================================
-FROM python:3.12-slim-bookworm AS builder
+# Force linux/amd64: essentia-tensorflow has no linux/aarch64 wheel.
+# On Apple Silicon (arm64) Docker Desktop uses QEMU to emulate — slower build
+# but correct for Linux x86_64 production servers.
+FROM --platform=linux/amd64 python:3.12-slim-bookworm AS builder
 
 ENV PIP_NO_CACHE_DIR=0 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -29,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # =============================================================================
 # Stage 2: Runtime — lean image, no build tools
 # =============================================================================
-FROM python:3.12-slim-bookworm AS runtime
+FROM --platform=linux/amd64 python:3.12-slim-bookworm AS runtime
 
 # Runtime system libs only
 RUN apt-get update && apt-get install -y --no-install-recommends \
