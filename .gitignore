@@ -85,6 +85,7 @@ var/
 *.sqlite3
 *.db
 *.sql
+!db/init/*.sql
 *.dump
 postgres_data/
 pg_data/

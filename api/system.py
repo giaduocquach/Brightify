@@ -5,7 +5,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import hmac
-import os
 import numpy as np
 import pandas as pd
 import time as _time
@@ -13,8 +12,8 @@ import time as _time
 import config
 from api.utils import dataframe_to_dict
 
-# Admin access via API key in env (no user auth needed)
-_ADMIN_KEY = os.environ.get("BRIGHTIFY_ADMIN_KEY", "")
+# Admin access via API key — supports Docker secrets via config._read_secret_or_env
+_ADMIN_KEY = config.BRIGHTIFY_ADMIN_KEY
 
 
 def require_admin(request: Request):

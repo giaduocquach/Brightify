@@ -4,6 +4,23 @@ Centralized settings for data processing and recommendation
 Version 7.1
 """
 
+import os
+
+
+def _read_secret_or_env(name: str, default: str = "") -> str:
+    """Read a value from a Docker secret file or fall back to an env var."""
+    file_path = os.environ.get(f"{name}_FILE")
+    if file_path:
+        with open(file_path) as f:
+            return f.read().strip()
+    return os.environ.get(name, default)
+
+
+# ============================================================================
+# Secrets
+# ============================================================================
+BRIGHTIFY_ADMIN_KEY = _read_secret_or_env("BRIGHTIFY_ADMIN_KEY")
+
 # ============================================================================
 # File Paths
 # ============================================================================
