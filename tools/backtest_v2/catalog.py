@@ -195,3 +195,18 @@ class Catalog:
         if result is None or (hasattr(result, 'empty') and result.empty):
             return []
         return result['original_index'].tolist()
+
+    def recommend_by_colors(
+        self,
+        hex_color: str,
+        top_k: int = 10,
+    ) -> List[int]:
+        """Return list of top_k recommended song original_indices for a color query.
+
+        Delegates to MusicRecommender.recommend_by_colors() which takes a color hex
+        string and routes through the color→V-A→emotion pipeline (Pillar C / E path).
+        """
+        result = self.rec.recommend_by_colors(hex_color, top_k=top_k)
+        if not result or not result.get("songs"):
+            return []
+        return [s["song_index"] for s in result["songs"]]

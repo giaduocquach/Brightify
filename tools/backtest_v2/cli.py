@@ -2588,8 +2588,10 @@ def cmd_report(args: argparse.Namespace) -> int:
     print("  comparison correction. With 6 simultaneous pillar tests the family-wise")
     print("  error rate is ~26%; a Bonferroni target would be α=0.05/6≈0.008.")
     print("  Pillar C / Pillar E: CI=[0,0] is expected — RRF and CLAP do not affect")
-    print("  recommend_by_song() paths tested by editorial GT. Their benefit is in")
-    print("  recommend_by_colors() / search queries (untested path).")
+    print("  recommend_by_song() tested by editorial GT. Color-path tests available:")
+    print("    python -m tools.backtest_v2 pillar-c-color  (RRF on color path)")
+    print("    python -m tools.backtest_v2 pillar-e-color  (CLAP on color path)")
+    print("  These use a 24-color V-A proximity GT (engine-derived-color, supplementary).")
     print()
 
     # Save to JSON
@@ -2623,6 +2625,287 @@ def cmd_check_mood_tags(args: argparse.Namespace) -> int:
     result = discriminativeness_check(df)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["verdict"] != "reject" else 1
+
+
+def cmd_run_pillar_c_color(args: argparse.Namespace) -> int:
+    """Pillar C supplementary: test RRF on recommend_by_colors() path.
+
+    Builds (or loads) a color→V-A GT from 24 representative hex colors.
+    Compares base (no-RRF) vs treatment (RRF on) for recommend_by_colors().
+
+    This is supplementary evidence — Pillar C already PASSED the no-regression
+    song-path gate. This test validates its actual target path.
+    No config changes are triggered.
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.color_emotion_gt import (
+        build_color_gt, load_color_gt, GT_FILE as COLOR_GT_FILE,
+    )
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.stats import paired_bootstrap
+
+    print("[pillar_c_color] Building isolated v7.2 catalog (all pillars off)...")
+    catalog = Catalog.build_isolated(dict(V72_BASELINE_FLAGS))
+
+    # Build or load color GT
+    rebuild = getattr(args, "rebuild", False)
+    if not rebuild and os.path.exists(COLOR_GT_FILE):
+        print(f"[pillar_c_color] Loading existing color GT from {COLOR_GT_FILE}")
+        gt_mapping, gt_meta = load_color_gt(COLOR_GT_FILE)
+    else:
+        print("[pillar_c_color] Building color GT (24 representative hex colors)...")
+        gt_mapping, gt_meta = build_color_gt(catalog, save_path=COLOR_GT_FILE)
+
+    print(f"[pillar_c_color] Color GT: {len(gt_mapping)} color queries "
+          f"(threshold={gt_meta['va_proximity_threshold']})")
+    print(f"[pillar_c_color] Warning: {gt_meta['warning'][:80]}...")
+
+    base_rec_flags  = {"ENABLE_RRF": False, "DIVERSITY_METHOD": "greedy", "ENABLE_VN_CONTEXT": False}
+    treat_rec_flags = {"ENABLE_RRF": True,  "DIVERSITY_METHOD": "greedy", "ENABLE_VN_CONTEXT": False}
+
+    colors = list(gt_mapping.keys())
+
+    # --- Base arm (no RRF) ---
+    print("\n[pillar_c_color] Base arm (recommend_by_colors, no RRF)...")
+    ndcg_base: list = []
+    with _pinned_recommend_flags(**base_rec_flags):
+        for hex_color in colors:
+            relevant = set(gt_mapping[hex_color])
+            recs = catalog.recommend_by_colors(hex_color, top_k=10)
+            ndcg_base.append(ndcg_at_k(recs, relevant, 10) if recs else 0.0)
+
+    # --- Treatment arm (RRF on) ---
+    print("[pillar_c_color] Treatment arm (recommend_by_colors, RRF on)...")
+    ndcg_rrf: list = []
+    with _pinned_recommend_flags(**treat_rec_flags):
+        for hex_color in colors:
+            relevant = set(gt_mapping[hex_color])
+            recs = catalog.recommend_by_colors(hex_color, top_k=10)
+            ndcg_rrf.append(ndcg_at_k(recs, relevant, 10) if recs else 0.0)
+
+    # Standard paired bootstrap (color queries are independent — no cluster structure)
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_base, ndcg_rrf, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base))
+    mean_rrf  = float(np.mean(ndcg_rrf))
+
+    print(f"\n[pillar_c_color] Paired bootstrap NDCG@10 "
+          f"(N={len(ndcg_base)} color queries, n_boots=10000):")
+    print(f"  base (no-RRF)  mean = {mean_base:.5f}")
+    print(f"  treat (RRF)    mean = {mean_rrf:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    significant = ci_low > 0
+    verdict = (
+        "CONFIRMS: RRF improves color→V-A alignment on recommend_by_colors() path"
+        if significant else (
+            "INCONCLUSIVE: delta is positive but CI crosses 0 — "
+            "RRF may help but evidence is weak on 24-color GT"
+            if delta > 0 else
+            "NEGATIVE: RRF does not improve (or slightly hurts) color path on V-A GT"
+        )
+    )
+    print(f"  Verdict: {verdict}")
+    print("\n  [INFO] This is supplementary evidence only — Pillar C already PASS on "
+          "song path. No config changes triggered.")
+
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/pillar_C_color"
+    os.makedirs(output_dir, exist_ok=True)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "pillar_C_color",
+            "n_catalog": catalog.n,
+            "n_color_queries": len(ndcg_base),
+            "top_k": 10,
+            "ground_truth": "color_emotion_gt_v1",
+            "gt_validity": "engine-derived-color",
+            "gt_warning": gt_meta["warning"],
+            "pillar_c_color": {
+                "baseline": "v7.2_isolated (all pillars off)",
+                "bootstrap_type": "standard-paired (color queries are independent)",
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base),
+                    "n_boots": 10_000,
+                    "mean_ndcg_base": round(mean_base, 6),
+                    "mean_ndcg_rrf":  round(mean_rrf, 6),
+                    "delta": round(float(delta), 6),
+                    "ci95": [round(float(ci_low), 6), round(float(ci_high), 6)],
+                    "significant": significant,
+                },
+                "verdict": verdict,
+                "config_change": "none — supplementary evidence",
+            },
+        },
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+    print(f"\n[pillar_c_color] Report saved to {json_path}")
+    return 0
+
+
+def cmd_run_pillar_e_color(args: argparse.Namespace) -> int:
+    """Pillar E supplementary: test CLAP on recommend_by_colors() path.
+
+    Builds (or loads) a color→V-A GT from 24 representative hex colors.
+    Compares lexicon-only vs CLAP emotion for recommend_by_colors().
+
+    This is supplementary evidence — Pillar E already PASSED the no-regression
+    song-path gate. This test validates its actual target path.
+    No config changes are triggered.
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import config as _cfg
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.color_emotion_gt import (
+        build_color_gt, load_color_gt, GT_FILE as COLOR_GT_FILE,
+    )
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.stats import paired_bootstrap
+
+    if not os.path.exists(_cfg.CLAP_EMOTIONS_FILE):
+        print(f"[pillar_e_color] CLAP emotions file not found: {_cfg.CLAP_EMOTIONS_FILE}")
+        print("[pillar_e_color] Run: python -m tools.extract_clap_emotions")
+        return 1
+
+    # --- Build two catalog arms ---
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_CLAP_EMOTION": True}
+
+    print("[pillar_e_color] Building lexicon-only catalog (v7.2)...")
+    cat_lexicon = Catalog.build_isolated(base_flags)
+    print("[pillar_e_color] Building CLAP catalog (v7.2 + CLAP emotion)...")
+    cat_clap = Catalog.build_isolated(treat_flags)
+
+    # Build or load color GT (use lexicon catalog — GT uses V-A only, not fused_emotion)
+    rebuild = getattr(args, "rebuild", False)
+    if not rebuild and os.path.exists(COLOR_GT_FILE):
+        print(f"[pillar_e_color] Loading existing color GT from {COLOR_GT_FILE}")
+        gt_mapping, gt_meta = load_color_gt(COLOR_GT_FILE)
+    else:
+        print("[pillar_e_color] Building color GT using lexicon catalog...")
+        gt_mapping, gt_meta = build_color_gt(cat_lexicon, save_path=COLOR_GT_FILE)
+
+    print(f"[pillar_e_color] Color GT: {len(gt_mapping)} color queries "
+          f"(threshold={gt_meta['va_proximity_threshold']})")
+    print(f"[pillar_e_color] Warning: {gt_meta['warning'][:80]}...")
+
+    base_rec_flags  = _recommend_time_subset(base_flags)
+    treat_rec_flags = _recommend_time_subset(treat_flags)
+
+    colors = list(gt_mapping.keys())
+
+    # --- Lexicon arm ---
+    print("\n[pillar_e_color] Lexicon arm (recommend_by_colors, lexicon emotion)...")
+    ndcg_lex: list = []
+    with _pinned_recommend_flags(**base_rec_flags):
+        for hex_color in colors:
+            relevant = set(gt_mapping[hex_color])
+            recs = cat_lexicon.recommend_by_colors(hex_color, top_k=10)
+            ndcg_lex.append(ndcg_at_k(recs, relevant, 10) if recs else 0.0)
+
+    # --- CLAP arm ---
+    print("[pillar_e_color] CLAP arm (recommend_by_colors, CLAP emotion)...")
+    ndcg_clap: list = []
+    with _pinned_recommend_flags(**treat_rec_flags):
+        for hex_color in colors:
+            relevant = set(gt_mapping[hex_color])
+            recs = cat_clap.recommend_by_colors(hex_color, top_k=10)
+            ndcg_clap.append(ndcg_at_k(recs, relevant, 10) if recs else 0.0)
+
+    # Standard paired bootstrap (color queries are independent)
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_lex, ndcg_clap, n_boot=10_000)
+    mean_lex  = float(np.mean(ndcg_lex))
+    mean_clap = float(np.mean(ndcg_clap))
+
+    print(f"\n[pillar_e_color] Paired bootstrap NDCG@10 "
+          f"(N={len(ndcg_lex)} color queries, n_boots=10000):")
+    print(f"  lexicon     mean = {mean_lex:.5f}")
+    print(f"  CLAP        mean = {mean_clap:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    significant = ci_low > 0
+    verdict = (
+        "CONFIRMS: CLAP improves color→V-A alignment on recommend_by_colors() path"
+        if significant else (
+            "INCONCLUSIVE: delta is positive but CI crosses 0 — "
+            "CLAP may help but evidence is weak on 24-color GT"
+            if delta > 0 else
+            "NEGATIVE: CLAP does not improve (or slightly hurts) color path on V-A GT"
+        )
+    )
+    print(f"  Verdict: {verdict}")
+    print("\n  [INFO] This is supplementary evidence only — Pillar E already PASS on "
+          "song path. No config changes triggered.")
+
+    # Emotion distribution shift
+    clap_dist = cat_clap.df.get("fused_emotion", None)
+    if clap_dist is not None:
+        top5 = clap_dist.value_counts(normalize=True).head(5)
+        dist_str = "  ".join(f"{e}:{v*100:.0f}%" for e, v in top5.items())
+        print(f"\n[pillar_e_color] CLAP emotion distribution (top 5): {dist_str}")
+
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/pillar_E_color"
+    os.makedirs(output_dir, exist_ok=True)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "pillar_E_color",
+            "n_catalog": cat_clap.n,
+            "n_color_queries": len(ndcg_lex),
+            "top_k": 10,
+            "ground_truth": "color_emotion_gt_v1",
+            "gt_validity": "engine-derived-color",
+            "gt_warning": gt_meta["warning"],
+            "pillar_e_color": {
+                "clap_model": _cfg.CLAP_MODEL,
+                "clap_emotions_file": _cfg.CLAP_EMOTIONS_FILE,
+                "baseline": "v7.2_isolated (lexicon emotion, all other pillars off)",
+                "bootstrap_type": "standard-paired (color queries are independent)",
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_lex),
+                    "n_boots": 10_000,
+                    "mean_ndcg_lexicon": round(mean_lex, 6),
+                    "mean_ndcg_clap":    round(mean_clap, 6),
+                    "delta": round(float(delta), 6),
+                    "ci95": [round(float(ci_low), 6), round(float(ci_high), 6)],
+                    "significant": significant,
+                },
+                "verdict": verdict,
+                "config_change": "none — supplementary evidence",
+            },
+        },
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+    print(f"\n[pillar_e_color] Report saved to {json_path}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2693,6 +2976,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_vas = sub.add_parser("va-sanity", help="build/evaluate VA sanity floor (engine-derived)")
     p_vas.add_argument("--rebuild", action="store_true", help="force rebuild even if file exists")
     p_vas.set_defaults(func=cmd_va_sanity)
+
+    p_pcc = sub.add_parser(
+        "pillar-c-color",
+        help="Pillar C supplementary: RRF on recommend_by_colors() path (engine-derived-color GT)",
+    )
+    p_pcc.add_argument("--output", help="override output directory")
+    p_pcc.add_argument("--rebuild", action="store_true", help="force rebuild color GT")
+    p_pcc.set_defaults(func=cmd_run_pillar_c_color)
+
+    p_pec = sub.add_parser(
+        "pillar-e-color",
+        help="Pillar E supplementary: CLAP on recommend_by_colors() path (engine-derived-color GT)",
+    )
+    p_pec.add_argument("--output", help="override output directory")
+    p_pec.add_argument("--rebuild", action="store_true", help="force rebuild color GT")
+    p_pec.set_defaults(func=cmd_run_pillar_e_color)
 
     return parser
 
