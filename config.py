@@ -89,13 +89,26 @@ WEIGHTS_MOOD_QUERY = [0.50, 0.30, 0.20]   # User selects mood
 WEIGHTS_SONG_QUERY = [0.40, 0.40, 0.20]   # Similar song search
 WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search
 
-# recommend_by_song 7-signal fusion weights (Laurier et al. 2009 adaptive fusion).
+# recommend_by_song fusion weights (Laurier et al. 2009 adaptive fusion).
 # Kept in config so ablation can zero out a signal and the optimizer can search.
-# Signal order (with_lyrics): timbral, rhythmic, tonal, lyrics, va, emotion, mood
-# Signal order (audio_only):  timbral, rhythmic, tonal, va, emotion, mood (no lyrics)
+#
+# 7-signal (MERT disabled):
+#   with_lyrics: timbral, rhythmic, tonal, lyrics, va, emotion, mood
+#   audio_only:  timbral, rhythmic, tonal, va, emotion, mood
+# 8-signal (MERT enabled, ENABLE_MERT=True):
+#   with_lyrics: timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert
+#   audio_only:  timbral, rhythmic, tonal, va, emotion, mood, mert
 RECO_SONG_WEIGHTS = {
     "with_lyrics": [0.12, 0.10, 0.08, 0.28, 0.17, 0.15, 0.10],
     "audio_only":  [0.20, 0.15, 0.10, 0.25, 0.18, 0.12],
+}
+
+# 8-signal weights when ENABLE_MERT=True (Li et al. 2023 — reduce timbral/rhythmic
+# because MERT already captures those sub-spaces via RVQ+CQT dual teacher).
+# Σ = 1.00 in both variants.
+RECO_SONG_WEIGHTS_MERT = {
+    "with_lyrics": [0.08, 0.07, 0.05, 0.25, 0.15, 0.13, 0.10, 0.17],
+    "audio_only":  [0.12, 0.10, 0.06, 0.22, 0.15, 0.10, 0.25],
 }
 
 # ============================================================================
@@ -192,6 +205,16 @@ DPI = 100
 
 # Color palette for plots
 COLOR_PALETTE = 'husl'
+
+# ============================================================================
+# Pillar A — MERT Audio Embedding (Li et al. 2023, arXiv 2306.00107)
+# ============================================================================
+ENABLE_MERT = os.environ.get("ENABLE_MERT", "False") == "True"
+MERT_MODEL = "m-a-p/MERT-v1-95M"
+MERT_EMBEDDINGS_FILE = "data/mert_embeddings.npy"
+MERT_EMBEDDINGS_META_FILE = "data/mert_metadata.json"
+MERT_LAYER = 8           # 0-indexed hidden state layer (of 12) — best for MIR tasks
+MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
 
 # ============================================================================
 # Pillar B — Vietnamese NLP Upgrade (ViDeBERTa / ViSoBERT)

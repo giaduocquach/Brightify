@@ -114,6 +114,23 @@ class MusicRecommender:
         else:
             self.artists = None
 
+        # Pillar A — MERT audio embeddings (Li et al. 2023)
+        self.mert_matrix = None
+        if ENABLE_MERT and os.path.exists(MERT_EMBEDDINGS_FILE):
+            try:
+                mert_raw = np.load(MERT_EMBEDDINGS_FILE)
+                if mert_raw.shape[0] == self.n_songs and mert_raw.shape[1] == 768:
+                    norms = np.linalg.norm(mert_raw, axis=1, keepdims=True)
+                    norms[norms == 0] = 1
+                    self.mert_matrix = (mert_raw / norms).astype(np.float32)
+                    logger.info(f"[MERT] Loaded {self.mert_matrix.shape} embeddings")
+                else:
+                    logger.warning(
+                        f"[MERT] Shape mismatch {mert_raw.shape} vs ({self.n_songs}, 768) — disabled"
+                    )
+            except Exception as e:
+                logger.warning(f"[MERT] Load failed: {e} — disabled")
+
         logger.info(f"Recommender ready — {self.n_songs:,} songs loaded")
 
     def _normalize_audio_features(self):
@@ -515,13 +532,22 @@ class MusicRecommender:
         if query_mood:
             mood_match = (self._mood_labels == query_mood).astype(float)
 
+        # === Signal 8: MERT audio embedding (Li et al. 2023) — Pillar A ===
+        use_mert = self.mert_matrix is not None
+        if use_mert:
+            mert_sim = self.mert_matrix @ self.mert_matrix[song_idx]  # (n_songs,)
+            mert_sim = (mert_sim + 1.0) / 2.0                         # [-1,1] → [0,1]
+
         # === Adaptive fusion (Laurier et al. 2009) ===
-        # Weights live in config.RECO_SONG_WEIGHTS; `weights` overrides them
-        # (used by ablation to zero a signal and by the weight optimizer).
+        # Weights live in config; `weights` arg overrides (used by ablation / optimizer).
+        if use_mert:
+            w_dict = RECO_SONG_WEIGHTS_MERT
+        else:
+            w_dict = RECO_SONG_WEIGHTS
+
         if has_lyrics:
-            # Full multimodal: lyrics carry strongest mood signal
-            w = weights if weights is not None else RECO_SONG_WEIGHTS["with_lyrics"]
-            final_scores = (
+            w = weights if weights is not None else w_dict["with_lyrics"]
+            base = (
                 w[0] * timbral_sim +
                 w[1] * rhythmic_sim +
                 w[2] * tonal_sim +
@@ -530,10 +556,10 @@ class MusicRecommender:
                 w[5] * emotion_sim +
                 w[6] * mood_match
             )
+            final_scores = base + (w[7] * mert_sim if use_mert and len(w) > 7 else 0)
         else:
-            # Audio-only fallback (no lyrics signal)
-            w = weights if weights is not None else RECO_SONG_WEIGHTS["audio_only"]
-            final_scores = (
+            w = weights if weights is not None else w_dict["audio_only"]
+            base = (
                 w[0] * timbral_sim +
                 w[1] * rhythmic_sim +
                 w[2] * tonal_sim +
@@ -541,6 +567,7 @@ class MusicRecommender:
                 w[4] * emotion_sim +
                 w[5] * mood_match
             )
+            final_scores = base + (w[6] * mert_sim if use_mert and len(w) > 6 else 0)
 
         # Exclude reference song
         final_scores[song_idx] = -1

@@ -994,6 +994,258 @@ def _update_config_pillar_b() -> None:
         fh.write(new_src)
 
 
+def cmd_run_pillar_a(args: argparse.Namespace) -> int:
+    """Pillar A: compare 7-signal (no MERT) vs 8-signal (with MERT) recommend_by_song.
+
+    Prerequisites:
+        python -m tools.extract_mert_embeddings
+    Gates (all must pass):
+        - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.003
+        - ILD_lyrics: mert >= baseline * 0.95  (no regression)
+        - Coverage: mert >= baseline * 0.95
+    """
+    import datetime
+    import json
+    import os
+    import sys
+    import time
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import config as cfg
+
+    mert_path = cfg.MERT_EMBEDDINGS_FILE
+    if not os.path.exists(mert_path):
+        print(f"[pillar_a] ERROR: MERT embeddings not found: {mert_path}")
+        print("[pillar_a] Run first:  python -m tools.extract_mert_embeddings")
+        return 1
+
+    mert_meta_path = cfg.MERT_EMBEDDINGS_META_FILE
+    if os.path.exists(mert_meta_path):
+        with open(mert_meta_path) as fh:
+            mert_meta = json.load(fh)
+        coverage = mert_meta.get("coverage_pct", 0)
+        if coverage < 99.0:
+            print(f"[pillar_a] WARNING: MERT coverage is {coverage:.1f}% < 99% — continuing anyway")
+        else:
+            print(f"[pillar_a] MERT coverage: {coverage:.1f}%")
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.baselines.pillar_a import PillarABaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.core import _run_system
+
+    # Load editorial GT
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_a] GT file not found: {GT_FILE}")
+        print("[pillar_a] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_a] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    # Base catalog (7-signal, MERT disabled)
+    print("[pillar_a] Loading base catalog (7-signal)...")
+    cat_base = Catalog.load()
+
+    # MERT catalog (8-signal, MERT enabled)
+    print(f"[pillar_a] Loading MERT catalog ({mert_path})...")
+    cat_mert = Catalog.load_with_mert(mert_path)
+
+    sys_base = BrightifyBaseline(cat_base)
+    sys_mert = PillarABaseline(cat_mert)
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_a] Computing per-query NDCG@10 (7-signal vs 8-signal)...")
+    ndcg_base_pq: list = []
+    ndcg_mert_pq: list = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rb = sys_base.recommend(seed_idx, top_k=10)
+        rm = sys_mert.recommend(seed_idx, top_k=10)
+        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
+        ndcg_mert_pq.append(ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_mert_pq, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_mert = float(np.mean(ndcg_mert_pq))
+
+    print(f"\n[pillar_a] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"  baseline (7-signal) mean = {mean_base:.5f}")
+    print(f"  pillar_a (8-signal) mean = {mean_mert:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD and Coverage comparison ---
+    print("\n[pillar_a] Computing ILD + coverage (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_base_vals, ild_mert_vals = [], []
+    all_recs_base, all_recs_mert = [], []
+    for s in sample_seeds:
+        rb = sys_base.recommend(s, top_k=10)
+        rm = sys_mert.recommend(s, top_k=10)
+        if rb:
+            ild_base_vals.append(ild_lyrics(rb, cat_base))
+            all_recs_base.append(rb)
+        if rm:
+            ild_mert_vals.append(ild_lyrics(rm, cat_mert))
+            all_recs_mert.append(rm)
+
+    ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
+    ild_mert = float(np.mean(ild_mert_vals)) if ild_mert_vals else 0.0
+    cov_base = len(set(i for r in all_recs_base for i in r)) / cat_base.n
+    cov_mert = len(set(i for r in all_recs_mert for i in r)) / cat_mert.n
+
+    print(f"  ILD_lyrics  base={ild_base:.5f}  mert={ild_mert:.5f}  threshold={ild_base*0.95:.5f}")
+    print(f"  Coverage    base={cov_base:.4f}  mert={cov_mert:.4f}  threshold={cov_base*0.95:.4f}")
+
+    # --- Gate evaluation ---
+    gate_ndcg     = ci_low > -0.003
+    gate_ild      = ild_mert >= ild_base * 0.95
+    gate_coverage = cov_mert >= cov_base * 0.95
+    gate_pass     = gate_ndcg and gate_ild and gate_coverage
+
+    verdict = "PASS — set ENABLE_MERT=True" if gate_pass else "FAIL — keep ENABLE_MERT=False"
+
+    print(f"\n[pillar_a] Gate results:")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  ILD  {ild_mert:.5f} >= {ild_base*0.95:.5f}:  {'PASS' if gate_ild else 'FAIL'}")
+    print(f"  Cov  {cov_mert:.4f} >= {cov_base*0.95:.4f}:   {'PASS' if gate_coverage else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_4 report ---
+    output_dir = getattr(args, 'output', None) or "var/runtime/backtest/reports/iter_4_pillar_A"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            queries = json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(cat_mert.df, n=500, seed=42)
+
+    print(f"\n[pillar_a] Computing property metrics ({len(queries)} queries)...")
+    prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
+    prop_mert = _run_system(sys_mert, queries, cat_mert, top_k=10)
+
+    # Load iter_3 for context
+    iter3_path = "var/runtime/backtest/reports/iter_3_pillar_D/report.json"
+    iter3_report: dict = {}
+    if os.path.exists(iter3_path):
+        with open(iter3_path) as fh:
+            iter3_report = json.load(fh)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_4_pillar_A",
+            "n_catalog": cat_mert.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_a": {
+                "mert_embeddings_file": mert_path,
+                "mert_model": cfg.MERT_MODEL,
+                "mert_layer": cfg.MERT_LAYER,
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_base": mean_base,
+                    "mean_ndcg_mert": mean_mert,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_base": ild_base,
+                    "ild_lyrics_mert": ild_mert,
+                    "gate_pass": gate_ild,
+                },
+                "coverage_comparison": {
+                    "coverage_base": cov_base,
+                    "coverage_mert": cov_mert,
+                    "gate_pass": gate_coverage,
+                },
+            },
+        },
+        "systems": {
+            "brightify_7sig": prop_base,
+            "brightify_mert": prop_mert,
+        },
+        "latency": iter3_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_4_pillar_A",
+    })
+
+    class _FakeRep:
+        meta    = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config  = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_a] Reports saved to {output_dir}/")
+
+    if gate_pass:
+        _update_config_enable_mert(True)
+        print("[pillar_a] config.ENABLE_MERT set to True.")
+    else:
+        print("[pillar_a] Gate FAILED — config.ENABLE_MERT remains False.")
+
+    return 0 if gate_pass else 1
+
+
+def _update_config_enable_mert(enable: bool) -> None:
+    import re
+    value = "True" if enable else "False"
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(
+        r'(ENABLE_MERT\s*=\s*os\.environ\.get\("ENABLE_MERT",\s*")[^"]*(")\s*\)\s*==\s*"True")',
+        lambda m: m.group(0),   # pattern is env-driven, just document
+        src,
+    )
+    # Simpler: also allow a plain ENABLE_MERT = False / True line
+    new_src2, n2 = re.subn(
+        r'ENABLE_MERT\s*=\s*os\.environ\.get\("ENABLE_MERT",\s*"(?:True|False)"\)\s*==\s*"True"',
+        f'ENABLE_MERT = os.environ.get("ENABLE_MERT", "{value}") == "True"',
+        src,
+    )
+    if n2 > 0:
+        with open("config.py", "w", encoding="utf-8") as fh:
+            fh.write(new_src2)
+        print(f"[pillar_a] config.py: ENABLE_MERT default = {value}")
+    else:
+        print(f"[pillar_a] WARNING: could not update ENABLE_MERT default in config.py")
+
+
 def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     """Pillar D: compare greedy vs MMR diversity reranking.
 
@@ -1297,6 +1549,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pd = sub.add_parser("run-pillar-d", help="Pillar D: greedy vs MMR diversity reranking")
     p_pd.add_argument("--output", help="override output directory (default: iter_3_pillar_D)")
     p_pd.set_defaults(func=cmd_run_pillar_d)
+
+    p_pa = sub.add_parser("run-pillar-a", help="Pillar A: 7-signal vs 8-signal MERT audio embedding")
+    p_pa.add_argument("--output", help="override output directory (default: iter_4_pillar_A)")
+    p_pa.set_defaults(func=cmd_run_pillar_a)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)

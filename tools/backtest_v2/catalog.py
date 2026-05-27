@@ -86,6 +86,28 @@ class Catalog:
         )
         return cls(rec)
 
+    @classmethod
+    def load_with_mert(cls, mert_embeddings_path: str) -> "Catalog":
+        """Load a fresh MusicRecommender with MERT embeddings active (Pillar A)."""
+        import config as cfg
+        import core.recommendation_engine as _eng
+
+        old_flag = _eng.ENABLE_MERT
+        old_path = _eng.MERT_EMBEDDINGS_FILE
+        _eng.ENABLE_MERT = True
+        _eng.MERT_EMBEDDINGS_FILE = mert_embeddings_path
+        try:
+            from core.recommendation_engine import MusicRecommender
+            rec = MusicRecommender(
+                data_path=cfg.PROCESSED_FILE,
+                embeddings_path=cfg.EMBEDDINGS_FILE_PILLAR_B if cfg.ENABLE_PILLAR_B else cfg.EMBEDDINGS_FILE,
+                verbose=False,
+            )
+        finally:
+            _eng.ENABLE_MERT = old_flag
+            _eng.MERT_EMBEDDINGS_FILE = old_path
+        return cls(rec)
+
     # ------------------------------------------------------------------
     # Unified recommend interface used by all baselines and the runner
     # ------------------------------------------------------------------
