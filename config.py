@@ -219,10 +219,10 @@ MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
 # ============================================================================
 # Pillar B — Vietnamese NLP Upgrade (ViDeBERTa / ViSoBERT)
 # ============================================================================
-# ENABLE_PILLAR_B = True keeps the default PhoBERT behavior (safe rollback).
+# ENABLE_PILLAR_B = False keeps the default PhoBERT behavior (safe rollback).
 # Set True to activate dual-encoder routing in process_data.py.
 # The backtest reads EMBEDDINGS_FILE_PILLAR_B when this is True.
-ENABLE_PILLAR_B = True
+ENABLE_PILLAR_B = False
 
 LYRICS_ENCODER = os.environ.get("LYRICS_ENCODER", "phobert")  # phobert | simcse | videberta | visobert
 PILLAR_B_ENCODER = os.environ.get("PILLAR_B_ENCODER", "simcse")  # simcse | videberta

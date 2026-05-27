@@ -2334,6 +2334,143 @@ def _update_config_enable_clap_emotion(enable: bool) -> None:
         print(f"[pillar_e] WARNING: could not update ENABLE_CLAP_EMOTION in config.py")
 
 
+def cmd_run_full_system(args: argparse.Namespace) -> int:
+    """End-to-end production lift: v7.2 (all pillars off) vs the CURRENT config flags.
+
+    The per-pillar reports measure each pillar's isolated marginal contribution to
+    v7.2; they do NOT sum to the deployed system's lift (pillars interact, and some
+    — e.g. MMR diversity — deliberately trade NDCG for diversity). This command
+    measures the real production delta in one paired comparison.
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import config as cfg
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt, build_cluster_seeds,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import cluster_paired_bootstrap
+
+    if not os.path.exists(GT_FILE):
+        print(f"[full_system] GT file not found: {GT_FILE}")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[full_system] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    base_flags = dict(V72_BASELINE_FLAGS)
+    prod_flags = {
+        "ENABLE_PILLAR_B":    cfg.ENABLE_PILLAR_B,
+        "ENABLE_MERT":        cfg.ENABLE_MERT,
+        "ENABLE_KG":          cfg.ENABLE_KG,
+        "ENABLE_CLAP_EMOTION": cfg.ENABLE_CLAP_EMOTION,
+        "ENABLE_RRF":         cfg.ENABLE_RRF,
+        "ENABLE_VN_CONTEXT":  cfg.ENABLE_VN_CONTEXT,
+        "DIVERSITY_METHOD":   cfg.DIVERSITY_METHOD,
+    }
+    print(f"[full_system] Production flags: {prod_flags}")
+
+    print("[full_system] Building v7.2 baseline (all pillars off)...")
+    cat_base = Catalog.build_isolated(base_flags)
+    print("[full_system] Building production catalog (current config)...")
+    cat_prod = Catalog.build_isolated(prod_flags)
+
+    sys_base = BrightifyBaseline(cat_base)
+    sys_prod = BrightifyBaseline(cat_prod)
+
+    seeds = list(gt_mapping.keys())
+    rng = np.random.default_rng(42)
+    if len(seeds) > 200:
+        sample_set = {seeds[i] for i in rng.choice(len(seeds), 200, replace=False).tolist()}
+    else:
+        sample_set = set(seeds)
+
+    print("\n[full_system] Computing v7.2 arm...")
+    ndcg_base_pq: list = []
+    ild_base_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+            if seed_idx in sample_set and rb:
+                ild_base_vals.append(ild_lyrics(rb, cat_base))
+
+    print("[full_system] Computing production arm...")
+    ndcg_prod_pq: list = []
+    ild_prod_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(prod_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rp = sys_prod.recommend(seed_idx, top_k=10)
+            ndcg_prod_pq.append(ndcg_at_k(rp, set(relevant), 10) if rp else 0.0)
+            if seed_idx in sample_set and rp:
+                ild_prod_vals.append(ild_lyrics(rp, cat_prod))
+
+    _sc_base = dict(zip(seeds, ndcg_base_pq))
+    _sc_prod = dict(zip(seeds, ndcg_prod_pq))
+    _clusters = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base, _sc_prod, _clusters, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_prod = float(np.mean(ndcg_prod_pq))
+    ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
+    ild_prod = float(np.mean(ild_prod_vals)) if ild_prod_vals else 0.0
+    pct = (mean_prod / mean_base - 1.0) * 100 if mean_base > 0 else 0.0
+
+    print(f"\n[full_system] Cluster bootstrap NDCG@10 "
+          f"(N={len(ndcg_base_pq)} queries / {len(_clusters)} playlists, n_boots=10000):")
+    print(f"  v7.2       mean = {mean_base:.5f}")
+    print(f"  production mean = {mean_prod:.5f}  ({pct:+.1f}%)")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  ILD_lyrics  v7.2={ild_base:.5f}  production={ild_prod:.5f}")
+    significant = ci_low > 0
+    print(f"  Net lift significant (CI95 lower > 0): {'YES' if significant else 'NO'}")
+
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/iter_8_full_system"
+    os.makedirs(output_dir, exist_ok=True)
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_8_full_system",
+            "n_catalog": cat_prod.n,
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "full_system": {
+                "production_flags": prod_flags,
+                "significant": bool(significant),
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_playlists": len(_clusters),
+                    "n_boots": 10_000,
+                    "mean_ndcg_v72": mean_base,
+                    "mean_ndcg_production": mean_prod,
+                    "pct_change": pct,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {"ild_lyrics_v72": ild_base, "ild_lyrics_production": ild_prod},
+            },
+        },
+        "systems": {},
+        "latency": {},
+    }
+    with open(os.path.join(output_dir, "report.json"), "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+    print(f"\n[full_system] Report saved to {output_dir}/report.json")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     """Generate a v8.0 cumulative summary report across all pillar iterations."""
     import datetime
@@ -2541,6 +2678,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pf = sub.add_parser("run-pillar-f", help="Pillar F: KG embeddings + VN context vs baseline")
     p_pf.add_argument("--output", help="override output directory (default: iter_7_pillar_F)")
     p_pf.set_defaults(func=cmd_run_pillar_f)
+
+    p_fs = sub.add_parser("run-full-system", help="end-to-end v7.2 vs production lift")
+    p_fs.add_argument("--output", help="override output directory (default: iter_8_full_system)")
+    p_fs.set_defaults(func=cmd_run_full_system)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)
