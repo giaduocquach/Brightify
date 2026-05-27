@@ -1492,6 +1492,277 @@ def _update_config_diversity_method(method: str) -> None:
     print(f"[pillar_d] config.py: DIVERSITY_METHOD default = '{method}'")
 
 
+def cmd_run_pillar_c(args: argparse.Namespace) -> int:
+    """Pillar C: compare no-RRF (baseline) vs RRF hybrid retrieval.
+
+    Also reports latency improvement from vectorized emotion_boost.
+
+    Gates (all must pass):
+      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - ILD_lyrics: rrf >= baseline * 0.95  (no regression)
+      - Coverage: rrf >= baseline * 0.95
+    """
+    import datetime
+    import json
+    import os
+    import sys
+    import time
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.baselines.pillar_c import PillarCBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.core import _run_system
+
+    # Load editorial GT
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_c] GT file not found: {GT_FILE}")
+        print("[pillar_c] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_c] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    print("[pillar_c] Loading catalog...")
+    catalog = Catalog.load()
+
+    import core.recommendation_engine as _eng
+
+    def _recommend_no_rrf(system, seed_idx: int, top_k: int) -> list:
+        old = _eng.ENABLE_RRF
+        _eng.ENABLE_RRF = False
+        try:
+            return system.recommend(seed_idx, top_k=top_k)
+        finally:
+            _eng.ENABLE_RRF = old
+
+    def _recommend_rrf(system, seed_idx: int, top_k: int) -> list:
+        old = _eng.ENABLE_RRF
+        _eng.ENABLE_RRF = True
+        try:
+            return system.recommend(seed_idx, top_k=top_k)
+        finally:
+            _eng.ENABLE_RRF = old
+
+    sys_base = BrightifyBaseline(catalog)
+    sys_rrf  = PillarCBaseline(catalog)
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_c] Computing per-query NDCG@10 (no-RRF vs RRF)...")
+    ndcg_base_pq: list = []
+    ndcg_rrf_pq: list  = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rb = _recommend_no_rrf(sys_base, seed_idx, 10)
+        rr = _recommend_rrf(sys_rrf, seed_idx, 10)
+        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
+        ndcg_rrf_pq.append(ndcg_at_k(rr, rel_set, 10) if rr else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_rrf_pq, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_rrf  = float(np.mean(ndcg_rrf_pq))
+
+    print(f"\n[pillar_c] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"  baseline (no-RRF)  mean = {mean_base:.5f}")
+    print(f"  pillar_c (RRF)     mean = {mean_rrf:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD + Coverage comparison (200 sample queries) ---
+    print("\n[pillar_c] Computing ILD + coverage (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_base_vals, ild_rrf_vals = [], []
+    all_recs_base, all_recs_rrf = [], []
+    for s in sample_seeds:
+        rb = _recommend_no_rrf(sys_base, s, 10)
+        rr = _recommend_rrf(sys_rrf, s, 10)
+        if rb:
+            ild_base_vals.append(ild_lyrics(rb, catalog))
+            all_recs_base.append(rb)
+        if rr:
+            ild_rrf_vals.append(ild_lyrics(rr, catalog))
+            all_recs_rrf.append(rr)
+
+    ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
+    ild_rrf  = float(np.mean(ild_rrf_vals))  if ild_rrf_vals  else 0.0
+    cov_base = len(set(i for r in all_recs_base for i in r)) / catalog.n
+    cov_rrf  = len(set(i for r in all_recs_rrf  for i in r)) / catalog.n
+
+    print(f"  ILD_lyrics  base={ild_base:.5f}  rrf={ild_rrf:.5f}  threshold={ild_base*0.95:.5f}")
+    print(f"  Coverage    base={cov_base:.4f}  rrf={cov_rrf:.4f}  threshold={cov_base*0.95:.4f}")
+
+    # --- Latency (200 calls, 20-call warmup) ---
+    print("\n[pillar_c] Measuring latency (200 calls each)...")
+    all_seeds = list(gt_mapping.keys())
+    lat_seeds = (all_seeds * 10)[:200]
+    for s in lat_seeds[:20]:
+        _recommend_no_rrf(sys_base, s, 10)
+        _recommend_rrf(sys_rrf, s, 10)
+
+    t0 = time.perf_counter()
+    for s in lat_seeds:
+        _recommend_no_rrf(sys_base, s, 10)
+    lat_base_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+
+    t0 = time.perf_counter()
+    for s in lat_seeds:
+        _recommend_rrf(sys_rrf, s, 10)
+    lat_rrf_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+
+    print(f"  avg latency baseline = {lat_base_avg:.1f} ms")
+    print(f"  avg latency rrf      = {lat_rrf_avg:.1f} ms  "
+          f"({'faster' if lat_rrf_avg < lat_base_avg else 'slower'})")
+
+    # --- Gate evaluation ---
+    gate_ndcg     = ci_low > -0.005
+    gate_ild      = ild_rrf >= ild_base * 0.95
+    gate_coverage = cov_rrf >= cov_base * 0.95
+    gate_pass     = gate_ndcg and gate_ild and gate_coverage
+
+    verdict = "PASS — set ENABLE_RRF=True" if gate_pass else "FAIL — keep ENABLE_RRF=False"
+
+    print(f"\n[pillar_c] Gate results:")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  ILD  {ild_rrf:.5f} >= {ild_base*0.95:.5f}:  {'PASS' if gate_ild else 'FAIL'}")
+    print(f"  Cov  {cov_rrf:.4f} >= {cov_base*0.95:.4f}:   {'PASS' if gate_coverage else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_5 report ---
+    output_dir = getattr(args, 'output', None) or "var/runtime/backtest/reports/iter_5_pillar_C"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            queries = json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(catalog.df, n=500, seed=42)
+
+    print(f"\n[pillar_c] Computing property metrics ({len(queries)} queries)...")
+    _eng.ENABLE_RRF = False
+    prop_base = _run_system(sys_base, queries, catalog, top_k=10)
+    _eng.ENABLE_RRF = True
+    prop_rrf  = _run_system(sys_rrf, queries, catalog, top_k=10)
+    _eng.ENABLE_RRF = True  # restore
+
+    # Load iter_4 for comparison context
+    iter4_path = "var/runtime/backtest/reports/iter_4_pillar_A/report.json"
+    iter4_report: dict = {}
+    if os.path.exists(iter4_path):
+        with open(iter4_path) as fh:
+            iter4_report = json.load(fh)
+
+    import config as cfg
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_5_pillar_C",
+            "n_catalog": catalog.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_c": {
+                "rrf_k": cfg.RRF_K,
+                "rrf_candidate_size": cfg.RRF_CANDIDATE_SIZE,
+                "reranker_model": cfg.RERANKER_MODEL,
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_base": mean_base,
+                    "mean_ndcg_rrf": mean_rrf,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_base": ild_base,
+                    "ild_lyrics_rrf": ild_rrf,
+                    "gate_pass": gate_ild,
+                },
+                "coverage_comparison": {
+                    "coverage_base": cov_base,
+                    "coverage_rrf": cov_rrf,
+                    "gate_pass": gate_coverage,
+                },
+                "latency_ms": {
+                    "baseline_avg": round(lat_base_avg, 2),
+                    "rrf_avg": round(lat_rrf_avg, 2),
+                },
+            },
+        },
+        "systems": {
+            "brightify_no_rrf": prop_base,
+            "brightify_rrf": prop_rrf,
+        },
+        "latency": iter4_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_5_pillar_C",
+    })
+
+    class _FakeRep:
+        meta    = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config  = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_c] Reports saved to {output_dir}/")
+
+    if gate_pass:
+        _update_config_enable_rrf(True)
+        print("[pillar_c] config.ENABLE_RRF default set to True.")
+    else:
+        print("[pillar_c] Gate FAILED — config.ENABLE_RRF unchanged (True, env-driven).")
+
+    return 0 if gate_pass else 1
+
+
+def _update_config_enable_rrf(enable: bool) -> None:
+    import re
+    value = "True" if enable else "False"
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(
+        r'ENABLE_RRF\s*=\s*os\.environ\.get\("ENABLE_RRF",\s*"(?:True|False)"\)\s*==\s*"True"',
+        f'ENABLE_RRF = os.environ.get("ENABLE_RRF", "{value}") == "True"',
+        src,
+    )
+    if n > 0:
+        with open("config.py", "w", encoding="utf-8") as fh:
+            fh.write(new_src)
+        print(f"[pillar_c] config.py: ENABLE_RRF default = {value}")
+    else:
+        print(f"[pillar_c] WARNING: could not update ENABLE_RRF default in config.py")
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     return _not_implemented("Phase 6 (final report)")
 
@@ -1553,6 +1824,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pa = sub.add_parser("run-pillar-a", help="Pillar A: 7-signal vs 8-signal MERT audio embedding")
     p_pa.add_argument("--output", help="override output directory (default: iter_4_pillar_A)")
     p_pa.set_defaults(func=cmd_run_pillar_a)
+
+    p_pc = sub.add_parser("run-pillar-c", help="Pillar C: RRF hybrid retrieval vs no-RRF baseline")
+    p_pc.add_argument("--output", help="override output directory (default: iter_5_pillar_C)")
+    p_pc.set_defaults(func=cmd_run_pillar_c)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)

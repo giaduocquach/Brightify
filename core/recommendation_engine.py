@@ -398,18 +398,19 @@ class MusicRecommender:
             lyrics_sim = np.ones(self.n_songs) * 0.5  # Neutral if no lyrics
             use_lyrics = False
 
-        # 5. Emotion-based boost/penalty
-        # Boost songs with matching fused_emotion
+        # 5. Emotion-based boost/penalty (vectorized — Pillar C)
         emotion_boost = np.zeros(self.n_songs)
         if 'fused_emotion' in self.df.columns:
-            for idx in range(self.n_songs):
-                song_emotion = self.df.iloc[idx].get('fused_emotion', '')
-                if song_emotion in preferred_emotions:
-                    emotion_boost[idx] = 0.12  # Boost matching emotions (reduced from 0.15)
-                elif song_emotion in {'sad', 'melancholic'} and target_quadrant in ['Q1', 'Q4']:
-                    emotion_boost[idx] = -0.08  # Penalize mismatched emotions
-                elif song_emotion in {'happy', 'excited'} and target_quadrant == 'Q3':
-                    emotion_boost[idx] = -0.08
+            fused_emo = self.df['fused_emotion'].fillna('').str.lower().values
+            emotion_boost = np.where(np.isin(fused_emo, list(preferred_emotions)), 0.12, 0.0)
+            if target_quadrant in ('Q1', 'Q4'):
+                emotion_boost = np.where(
+                    np.isin(fused_emo, ('sad', 'melancholic')), -0.08, emotion_boost
+                )
+            elif target_quadrant == 'Q3':
+                emotion_boost = np.where(
+                    np.isin(fused_emo, ('happy', 'excited')), -0.08, emotion_boost
+                )
 
         # ===== WEIGHTED FUSION (Research-based) =====
         # Zhang et al. (2024): Optimal multimodal fusion for music recommendation
@@ -435,8 +436,15 @@ class MusicRecommender:
         # Ensure scores are positive
         final_scores = np.clip(final_scores, 0, 1)
 
-        # ===== FAST RANKING WITH DIVERSITY =====
-        return self._fast_rank(final_scores, top_k, diversity_penalty)
+        # RRF candidate reduction (Cormack et al. 2009) — Pillar C
+        candidates = None
+        if ENABLE_RRF:
+            _rrf_sigs = [va_sim, emotion_sim]
+            if use_lyrics:
+                _rrf_sigs.append(lyrics_sim)
+            candidates = self._rrf_candidates(_rrf_sigs)
+
+        return self._fast_rank(final_scores, top_k, diversity_penalty, restrict_to=candidates)
 
     def recommend_by_song(self,
                          song_id_or_name,
@@ -572,7 +580,18 @@ class MusicRecommender:
         # Exclude reference song
         final_scores[song_idx] = -1
 
-        return self._fast_rank(final_scores, top_k, diversity_penalty)
+        # RRF candidate reduction (Cormack et al. 2009) — Pillar C
+        candidates = None
+        if ENABLE_RRF:
+            _rrf_sigs = [va_sim]
+            if has_lyrics:
+                _rrf_sigs.append(lyrics_sim)
+            if use_mert:
+                _rrf_sigs.append(mert_sim)
+            if len(_rrf_sigs) >= 2:
+                candidates = self._rrf_candidates(_rrf_sigs)
+
+        return self._fast_rank(final_scores, top_k, diversity_penalty, restrict_to=candidates)
 
     def recommend_by_mood(self,
                          mood,
@@ -1631,7 +1650,34 @@ class MusicRecommender:
             'recommendations': rec_songs,
         }
 
-    def _fast_rank(self, scores, top_k, diversity_penalty):
+    def _rrf_candidates(
+        self,
+        score_arrays: list,
+        weights=None,
+        n: int = None,
+    ) -> np.ndarray:
+        """
+        RRF candidate reduction (Cormack et al. 2009) — Pillar C.
+
+        Fuses multiple cheap per-song score arrays into a single ranked
+        candidate pool of size n using Reciprocal Rank Fusion.
+
+        Args:
+            score_arrays: list of (n_songs,) similarity arrays.
+            weights: per-array RRF weights (default: uniform).
+            n: candidate pool size (default: RRF_CANDIDATE_SIZE).
+
+        Returns:
+            (≤n,) int64 array of candidate song indices, RRF order.
+        """
+        from core.retrieval import reciprocal_rank_fusion, scores_to_rank_list
+        if n is None:
+            n = RRF_CANDIDATE_SIZE
+        rank_lists = [scores_to_rank_list(s, top_n=n * 2) for s in score_arrays]
+        fused = reciprocal_rank_fusion(rank_lists, k=RRF_K, weights=weights, top_n=n)
+        return np.array(fused, dtype=np.int64)
+
+    def _fast_rank(self, scores, top_k, diversity_penalty, restrict_to=None):
         """
         Diversity-aware ranking. Dispatches to MMR, DPP, or greedy based on
         config.DIVERSITY_METHOD (default "mmr").
@@ -1639,9 +1685,20 @@ class MusicRecommender:
         MMR  — Carbonell & Goldstein 1998: λ·relevance − (1−λ)·max_sim_to_selected
         DPP  — Chen et al. 2018 fast greedy MAP
         greedy — original artist-penalty heuristic (kept for backward-compat)
+
+        restrict_to: optional array of candidate indices from RRF (Pillar C).
+            When supplied, only those indices are considered; argsort runs on
+            the restricted subset — O(|restrict_to|) instead of O(n_songs).
         """
-        n_candidates = min(top_k * 4, self.n_songs)
-        top_indices = np.argsort(scores)[::-1][:n_candidates]
+        if restrict_to is not None and len(restrict_to) > 0:
+            cand_arr = np.asarray(restrict_to, dtype=np.int64)
+            cand_scores = scores[cand_arr]
+            n = min(top_k * 4, len(cand_arr))
+            top_local = np.argsort(cand_scores)[::-1][:n]
+            top_indices = cand_arr[top_local]
+        else:
+            n_candidates = min(top_k * 4, self.n_songs)
+            top_indices = np.argsort(scores)[::-1][:n_candidates]
 
         # Filter by minimum threshold
         valid = scores[top_indices] >= MIN_SIMILARITY_THRESHOLD
@@ -1828,6 +1885,33 @@ class MusicRecommender:
         for col in ['_match_score', '_kw_norm', '_centroid_sim', '_sem', '_final_score']:
             if col in result.columns:
                 result = result.drop(columns=[col])
+
+        # Cross-encoder reranking (Pillar C) — applied when ENABLE_RERANKER=True
+        if ENABLE_RERANKER and len(result) >= 2:
+            try:
+                from core.reranker import get_reranker
+                reranker = get_reranker(RERANKER_MODEL)
+                if reranker is not None and 'original_index' in result.columns:
+                    orig_indices = result['original_index'].tolist()
+                    passages = []
+                    for i in orig_indices:
+                        row = self.df.iloc[i]
+                        parts = [str(row.get('track_name', '') or '')]
+                        if self.artist_col:
+                            parts.append(str(row.get(self.artist_col, '') or ''))
+                        if 'lyrics_cleaned' in self.df.columns:
+                            parts.append(str(row.get('lyrics_cleaned', '') or '')[:200])
+                        passages.append(' '.join(p for p in parts if p))
+                    reranked = reranker.rerank(
+                        keywords, passages, orig_indices,
+                        top_k=min(len(orig_indices), RERANKER_TOP_K),
+                    )
+                    idx_order = {v: i for i, v in enumerate(reranked)}
+                    result = result[result['original_index'].isin(idx_order)].copy()
+                    result['_rr'] = result['original_index'].map(idx_order)
+                    result = result.sort_values('_rr').drop(columns=['_rr']).reset_index(drop=True)
+            except Exception as _e:
+                logger.debug(f"[Reranker] rerank failed: {_e}")
 
         return result
 

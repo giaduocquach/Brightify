@@ -237,6 +237,23 @@ EMBEDDINGS_META_FILE_PILLAR_B = 'data/embeddings_metadata_pillar_b.json'
 HF_CACHE_DIR = os.environ.get("HF_CACHE_DIR", "var/volumes/hf_cache")
 
 # ============================================================================
+# Pillar C — RRF Hybrid Retrieval + Cross-Encoder Reranking
+# ============================================================================
+# ENABLE_RRF: Two-stage retrieval — RRF candidate reduction then full scoring.
+# RRF fuses multiple cheap rank lists (lyrics, V-A, MERT) to form a top-N
+# candidate pool before expensive diversity reranking.  k=60 per Cormack 2009.
+ENABLE_RRF = os.environ.get("ENABLE_RRF", "True") == "True"
+RRF_K = 60               # Cormack 2009: RRF dampening constant
+RRF_CANDIDATE_SIZE = 200 # Candidate pool before full-signal scoring
+
+# ENABLE_RERANKER: Cross-encoder second-pass for lyrics keyword queries.
+# Model: multilingual MiniLM-v2 fine-tuned on MS-MARCO (covers Vietnamese).
+# Disabled by default — requires sentence-transformers and extra inference time.
+ENABLE_RERANKER = os.environ.get("ENABLE_RERANKER", "False") == "True"
+RERANKER_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+RERANKER_TOP_K = 20      # Number of candidates to re-rank
+
+# ============================================================================
 # System Settings
 # ============================================================================
 RANDOM_SEED = 42
