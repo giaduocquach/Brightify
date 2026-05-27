@@ -101,7 +101,12 @@ class MusicRecommender:
         else:
             self.colors = None
 
-        # Analyze lyrics emotions (one-time)
+        # Pillar E — load pre-computed CLAP emotion labels (overrides lexicon fallback)
+        if ENABLE_CLAP_EMOTION and os.path.exists(CLAP_EMOTIONS_FILE) \
+                and 'fused_emotion' not in self.df.columns:
+            self._load_clap_emotions()
+
+        # Fallback: derive fused_emotion from lyrics lexicon when no CLAP file
         if 'lyrics_cleaned' in self.df.columns and 'fused_emotion' not in self.df.columns:
             self._analyze_lyrics_emotions()
 
@@ -130,6 +135,21 @@ class MusicRecommender:
                     )
             except Exception as e:
                 logger.warning(f"[MERT] Load failed: {e} — disabled")
+
+        # Pillar F — KG embeddings (artist-album bipartite SVD)
+        self.kg_matrix = None
+        if ENABLE_KG and os.path.exists(KG_EMBEDDINGS_FILE):
+            try:
+                kg_raw = np.load(KG_EMBEDDINGS_FILE)
+                if kg_raw.shape[0] == self.n_songs:
+                    norms = np.linalg.norm(kg_raw, axis=1, keepdims=True)
+                    norms[norms == 0] = 1
+                    self.kg_matrix = (kg_raw / norms).astype(np.float32)
+                    logger.info(f"[KG] Loaded {self.kg_matrix.shape} embeddings")
+                else:
+                    logger.warning(f"[KG] Shape mismatch {kg_raw.shape[0]} vs {self.n_songs} — disabled")
+            except Exception as e:
+                logger.warning(f"[KG] Load failed: {e} — disabled")
 
         logger.info(f"Recommender ready — {self.n_songs:,} songs loaded")
 
@@ -279,6 +299,35 @@ class MusicRecommender:
             top5 = ", ".join(f"{e}:{c}" for e, c in emotion_dist.head(5).items())
             logger.debug(f"Emotion distribution (top 5): {top5}")
 
+    def _load_clap_emotions(self) -> None:
+        """Load pre-computed CLAP emotion labels and merge into self.df."""
+        import json
+        with open(CLAP_EMOTIONS_FILE) as fh:
+            clap_map: dict = json.load(fh)
+
+        track_ids = self.df.get("track_id", pd.Series(range(self.n_songs))).astype(str).values
+        labels = np.array([clap_map.get(tid) for tid in track_ids], dtype=object)
+        self.df["fused_emotion"] = labels
+
+        n_labeled = pd.notna(pd.Series(labels)).sum()
+        coverage = n_labeled / self.n_songs * 100
+        logger.info(f"[CLAP] Loaded {n_labeled}/{self.n_songs} emotion labels ({coverage:.1f}%)")
+
+        # For un-labelled songs fall back to heuristic V-A mapping
+        missing_mask = pd.isna(self.df["fused_emotion"])
+        n_missing = int(missing_mask.sum())
+        if n_missing > 0:
+            valence_arr = self.df.loc[missing_mask, "valence"].fillna(0.5).values
+            arousal_arr = self.df.loc[missing_mask, "arousal"].fillna(
+                self.df.loc[missing_mask, "energy"].fillna(0.5)
+            ).values
+            fallback = [
+                self.emotion_fusion.get_emotion_label(float(v), float(a))
+                for v, a in zip(valence_arr, arousal_arr)
+            ]
+            self.df.loc[missing_mask, "fused_emotion"] = fallback
+            logger.info(f"[CLAP] Filled {n_missing} missing labels via V-A heuristic")
+
     def recommend_by_colors(self,
                            color_hexes,
                            top_k=DEFAULT_TOP_K,
@@ -332,6 +381,18 @@ class MusicRecommender:
         query_va_centroid = np.mean(query_va, axis=0)
         query_audio_centroid = np.mean(query_audio, axis=0)
         query_emotion /= len(color_hexes)
+
+        # Pillar F — apply VN holiday + time-of-day V-A shift
+        if ENABLE_VN_CONTEXT:
+            try:
+                from core.vn_context import get_context_shift
+                ctx = get_context_shift()
+                query_va_centroid = np.clip(
+                    query_va_centroid + np.array([ctx["valence_shift"], ctx["arousal_shift"]]),
+                    0.0, 1.0,
+                )
+            except Exception:
+                pass
 
         # Normalize emotion vector
         emotion_sum = query_emotion.sum()
@@ -576,6 +637,11 @@ class MusicRecommender:
                 w[5] * mood_match
             )
             final_scores = base + (w[6] * mert_sim if use_mert and len(w) > 6 else 0)
+
+        # Pillar F — KG artist-graph proximity (lightweight cold-start signal)
+        if self.kg_matrix is not None:
+            kg_sim = self.kg_matrix @ self.kg_matrix[song_idx]
+            final_scores += 0.05 * kg_sim
 
         # Exclude reference song
         final_scores[song_idx] = -1

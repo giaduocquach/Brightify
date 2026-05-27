@@ -71,6 +71,35 @@ class Catalog:
         return cls(rec)
 
     @classmethod
+    def load_fresh(cls, **flag_overrides) -> "Catalog":
+        """Load a fresh (non-singleton) MusicRecommender with optional flag overrides.
+
+        Temporarily sets module-level flags on core.recommendation_engine then
+        restores them after loading so the singleton is not polluted.
+
+        Usage::
+            cat = Catalog.load_fresh(ENABLE_KG=False, ENABLE_CLAP_EMOTION=False)
+        """
+        import config as cfg
+        import core.recommendation_engine as _eng
+        from core.recommendation_engine import MusicRecommender
+
+        old_flags = {}
+        for k, v in flag_overrides.items():
+            old_flags[k] = getattr(_eng, k, None)
+            setattr(_eng, k, v)
+        try:
+            rec = MusicRecommender(
+                data_path=cfg.PROCESSED_FILE,
+                embeddings_path=cfg.EMBEDDINGS_FILE_PILLAR_B if cfg.ENABLE_PILLAR_B else cfg.EMBEDDINGS_FILE,
+                verbose=False,
+            )
+        finally:
+            for k, v in old_flags.items():
+                setattr(_eng, k, v)
+        return cls(rec)
+
+    @classmethod
     def load_with_embeddings(cls, embeddings_path: str) -> "Catalog":
         """Load a fresh MusicRecommender with a custom embeddings file.
 

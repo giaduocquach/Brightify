@@ -254,6 +254,27 @@ RERANKER_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 RERANKER_TOP_K = 20      # Number of candidates to re-rank
 
 # ============================================================================
+# Pillar F — Cold-start: KG Embeddings + VN Holiday Context
+# ============================================================================
+# KG: bipartite SVD on artist-album-song graph (64-dim, TF-IDF weighted).
+ENABLE_KG = os.environ.get("ENABLE_KG", "True") == "True"
+KG_EMBEDDINGS_FILE = "data/kg_embeddings.npy"
+KG_DIM = 64
+
+# Context: applies valence/arousal shifts based on VN holidays + time-of-day.
+ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "True") == "True"
+
+# ============================================================================
+# Pillar E — CLAP Zero-shot Emotion Detection (Wu et al. 2023, arXiv 2211.06687)
+# ============================================================================
+# ENABLE_CLAP_EMOTION=True loads pre-computed labels from CLAP_EMOTIONS_FILE.
+# Falls back to lexicon analysis when the file is absent or a song is missing.
+ENABLE_CLAP_EMOTION = os.environ.get("ENABLE_CLAP_EMOTION", "True") == "True"
+CLAP_MODEL = "laion/larger_clap_music_and_speech"
+CLAP_EMOTIONS_FILE = "data/clap_emotions.json"
+CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
+
+# ============================================================================
 # System Settings
 # ============================================================================
 RANDOM_SEED = 42

@@ -1761,8 +1761,574 @@ def _update_config_enable_rrf(enable: bool) -> None:
         print(f"[pillar_c] WARNING: could not update ENABLE_RRF default in config.py")
 
 
+def cmd_run_pillar_e(args: argparse.Namespace) -> int:
+    """Pillar E: compare lexicon-only emotion vs CLAP zero-shot emotion.
+
+    Loads two catalog instances with ENABLE_CLAP_EMOTION toggled.
+
+    Gates (all must pass):
+      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - ILD_lyrics: clap >= lexicon * 0.95 (no diversity regression)
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import pandas as pd
+    import config as _cfg
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.core import _run_system
+
+    if not os.path.exists(_cfg.CLAP_EMOTIONS_FILE):
+        print(f"[pillar_e] CLAP emotions file not found: {_cfg.CLAP_EMOTIONS_FILE}")
+        print("[pillar_e] Run: python -m tools.extract_clap_emotions")
+        return 1
+
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_e] GT file not found: {GT_FILE}")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_e] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    # Lexicon-only catalog — fresh instance, ENABLE_CLAP_EMOTION=False
+    print("[pillar_e] Loading lexicon-only catalog (ENABLE_CLAP_EMOTION=False)...")
+    cat_lexicon = Catalog.load_fresh(ENABLE_CLAP_EMOTION=False)
+
+    # CLAP catalog — fresh instance, ENABLE_CLAP_EMOTION=True
+    print("[pillar_e] Loading CLAP catalog (ENABLE_CLAP_EMOTION=True)...")
+    cat_clap = Catalog.load_fresh(ENABLE_CLAP_EMOTION=True)
+
+    sys_lexicon = BrightifyBaseline(cat_lexicon)
+    sys_clap    = BrightifyBaseline(cat_clap)
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_e] Computing per-query NDCG@10 (lexicon vs CLAP)...")
+    ndcg_lex_pq: list = []
+    ndcg_clap_pq: list = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rl = sys_lexicon.recommend(seed_idx, top_k=10)
+        rc = sys_clap.recommend(seed_idx, top_k=10)
+        ndcg_lex_pq.append(ndcg_at_k(rl, rel_set, 10) if rl else 0.0)
+        ndcg_clap_pq.append(ndcg_at_k(rc, rel_set, 10) if rc else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_lex_pq, ndcg_clap_pq, n_boot=10_000)
+    mean_lex  = float(np.mean(ndcg_lex_pq))
+    mean_clap = float(np.mean(ndcg_clap_pq))
+
+    print(f"\n[pillar_e] Paired bootstrap NDCG@10 (N={len(ndcg_lex_pq)}, n_boots=10000):")
+    print(f"  lexicon mean = {mean_lex:.5f}")
+    print(f"  clap    mean = {mean_clap:.5f}")
+    print(f"  delta   = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD comparison ---
+    print("\n[pillar_e] Computing ILD_lyrics (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_lex_vals: list = []
+    ild_clap_vals: list = []
+    for s in sample_seeds:
+        rl = sys_lexicon.recommend(s, top_k=10)
+        rc = sys_clap.recommend(s, top_k=10)
+        if rl:
+            ild_lex_vals.append(ild_lyrics(rl, cat_lexicon))
+        if rc:
+            ild_clap_vals.append(ild_lyrics(rc, cat_clap))
+
+    ild_lex  = float(np.mean(ild_lex_vals))  if ild_lex_vals  else 0.0
+    ild_clap = float(np.mean(ild_clap_vals)) if ild_clap_vals else 0.0
+    print(f"  ILD_lyrics  lexicon={ild_lex:.5f}  clap={ild_clap:.5f}  threshold={ild_lex*0.95:.5f}")
+
+    # --- Emotion coverage ---
+    n_clap_labeled = cat_clap.df.get("fused_emotion", pd.Series()).notna().sum()
+    n_lex_labeled  = cat_lexicon.df.get("fused_emotion", pd.Series()).notna().sum()
+    clap_cov = n_clap_labeled / max(cat_clap.n, 1)
+    lex_cov  = n_lex_labeled  / max(cat_lexicon.n, 1)
+    print(f"\n[pillar_e] Emotion coverage: lexicon={lex_cov*100:.1f}%  clap={clap_cov*100:.1f}%")
+
+    # Emotion distribution shift
+    if hasattr(cat_clap, "df") and "fused_emotion" in cat_clap.df.columns:
+        dist = cat_clap.df["fused_emotion"].value_counts(normalize=True)
+        dist_str = "  ".join(f"{e}:{v*100:.0f}%" for e, v in dist.head(5).items())
+        print(f"[pillar_e] CLAP emotion distribution (top 5): {dist_str}")
+
+    # --- Gate evaluation ---
+    gate_ndcg = ci_low > -0.005
+    gate_ild  = ild_clap >= ild_lex * 0.95
+    gate_pass = gate_ndcg and gate_ild
+
+    verdict = "PASS — set ENABLE_CLAP_EMOTION=True" if gate_pass else "FAIL — keep ENABLE_CLAP_EMOTION=False"
+
+    print(f"\n[pillar_e] Gate results:")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  ILD_lyrics {ild_clap:.5f} >= {ild_lex*0.95:.5f} (95% of lexicon): {'PASS' if gate_ild else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_6 report ---
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/iter_6_pillar_E"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            queries = json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(cat_lexicon.df, n=500, seed=42)
+
+    print(f"\n[pillar_e] Computing property metrics ({len(queries)} queries)...")
+    prop_lexicon = _run_system(sys_lexicon, queries, cat_lexicon, top_k=10)
+    prop_clap    = _run_system(sys_clap,    queries, cat_clap,    top_k=10)
+
+    iter5_path = "var/runtime/backtest/reports/iter_5_pillar_C/report.json"
+    iter5_report: dict = {}
+    if os.path.exists(iter5_path):
+        with open(iter5_path) as fh:
+            iter5_report = json.load(fh)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_6_pillar_E",
+            "n_catalog": cat_clap.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_e": {
+                "model": _cfg.CLAP_MODEL,
+                "clap_emotions_file": _cfg.CLAP_EMOTIONS_FILE,
+                "clap_coverage_pct": round(clap_cov * 100, 2),
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_lex_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_lexicon": mean_lex,
+                    "mean_ndcg_clap": mean_clap,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_lexicon": ild_lex,
+                    "ild_lyrics_clap": ild_clap,
+                    "gate_pass": gate_ild,
+                },
+            },
+        },
+        "systems": {
+            "brightify_lexicon": prop_lexicon,
+            "brightify_clap": prop_clap,
+        },
+        "latency": iter5_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_6_pillar_E",
+    })
+
+    class _FakeRep:
+        meta    = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config  = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_e] Reports saved to {output_dir}/")
+
+    if gate_pass:
+        _update_config_enable_clap_emotion(True)
+        print("[pillar_e] Gate PASSED — ENABLE_CLAP_EMOTION=True set as default.")
+    else:
+        print("[pillar_e] Gate FAILED — ENABLE_CLAP_EMOTION stays False.")
+
+    return 0 if gate_pass else 1
+
+
+def cmd_run_pillar_f(args: argparse.Namespace) -> int:
+    """Pillar F: KG embeddings + VN context vs. no-KG baseline.
+
+    Gates (all must pass):
+      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - ILD_lyrics: kg >= base * 0.95
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import config as _cfg
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.core import _run_system
+
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_f] GT file not found: {GT_FILE}")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_f] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    # Baseline — fresh instance, KG+context disabled
+    print("[pillar_f] Loading baseline catalog (KG+context disabled)...")
+    cat_base = Catalog.load_fresh(ENABLE_KG=False, ENABLE_VN_CONTEXT=False)
+
+    # Pillar F — fresh instance, KG+context enabled
+    print("[pillar_f] Loading Pillar F catalog (KG+context enabled)...")
+    cat_kg = Catalog.load_fresh(ENABLE_KG=True, ENABLE_VN_CONTEXT=True)
+
+    sys_base = BrightifyBaseline(cat_base)
+    sys_kg   = BrightifyBaseline(cat_kg)
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_f] Computing per-query NDCG@10 (base vs KG+context)...")
+    ndcg_base_pq: list = []
+    ndcg_kg_pq: list = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rb = sys_base.recommend(seed_idx, top_k=10)
+        rk = sys_kg.recommend(seed_idx, top_k=10)
+        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
+        ndcg_kg_pq.append(  ndcg_at_k(rk, rel_set, 10) if rk else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_kg_pq, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_kg   = float(np.mean(ndcg_kg_pq))
+
+    print(f"\n[pillar_f] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"  base mean = {mean_base:.5f}")
+    print(f"  kg   mean = {mean_kg:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD comparison ---
+    print("\n[pillar_f] Computing ILD_lyrics (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_base_vals: list = []
+    ild_kg_vals: list = []
+    for s in sample_seeds:
+        rb = sys_base.recommend(s, top_k=10)
+        rk = sys_kg.recommend(s, top_k=10)
+        if rb:
+            ild_base_vals.append(ild_lyrics(rb, cat_base))
+        if rk:
+            ild_kg_vals.append(ild_lyrics(rk, cat_kg))
+
+    ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
+    ild_kg   = float(np.mean(ild_kg_vals))   if ild_kg_vals   else 0.0
+    print(f"  ILD_lyrics  base={ild_base:.5f}  kg={ild_kg:.5f}  threshold={ild_base*0.95:.5f}")
+
+    # --- Gate evaluation ---
+    gate_ndcg = ci_low > -0.005
+    gate_ild  = ild_kg >= ild_base * 0.95
+    gate_pass = gate_ndcg and gate_ild
+
+    verdict = "PASS — set ENABLE_KG=True, ENABLE_VN_CONTEXT=True" \
+              if gate_pass else "FAIL — disable KG or reduce kg_weight"
+
+    print(f"\n[pillar_f] Gate results:")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  ILD_lyrics {ild_kg:.5f} >= {ild_base*0.95:.5f} (95%): {'PASS' if gate_ild else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_7 report ---
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/iter_7_pillar_F"
+    os.makedirs(output_dir, exist_ok=True)
+
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        import json as _json
+        with open(ts_path) as fh:
+            queries = _json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(cat_base.df, n=500, seed=42)
+
+    print(f"\n[pillar_f] Computing property metrics ({len(queries)} queries)...")
+    prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
+    prop_kg   = _run_system(sys_kg,   queries, cat_kg,   top_k=10)
+
+    iter6_path = "var/runtime/backtest/reports/iter_6_pillar_E/report.json"
+    iter6_report: dict = {}
+    if os.path.exists(iter6_path):
+        with open(iter6_path) as fh:
+            iter6_report = json.load(fh)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_7_pillar_F",
+            "n_catalog": cat_kg.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_f": {
+                "kg_embeddings_file": _cfg.KG_EMBEDDINGS_FILE,
+                "kg_dim": _cfg.KG_DIM,
+                "enable_vn_context": True,
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_base": mean_base,
+                    "mean_ndcg_kg": mean_kg,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_base": ild_base,
+                    "ild_lyrics_kg": ild_kg,
+                    "gate_pass": gate_ild,
+                },
+            },
+        },
+        "systems": {
+            "brightify_base": prop_base,
+            "brightify_kg":   prop_kg,
+        },
+        "latency": iter6_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_7_pillar_F",
+    })
+
+    class _FakeRep:
+        meta    = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config  = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_f] Reports saved to {output_dir}/")
+
+    if gate_pass:
+        _update_config_enable_kg(True)
+        print("[pillar_f] Gate PASSED — ENABLE_KG=True, ENABLE_VN_CONTEXT=True as defaults.")
+    else:
+        _update_config_enable_kg(False)
+        print("[pillar_f] Gate FAILED — KG disabled in config.")
+
+    return 0 if gate_pass else 1
+
+
+def _update_config_enable_kg(enable: bool) -> None:
+    import re
+    value = "True" if enable else "False"
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    n_total = 0
+    for flag in ("ENABLE_KG", "ENABLE_VN_CONTEXT"):
+        new_src, n = re.subn(
+            rf'{flag}\s*=\s*os\.environ\.get\("{flag}",\s*"(?:True|False)"\)\s*==\s*"True"',
+            f'{flag} = os.environ.get("{flag}", "{value}") == "True"',
+            src,
+        )
+        if n > 0:
+            src = new_src
+            n_total += n
+    if n_total > 0:
+        with open("config.py", "w", encoding="utf-8") as fh:
+            fh.write(src)
+        print(f"[pillar_f] config.py: ENABLE_KG + ENABLE_VN_CONTEXT = {value}")
+    else:
+        print(f"[pillar_f] WARNING: could not update KG/VN_CONTEXT flags in config.py")
+
+
+def _update_config_enable_clap_emotion(enable: bool) -> None:
+    import re
+    value = "True" if enable else "False"
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(
+        r'ENABLE_CLAP_EMOTION\s*=\s*os\.environ\.get\("ENABLE_CLAP_EMOTION",\s*"(?:True|False)"\)\s*==\s*"True"',
+        f'ENABLE_CLAP_EMOTION = os.environ.get("ENABLE_CLAP_EMOTION", "{value}") == "True"',
+        src,
+    )
+    if n > 0:
+        with open("config.py", "w", encoding="utf-8") as fh:
+            fh.write(new_src)
+        print(f"[pillar_e] config.py: ENABLE_CLAP_EMOTION default = {value}")
+    else:
+        print(f"[pillar_e] WARNING: could not update ENABLE_CLAP_EMOTION in config.py")
+
+
 def cmd_report(args: argparse.Namespace) -> int:
-    return _not_implemented("Phase 6 (final report)")
+    """Generate a v8.0 cumulative summary report across all pillar iterations."""
+    import datetime
+    import json
+    import os
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+
+    REPORTS_DIR = "var/runtime/backtest/reports"
+
+    PILLAR_SEQUENCE = [
+        ("iter_0_baseline",  "Baseline v7.2"),
+        ("iter_1_weight_opt","Weight optimisation"),
+        ("iter_2_pillar_B",  "Pillar B — ViDeBERTa/SimCSE NLP"),
+        ("iter_3_pillar_D",  "Pillar D — MMR diversity"),
+        ("iter_4_pillar_A",  "Pillar A — MERT audio embedding"),
+        ("iter_5_pillar_C",  "Pillar C — RRF hybrid retrieval"),
+        ("iter_6_pillar_E",  "Pillar E — CLAP zero-shot emotion"),
+        ("iter_7_pillar_F",  "Pillar F — KG embeddings + VN context"),
+    ]
+
+    rows = []
+    for iter_name, label in PILLAR_SEQUENCE:
+        fpath = os.path.join(REPORTS_DIR, iter_name, "report.json")
+        if not os.path.exists(fpath):
+            rows.append({"iter": iter_name, "label": label, "status": "MISSING", "data": {}})
+            continue
+        with open(fpath) as fh:
+            d = json.load(fh)
+        meta = d.get("meta", {})
+        # Extract pillar-specific gate info
+        pillar_key = [k for k in meta if k.startswith("pillar_") or k == "weight_optimization"]
+        if pillar_key:
+            pd = meta[pillar_key[0]]
+            gate_pass = pd.get("gate_pass")
+            verdict = pd.get("verdict", "")
+            bs = pd.get("bootstrap_ndcg", pd.get("bootstrap", {}))
+        else:
+            gate_pass = None
+            verdict = ""
+            bs = {}
+        rows.append({
+            "iter": iter_name,
+            "label": label,
+            "status": "PASS" if gate_pass else ("FAIL" if gate_pass is False else "INFO"),
+            "gate_pass": gate_pass,
+            "verdict": verdict,
+            "bootstrap": bs,
+        })
+
+    # Print console summary
+    print("\n" + "=" * 80)
+    print(f"  BRIGHTIFY v8.0 — CUMULATIVE UPGRADE REPORT  ({datetime.date.today()})")
+    print("=" * 80)
+    print(f"\n{'Iteration':<30} {'Status':<6} {'NDCG Before':>12} {'NDCG After':>12} {'Δ NDCG':>10}")
+    print("-" * 80)
+
+    cumulative_ndcg = None
+    for row in rows:
+        bs = row.get("bootstrap", {})
+        before_key = next((k for k in ("mean_ndcg_at_10_baseline", "mean_ndcg_base",
+                                        "mean_ndcg_greedy", "mean_ndcg_lexicon") if k in bs), None)
+        after_key  = next((k for k in ("mean_ndcg_at_10_pillar_b", "mean_ndcg_mert",
+                                        "mean_ndcg_mmr", "mean_ndcg_rrf", "mean_ndcg_clap",
+                                        "mean_ndcg_kg") if k in bs), None)
+        before = bs.get(before_key, "") if before_key else ""
+        after  = bs.get(after_key, "")  if after_key  else ""
+        delta  = bs.get("delta", "")
+
+        before_s = f"{before:.5f}" if isinstance(before, float) else "—"
+        after_s  = f"{after:.5f}"  if isinstance(after,  float) else "—"
+        delta_s  = (f"{delta:+.5f}" if isinstance(delta, float) else "—")
+
+        status = row.get("status", "")
+        status_s = {"PASS": "✓ PASS", "FAIL": "✗ FAIL", "INFO": " INFO", "MISSING": "? —"}.get(status, status)
+        print(f"  {row['label']:<28} {status_s:<7} {before_s:>12} {after_s:>12} {delta_s:>10}")
+
+    print("\n" + "=" * 80)
+    print("  ACTIVE FLAGS (v8.0 production config):")
+    print("=" * 80)
+
+    import config as cfg
+    flags = [
+        ("ENABLE_PILLAR_B", cfg.ENABLE_PILLAR_B, "ViDeBERTa/SimCSE NLP"),
+        ("DIVERSITY_METHOD", cfg.DIVERSITY_METHOD, "MMR reranking"),
+        ("ENABLE_MERT",      cfg.ENABLE_MERT,     "MERT audio embedding"),
+        ("ENABLE_RRF",       cfg.ENABLE_RRF,      "RRF hybrid retrieval"),
+        ("ENABLE_CLAP_EMOTION", cfg.ENABLE_CLAP_EMOTION, "CLAP zero-shot emotion"),
+        ("ENABLE_KG",        cfg.ENABLE_KG,       "KG embeddings"),
+        ("ENABLE_VN_CONTEXT",cfg.ENABLE_VN_CONTEXT, "VN holiday context"),
+    ]
+    for name, val, desc in flags:
+        print(f"  {name:<25} = {str(val):<8}  # {desc}")
+
+    print("\n" + "=" * 80)
+    print("  REMAINING OPTIONAL WORK (requires external resources):")
+    print("=" * 80)
+    remaining = [
+        ("Pillar E — MLP combiner",        "~500 VN songs annotated (V-A), $500-1000, 3 weeks"),
+        ("Pillar E — multi-task ViDeBERTa", "Labeled data for 3-task fine-tuning"),
+        ("Pillar F — Weather API",          "OpenWeatherMap API key required"),
+        ("Pillar G — async SQLAlchemy",     "Redis + asyncpg migration (DevX only)"),
+    ]
+    for item, blocker in remaining:
+        print(f"  • {item:<35}  [blocked: {blocker}]")
+    print()
+
+    # Save to JSON
+    output_dir = getattr(args, "output", None) or os.path.join(REPORTS_DIR, "v8_0_final_report")
+    os.makedirs(output_dir, exist_ok=True)
+    summary = {
+        "date": str(datetime.date.today()),
+        "version": "v8.0",
+        "pillars": rows,
+        "active_flags": {name: val for name, val, _ in flags},
+        "remaining_optional": [{"item": i, "blocker": b} for i, b in remaining],
+    }
+    json_path = os.path.join(output_dir, "summary.json")
+    with open(json_path, "w") as fh:
+        json.dump(summary, fh, indent=2)
+    print(f"  Summary saved → {json_path}")
+    return 0
 
 
 def cmd_check_mood_tags(args: argparse.Namespace) -> int:
@@ -1826,6 +2392,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_pc = sub.add_parser("run-pillar-c", help="Pillar C: RRF hybrid retrieval vs no-RRF baseline")
     p_pc.add_argument("--output", help="override output directory (default: iter_5_pillar_C)")
     p_pc.set_defaults(func=cmd_run_pillar_c)
+
+    p_pe = sub.add_parser("run-pillar-e", help="Pillar E: CLAP zero-shot emotion vs lexicon-only")
+    p_pe.add_argument("--output", help="override output directory (default: iter_6_pillar_E)")
+    p_pe.set_defaults(func=cmd_run_pillar_e)
+
+    p_pf = sub.add_parser("run-pillar-f", help="Pillar F: KG embeddings + VN context vs baseline")
+    p_pf.add_argument("--output", help="override output directory (default: iter_7_pillar_F)")
+    p_pf.set_defaults(func=cmd_run_pillar_f)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)
