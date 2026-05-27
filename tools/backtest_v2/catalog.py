@@ -99,6 +99,45 @@ class Catalog:
                 setattr(_eng, k, v)
         return cls(rec)
 
+    # Init-time flags baked into the recommender at construction; recommend-time
+    # flags (ENABLE_RRF, DIVERSITY_METHOD, ENABLE_VN_CONTEXT) are read live by the
+    # engine and must be pinned by the caller around recommend() calls.
+    _ISOLATION_KEYS = (
+        "ENABLE_PILLAR_B", "ENABLE_MERT", "ENABLE_KG", "ENABLE_CLAP_EMOTION",
+        "ENABLE_RRF", "ENABLE_VN_CONTEXT", "DIVERSITY_METHOD", "MERT_EMBEDDINGS_FILE",
+    )
+
+    @classmethod
+    def build_isolated(cls, flags: dict) -> "Catalog":
+        """Build a fresh recommender under an explicit, complete pillar-flag set.
+
+        Selects the embeddings file from the *overridden* ENABLE_PILLAR_B (not the
+        live config default), so each pillar A/B test can be measured against a
+        clean v7.2 baseline with all other pillars off. Init-time flags
+        (ENABLE_PILLAR_B → embeddings, ENABLE_MERT, ENABLE_KG, ENABLE_CLAP_EMOTION,
+        MERT_EMBEDDINGS_FILE) take effect during construction. Recommend-time flags
+        must still be pinned by the caller around recommend() calls.
+        """
+        import config as cfg
+        import core.recommendation_engine as _eng
+        from core.recommendation_engine import MusicRecommender
+
+        old = {k: getattr(_eng, k, None) for k in cls._ISOLATION_KEYS}
+        try:
+            for k, v in flags.items():
+                setattr(_eng, k, v)
+            use_pillar_b = bool(flags.get("ENABLE_PILLAR_B", getattr(_eng, "ENABLE_PILLAR_B", False)))
+            emb = cfg.EMBEDDINGS_FILE_PILLAR_B if use_pillar_b else cfg.EMBEDDINGS_FILE
+            rec = MusicRecommender(
+                data_path=cfg.PROCESSED_FILE,
+                embeddings_path=emb,
+                verbose=False,
+            )
+        finally:
+            for k, v in old.items():
+                setattr(_eng, k, v)
+        return cls(rec)
+
     @classmethod
     def load_with_embeddings(cls, embeddings_path: str) -> "Catalog":
         """Load a fresh MusicRecommender with a custom embeddings file.

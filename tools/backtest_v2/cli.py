@@ -12,7 +12,56 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import contextmanager
 from typing import List, Optional
+
+
+# ---------------------------------------------------------------------------
+# Baseline isolation (§ fixed-v7.2 design)
+# ---------------------------------------------------------------------------
+# Every pillar A/B test is measured against the SAME clean v7.2 baseline: all
+# pillar flags off. The treatment arm toggles ONLY the pillar under test. This
+# removes run-order dependency — each pillar's reported delta is its independent
+# marginal contribution to v7.2, not "contribution given whichever pillars ran
+# before it". The production lift (v7.2 → all-on) is reported separately by
+# cmd_run_full_system.
+V72_BASELINE_FLAGS = {
+    "ENABLE_PILLAR_B": False,
+    "ENABLE_MERT": False,
+    "ENABLE_KG": False,
+    "ENABLE_CLAP_EMOTION": False,
+    "ENABLE_RRF": False,
+    "ENABLE_VN_CONTEXT": False,
+    "DIVERSITY_METHOD": "greedy",
+}
+
+# Recommend-time flags read live by the engine on every recommend() call.
+# build_isolated() bakes in init-time flags; these must be pinned around calls.
+_RECOMMEND_TIME_KEYS = ("ENABLE_RRF", "DIVERSITY_METHOD", "ENABLE_VN_CONTEXT")
+
+
+@contextmanager
+def _pinned_recommend_flags(**flags):
+    """Pin recommend-time engine globals for the duration of recommend() calls.
+
+    The engine reads ENABLE_RRF / DIVERSITY_METHOD / ENABLE_VN_CONTEXT live at
+    recommend time, so a catalog built with build_isolated() is not enough —
+    these must be held fixed while the arm's recommendations are computed.
+    """
+    import core.recommendation_engine as _eng
+    old = {k: getattr(_eng, k, None) for k in flags}
+    try:
+        for k, v in flags.items():
+            setattr(_eng, k, v)
+        yield
+    finally:
+        for k, v in old.items():
+            setattr(_eng, k, v)
+
+
+def _recommend_time_subset(flags: dict) -> dict:
+    """Extract only the recommend-time flags from a full flag set."""
+    return {k: flags[k] for k in _RECOMMEND_TIME_KEYS if k in flags}
 
 
 def _not_implemented(phase: str) -> int:
@@ -783,27 +832,34 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_b] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    # Load baseline (PhoBERT) catalog
-    print("[pillar_b] Loading baseline catalog (PhoBERT)...")
-    cat_base = Catalog.load()
+    # --- Fixed v7.2 baseline isolation: base = all pillars off, treat = +Pillar B ---
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_PILLAR_B": True}
 
-    # Load Pillar B catalog (ViDeBERTa/ViSoBERT)
-    print(f"[pillar_b] Loading Pillar B catalog ({emb_path})...")
-    cat_pb = Catalog.load_with_embeddings(emb_path)
+    print("[pillar_b] Building baseline catalog (v7.2: all pillars off, PhoBERT)...")
+    cat_base = Catalog.build_isolated(base_flags)
+    print(f"[pillar_b] Building Pillar B catalog (v7.2 + ViDeBERTa/ViSoBERT)...")
+    cat_pb = Catalog.build_isolated(treat_flags)
+    assert cat_base.rec.embeddings is not None and cat_pb.rec.embeddings is not None, "[pillar_b] embeddings must load"
 
     # --- Per-query NDCG@10 for paired bootstrap ---
     print("\n[pillar_b] Computing per-query NDCG@10 for both systems...")
     sys_base = BrightifyBaseline(cat_base)
     sys_pb   = PillarBBaseline(cat_pb)
 
+    # --- Base arm (recommend-time flags pinned to v7.2) ---
     ndcg_base_pq: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+
+    # --- Treatment arm (recommend-time flags pinned to v7.2 + Pillar B) ---
     ndcg_pb_pq: list   = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rb = sys_base.recommend(seed_idx, top_k=10)
-        rp = sys_pb.recommend(seed_idx, top_k=10)
-        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
-        ndcg_pb_pq.append(ndcg_at_k(rp, rel_set, 10) if rp else 0.0)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rp = sys_pb.recommend(seed_idx, top_k=10)
+            ndcg_pb_pq.append(ndcg_at_k(rp, set(relevant), 10) if rp else 0.0)
 
     _seeds_b = list(gt_mapping.keys())
     _sc_base_b = dict(zip(_seeds_b, ndcg_base_pq))
@@ -827,13 +883,16 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
 
     ild_base_vals = []
     ild_pb_vals   = []
-    for s in sample_seeds:
-        rb = sys_base.recommend(s, top_k=10)
-        rp = sys_pb.recommend(s, top_k=10)
-        if rb:
-            ild_base_vals.append(ild_lyrics(rb, cat_base))
-        if rp:
-            ild_pb_vals.append(ild_lyrics(rp, cat_pb))
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for s in sample_seeds:
+            rb = sys_base.recommend(s, top_k=10)
+            if rb:
+                ild_base_vals.append(ild_lyrics(rb, cat_base))
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for s in sample_seeds:
+            rp = sys_pb.recommend(s, top_k=10)
+            if rp:
+                ild_pb_vals.append(ild_lyrics(rp, cat_pb))
 
     ild_base_mean = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_pb_mean   = float(np.mean(ild_pb_vals))   if ild_pb_vals   else 0.0
@@ -846,20 +905,22 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     lat_seeds = (all_seeds * 10)[:200]  # ensure 200 seeds, repeating if needed
     warmup_seeds = lat_seeds[:20]
 
-    # Warmup both systems to fill CPU cache
-    for s in warmup_seeds:
-        sys_base.recommend(s, top_k=10)
-        sys_pb.recommend(s, top_k=10)
+    # Warmup + timing per-arm under the arm's recommend-time pins.
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for s in warmup_seeds:
+            sys_base.recommend(s, top_k=10)
+        t0 = time.perf_counter()
+        for s in lat_seeds:
+            sys_base.recommend(s, top_k=10)
+        base_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
-    t0 = time.perf_counter()
-    for s in lat_seeds:
-        sys_base.recommend(s, top_k=10)
-    base_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
-
-    t0 = time.perf_counter()
-    for s in lat_seeds:
-        sys_pb.recommend(s, top_k=10)
-    pb_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for s in warmup_seeds:
+            sys_pb.recommend(s, top_k=10)
+        t0 = time.perf_counter()
+        for s in lat_seeds:
+            sys_pb.recommend(s, top_k=10)
+        pb_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
     print(f"  avg latency baseline = {base_avg_ms:.1f} ms")
     print(f"  avg latency pillar_b = {pb_avg_ms:.1f} ms")
@@ -897,11 +958,12 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     else:
         queries = stratified_sample(cat_pb.df, n=500, seed=42)
     print(f"\n[pillar_b] Computing property metrics ({len(queries)} queries)...")
-    pb_prop = _run_system(sys_pb, queries, cat_pb, top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        pb_prop = _run_system(sys_pb, queries, cat_pb, top_k=10)
 
-    print(f"[pillar_b] Computing full accuracy metrics...")
-    pb_acc = evaluate_system_accuracy(sys_pb, gt_mapping, top_k=20,
-                                      ground_truth_name="editorial_playlists_v1")
+        print(f"[pillar_b] Computing full accuracy metrics...")
+        pb_acc = evaluate_system_accuracy(sys_pb, gt_mapping, top_k=20,
+                                          ground_truth_name="editorial_playlists_v1")
     pb_prop.update(pb_acc)
 
     # Load iter_1 for comparison baseline
@@ -923,6 +985,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
             "pillar_b": {
                 "embeddings_file": emb_path,
                 "encoder": "ViDeBERTa (standard) + ViSoBERT (social)",
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap": {
@@ -981,7 +1044,8 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
         _update_config_pillar_b()
         print("[pillar_b] config.ENABLE_PILLAR_B set to True.")
     else:
-        print("[pillar_b] Gate FAILED — config.ENABLE_PILLAR_B unchanged (False).")
+        _revert_config_pillar_b()
+        print("[pillar_b] Gate FAILED — config.ENABLE_PILLAR_B reverted to False.")
 
     return 0 if gate_pass else 1
 
@@ -992,6 +1056,19 @@ def _update_config_pillar_b() -> None:
     with open("config.py", encoding="utf-8") as fh:
         src = fh.read()
     new_src, n = re.subn(r'ENABLE_PILLAR_B\s*=\s*False', 'ENABLE_PILLAR_B = True', src)
+    if n == 0:
+        print("[pillar_b] WARNING: could not find ENABLE_PILLAR_B in config.py")
+        return
+    with open("config.py", "w", encoding="utf-8") as fh:
+        fh.write(new_src)
+
+
+def _revert_config_pillar_b() -> None:
+    """Revert config.ENABLE_PILLAR_B = False (mirror of _update_config_pillar_b)."""
+    import re
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(r'ENABLE_PILLAR_B\s*=\s*True', 'ENABLE_PILLAR_B = False', src)
     if n == 0:
         print("[pillar_b] WARNING: could not find ENABLE_PILLAR_B in config.py")
         return
@@ -1060,31 +1137,34 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_a] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    # Base catalog (7-signal, MERT forced off regardless of config default)
-    print("[pillar_a] Loading base catalog (7-signal)...")
-    import core.recommendation_engine as _eng_pa
-    _pa_old_enable = _eng_pa.ENABLE_MERT
-    _eng_pa.ENABLE_MERT = False
-    cat_base = Catalog.load()
-    _eng_pa.ENABLE_MERT = _pa_old_enable
+    # --- Fixed v7.2 baseline isolation: base = all pillars off, treat = +MERT ---
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_MERT": True}
 
-    # MERT catalog (8-signal, MERT enabled)
-    print(f"[pillar_a] Loading MERT catalog ({mert_path})...")
-    cat_mert = Catalog.load_with_mert(mert_path)
+    print("[pillar_a] Building base catalog (v7.2: all pillars off, 7-signal)...")
+    cat_base = Catalog.build_isolated(base_flags)
+    print(f"[pillar_a] Building MERT catalog (v7.2 + MERT, 8-signal)...")
+    cat_mert = Catalog.build_isolated(treat_flags)
+    assert cat_base.rec.mert_matrix is None and cat_mert.rec.mert_matrix is not None, "[pillar_a] MERT isolation failed"
 
     sys_base = BrightifyBaseline(cat_base)
     sys_mert = PillarABaseline(cat_mert)
 
     # --- Per-query NDCG@10 for paired bootstrap ---
     print("\n[pillar_a] Computing per-query NDCG@10 (7-signal vs 8-signal)...")
+    # --- Base arm (recommend-time flags pinned to v7.2) ---
     ndcg_base_pq: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+
+    # --- Treatment arm (recommend-time flags pinned to v7.2 + MERT) ---
     ndcg_mert_pq: list = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rb = sys_base.recommend(seed_idx, top_k=10)
-        rm = sys_mert.recommend(seed_idx, top_k=10)
-        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
-        ndcg_mert_pq.append(ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rm = sys_mert.recommend(seed_idx, top_k=10)
+            ndcg_mert_pq.append(ndcg_at_k(rm, set(relevant), 10) if rm else 0.0)
 
     _seeds_a = list(gt_mapping.keys())
     _sc_base_a = dict(zip(_seeds_a, ndcg_base_pq))
@@ -1108,15 +1188,18 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
 
     ild_base_vals, ild_mert_vals = [], []
     all_recs_base, all_recs_mert = [], []
-    for s in sample_seeds:
-        rb = sys_base.recommend(s, top_k=10)
-        rm = sys_mert.recommend(s, top_k=10)
-        if rb:
-            ild_base_vals.append(ild_lyrics(rb, cat_base))
-            all_recs_base.append(rb)
-        if rm:
-            ild_mert_vals.append(ild_lyrics(rm, cat_mert))
-            all_recs_mert.append(rm)
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for s in sample_seeds:
+            rb = sys_base.recommend(s, top_k=10)
+            if rb:
+                ild_base_vals.append(ild_lyrics(rb, cat_base))
+                all_recs_base.append(rb)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for s in sample_seeds:
+            rm = sys_mert.recommend(s, top_k=10)
+            if rm:
+                ild_mert_vals.append(ild_lyrics(rm, cat_mert))
+                all_recs_mert.append(rm)
 
     ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_mert = float(np.mean(ild_mert_vals)) if ild_mert_vals else 0.0
@@ -1152,8 +1235,10 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
         queries = stratified_sample(cat_mert.df, n=500, seed=42)
 
     print(f"\n[pillar_a] Computing property metrics ({len(queries)} queries)...")
-    prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
-    prop_mert = _run_system(sys_mert, queries, cat_mert, top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        prop_mert = _run_system(sys_mert, queries, cat_mert, top_k=10)
 
     # Load iter_3 for context
     iter3_path = "var/runtime/backtest/reports/iter_3_pillar_D/report.json"
@@ -1175,6 +1260,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
                 "mert_embeddings_file": mert_path,
                 "mert_model": cfg.MERT_MODEL,
                 "mert_layer": cfg.MERT_LAYER,
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap_ndcg": {
@@ -1231,7 +1317,8 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
         _update_config_enable_mert(True)
         print("[pillar_a] config.ENABLE_MERT set to True.")
     else:
-        print("[pillar_a] Gate FAILED — config.ENABLE_MERT remains False.")
+        _update_config_enable_mert(False)
+        print("[pillar_a] Gate FAILED — config.ENABLE_MERT reverted to False.")
 
     return 0 if gate_pass else 1
 
@@ -1292,68 +1379,63 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_d] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    print("[pillar_d] Loading catalog...")
-    catalog = Catalog.load()
+    print("[pillar_d] Building isolated v7.2 catalog (all pillars off)...")
+    catalog = Catalog.build_isolated(dict(V72_BASELINE_FLAGS))
 
     sys_greedy = BrightifyBaseline(catalog)
     sys_mmr    = BrightifyBaseline(catalog)
 
-    import core.recommendation_engine as _eng
+    base_rec_flags  = {"DIVERSITY_METHOD": "greedy", "ENABLE_RRF": False, "ENABLE_VN_CONTEXT": False}
+    treat_rec_flags = {"DIVERSITY_METHOD": "mmr",    "ENABLE_RRF": False, "ENABLE_VN_CONTEXT": False}
 
-    def _recommend(system, seed_idx: int, top_k: int, method: str) -> list:
-        old = _eng.DIVERSITY_METHOD
-        _eng.DIVERSITY_METHOD = method
-        try:
-            return system.recommend(seed_idx, top_k=top_k)
-        finally:
-            _eng.DIVERSITY_METHOD = old
+    seeds = list(gt_mapping.keys())
+    rng = np.random.default_rng(42)
+    if len(seeds) > 200:
+        sample_set = {seeds[i] for i in rng.choice(len(seeds), 200, replace=False).tolist()}
+    else:
+        sample_set = set(seeds)
 
-    # --- Per-query NDCG@10 for paired bootstrap ---
-    print("\n[pillar_d] Computing per-query NDCG@10 (greedy vs MMR)...")
+    ild_g: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
+    ild_m: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
+
+    # --- Greedy arm (v7.2, DIVERSITY_METHOD pinned greedy) ---
+    print("\n[pillar_d] Computing greedy arm (v7.2)...")
     ndcg_greedy_pq: list = []
-    ndcg_mmr_pq: list    = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rg = _recommend(sys_greedy, seed_idx, 10, "greedy")
-        rm = _recommend(sys_mmr,    seed_idx, 10, "mmr")
-        ndcg_greedy_pq.append(ndcg_at_k(rg, rel_set, 10) if rg else 0.0)
-        ndcg_mmr_pq.append(   ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
+    with _pinned_recommend_flags(**base_rec_flags):
+        for seed_idx, relevant in gt_mapping.items():
+            rg = sys_greedy.recommend(seed_idx, top_k=10)
+            ndcg_greedy_pq.append(ndcg_at_k(rg, set(relevant), 10) if rg else 0.0)
+            if seed_idx in sample_set and rg:
+                ild_g["lyrics"].append(ild_lyrics(rg, catalog))
+                ild_g["audio"].append(ild_audio(rg, catalog))
+                ild_g["va"].append(ild_va(rg, catalog))
+                ild_g["color"].append(ild_color(rg, catalog))
 
-    _seeds_d = list(gt_mapping.keys())
-    _sc_greedy = dict(zip(_seeds_d, ndcg_greedy_pq))
-    _sc_mmr    = dict(zip(_seeds_d, ndcg_mmr_pq))
+    # --- MMR arm (v7.2 + MMR rerank) ---
+    print("[pillar_d] Computing MMR arm (v7.2 + MMR)...")
+    ndcg_mmr_pq: list = []
+    with _pinned_recommend_flags(**treat_rec_flags):
+        for seed_idx, relevant in gt_mapping.items():
+            rm = sys_mmr.recommend(seed_idx, top_k=10)
+            ndcg_mmr_pq.append(ndcg_at_k(rm, set(relevant), 10) if rm else 0.0)
+            if seed_idx in sample_set and rm:
+                ild_m["lyrics"].append(ild_lyrics(rm, catalog))
+                ild_m["audio"].append(ild_audio(rm, catalog))
+                ild_m["va"].append(ild_va(rm, catalog))
+                ild_m["color"].append(ild_color(rm, catalog))
+
+    _sc_greedy = dict(zip(seeds, ndcg_greedy_pq))
+    _sc_mmr    = dict(zip(seeds, ndcg_mmr_pq))
     _clusters_d = build_cluster_seeds(playlists)
     delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_greedy, _sc_mmr, _clusters_d, n_boot=10_000)
     mean_greedy = float(np.mean(ndcg_greedy_pq))
     mean_mmr    = float(np.mean(ndcg_mmr_pq))
 
-    print(f"\n[pillar_d] Paired bootstrap NDCG@10 (N={len(ndcg_greedy_pq)}, n_boots=10000):")
+    print(f"\n[pillar_d] Cluster bootstrap NDCG@10 "
+          f"(N={len(ndcg_greedy_pq)} queries / {len(_clusters_d)} playlists, n_boots=10000):")
     print(f"  greedy mean = {mean_greedy:.5f}")
     print(f"  mmr    mean = {mean_mmr:.5f}")
     print(f"  delta  = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
-
-    # --- ILD comparison (sample 200 queries) ---
-    print("\n[pillar_d] Computing ILD metrics (sample 200 queries)...")
-    rng = np.random.default_rng(42)
-    sample_seeds = list(gt_mapping.keys())
-    if len(sample_seeds) > 200:
-        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
-
-    ild_g: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
-    ild_m: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
-    for s in sample_seeds:
-        rg = _recommend(sys_greedy, s, 10, "greedy")
-        rm = _recommend(sys_mmr,    s, 10, "mmr")
-        if rg:
-            ild_g["lyrics"].append(ild_lyrics(rg, catalog))
-            ild_g["audio"].append(ild_audio(rg, catalog))
-            ild_g["va"].append(ild_va(rg, catalog))
-            ild_g["color"].append(ild_color(rg, catalog))
-        if rm:
-            ild_m["lyrics"].append(ild_lyrics(rm, catalog))
-            ild_m["audio"].append(ild_audio(rm, catalog))
-            ild_m["va"].append(ild_va(rm, catalog))
-            ild_m["color"].append(ild_color(rm, catalog))
 
     def _mean(lst): return float(np.mean(lst)) if lst else 0.0
 
@@ -1400,11 +1482,10 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     from tools.backtest_v2.core import _run_system
     print(f"\n[pillar_d] Computing property metrics ({len(queries)} queries)...")
 
-    _eng.DIVERSITY_METHOD = "greedy"
-    prop_greedy = _run_system(sys_greedy, queries, catalog, top_k=10)
-    _eng.DIVERSITY_METHOD = "mmr"
-    prop_mmr    = _run_system(sys_mmr,    queries, catalog, top_k=10)
-    _eng.DIVERSITY_METHOD = "mmr"  # restore default
+    with _pinned_recommend_flags(**base_rec_flags):
+        prop_greedy = _run_system(sys_greedy, queries, catalog, top_k=10)
+    with _pinned_recommend_flags(**treat_rec_flags):
+        prop_mmr    = _run_system(sys_mmr,    queries, catalog, top_k=10)
 
     # Load iter_2 for previous baseline
     iter2_path = "var/runtime/backtest/reports/iter_2_pillar_B/report.json"
@@ -1425,6 +1506,7 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
             "pillar_d": {
                 "method": "mmr",
                 "lambda": 0.7,
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap_ndcg": {
@@ -1548,72 +1630,60 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_c] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    print("[pillar_c] Loading catalog...")
-    catalog = Catalog.load()
+    print("[pillar_c] Building isolated v7.2 catalog (all pillars off)...")
+    catalog = Catalog.build_isolated(dict(V72_BASELINE_FLAGS))
 
-    import core.recommendation_engine as _eng
-
-    def _recommend_no_rrf(system, seed_idx: int, top_k: int) -> list:
-        old = _eng.ENABLE_RRF
-        _eng.ENABLE_RRF = False
-        try:
-            return system.recommend(seed_idx, top_k=top_k)
-        finally:
-            _eng.ENABLE_RRF = old
-
-    def _recommend_rrf(system, seed_idx: int, top_k: int) -> list:
-        old = _eng.ENABLE_RRF
-        _eng.ENABLE_RRF = True
-        try:
-            return system.recommend(seed_idx, top_k=top_k)
-        finally:
-            _eng.ENABLE_RRF = old
+    base_rec_flags  = {"ENABLE_RRF": False, "DIVERSITY_METHOD": "greedy", "ENABLE_VN_CONTEXT": False}
+    treat_rec_flags = {"ENABLE_RRF": True,  "DIVERSITY_METHOD": "greedy", "ENABLE_VN_CONTEXT": False}
 
     sys_base = BrightifyBaseline(catalog)
     sys_rrf  = PillarCBaseline(catalog)
 
-    # --- Per-query NDCG@10 for paired bootstrap ---
-    print("\n[pillar_c] Computing per-query NDCG@10 (no-RRF vs RRF)...")
-    ndcg_base_pq: list = []
-    ndcg_rrf_pq: list  = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rb = _recommend_no_rrf(sys_base, seed_idx, 10)
-        rr = _recommend_rrf(sys_rrf, seed_idx, 10)
-        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
-        ndcg_rrf_pq.append(ndcg_at_k(rr, rel_set, 10) if rr else 0.0)
+    seeds = list(gt_mapping.keys())
+    rng = np.random.default_rng(42)
+    if len(seeds) > 200:
+        sample_set = {seeds[i] for i in rng.choice(len(seeds), 200, replace=False).tolist()}
+    else:
+        sample_set = set(seeds)
 
-    _seeds_c = list(gt_mapping.keys())
-    _sc_base_c = dict(zip(_seeds_c, ndcg_base_pq))
-    _sc_rrf_c  = dict(zip(_seeds_c, ndcg_rrf_pq))
+    # --- Base arm (v7.2, RRF off) ---
+    print("\n[pillar_c] Computing base arm (v7.2, no RRF)...")
+    ndcg_base_pq: list = []
+    ild_base_vals: list = []
+    all_recs_base: list = []
+    with _pinned_recommend_flags(**base_rec_flags):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+            if seed_idx in sample_set and rb:
+                ild_base_vals.append(ild_lyrics(rb, catalog))
+                all_recs_base.append(rb)
+
+    # --- Treatment arm (v7.2 + RRF) ---
+    print("[pillar_c] Computing treatment arm (v7.2 + RRF)...")
+    ndcg_rrf_pq: list = []
+    ild_rrf_vals: list = []
+    all_recs_rrf: list = []
+    with _pinned_recommend_flags(**treat_rec_flags):
+        for seed_idx, relevant in gt_mapping.items():
+            rr = sys_rrf.recommend(seed_idx, top_k=10)
+            ndcg_rrf_pq.append(ndcg_at_k(rr, set(relevant), 10) if rr else 0.0)
+            if seed_idx in sample_set and rr:
+                ild_rrf_vals.append(ild_lyrics(rr, catalog))
+                all_recs_rrf.append(rr)
+
+    _sc_base_c = dict(zip(seeds, ndcg_base_pq))
+    _sc_rrf_c  = dict(zip(seeds, ndcg_rrf_pq))
     _clusters_c = build_cluster_seeds(playlists)
     delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_c, _sc_rrf_c, _clusters_c, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_rrf  = float(np.mean(ndcg_rrf_pq))
 
-    print(f"\n[pillar_c] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"\n[pillar_c] Cluster bootstrap NDCG@10 "
+          f"(N={len(ndcg_base_pq)} queries / {len(_clusters_c)} playlists, n_boots=10000):")
     print(f"  baseline (no-RRF)  mean = {mean_base:.5f}")
     print(f"  pillar_c (RRF)     mean = {mean_rrf:.5f}")
     print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
-
-    # --- ILD + Coverage comparison (200 sample queries) ---
-    print("\n[pillar_c] Computing ILD + coverage (sample 200 queries)...")
-    rng = np.random.default_rng(42)
-    sample_seeds = list(gt_mapping.keys())
-    if len(sample_seeds) > 200:
-        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
-
-    ild_base_vals, ild_rrf_vals = [], []
-    all_recs_base, all_recs_rrf = [], []
-    for s in sample_seeds:
-        rb = _recommend_no_rrf(sys_base, s, 10)
-        rr = _recommend_rrf(sys_rrf, s, 10)
-        if rb:
-            ild_base_vals.append(ild_lyrics(rb, catalog))
-            all_recs_base.append(rb)
-        if rr:
-            ild_rrf_vals.append(ild_lyrics(rr, catalog))
-            all_recs_rrf.append(rr)
 
     ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_rrf  = float(np.mean(ild_rrf_vals))  if ild_rrf_vals  else 0.0
@@ -1623,23 +1693,25 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     print(f"  ILD_lyrics  base={ild_base:.5f}  rrf={ild_rrf:.5f}  threshold={ild_base*0.95:.5f}")
     print(f"  Coverage    base={cov_base:.4f}  rrf={cov_rrf:.4f}  threshold={cov_base*0.95:.4f}")
 
-    # --- Latency (200 calls, 20-call warmup) ---
+    # --- Latency (200 calls, 20-call warmup), each arm under its pin ---
     print("\n[pillar_c] Measuring latency (200 calls each)...")
     all_seeds = list(gt_mapping.keys())
     lat_seeds = (all_seeds * 10)[:200]
-    for s in lat_seeds[:20]:
-        _recommend_no_rrf(sys_base, s, 10)
-        _recommend_rrf(sys_rrf, s, 10)
+    with _pinned_recommend_flags(**base_rec_flags):
+        for s in lat_seeds[:20]:
+            sys_base.recommend(s, top_k=10)
+        t0 = time.perf_counter()
+        for s in lat_seeds:
+            sys_base.recommend(s, top_k=10)
+        lat_base_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
-    t0 = time.perf_counter()
-    for s in lat_seeds:
-        _recommend_no_rrf(sys_base, s, 10)
-    lat_base_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
-
-    t0 = time.perf_counter()
-    for s in lat_seeds:
-        _recommend_rrf(sys_rrf, s, 10)
-    lat_rrf_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+    with _pinned_recommend_flags(**treat_rec_flags):
+        for s in lat_seeds[:20]:
+            sys_rrf.recommend(s, top_k=10)
+        t0 = time.perf_counter()
+        for s in lat_seeds:
+            sys_rrf.recommend(s, top_k=10)
+        lat_rrf_avg = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
     print(f"  avg latency baseline = {lat_base_avg:.1f} ms")
     print(f"  avg latency rrf      = {lat_rrf_avg:.1f} ms  "
@@ -1676,11 +1748,10 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
         queries = stratified_sample(catalog.df, n=500, seed=42)
 
     print(f"\n[pillar_c] Computing property metrics ({len(queries)} queries)...")
-    _eng.ENABLE_RRF = False
-    prop_base = _run_system(sys_base, queries, catalog, top_k=10)
-    _eng.ENABLE_RRF = True
-    prop_rrf  = _run_system(sys_rrf, queries, catalog, top_k=10)
-    _eng.ENABLE_RRF = True  # restore
+    with _pinned_recommend_flags(**base_rec_flags):
+        prop_base = _run_system(sys_base, queries, catalog, top_k=10)
+    with _pinned_recommend_flags(**treat_rec_flags):
+        prop_rrf  = _run_system(sys_rrf, queries, catalog, top_k=10)
 
     # Load iter_4 for comparison context
     iter4_path = "var/runtime/backtest/reports/iter_4_pillar_A/report.json"
@@ -1703,6 +1774,7 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
                 "rrf_k": cfg.RRF_K,
                 "rrf_candidate_size": cfg.RRF_CANDIDATE_SIZE,
                 "reranker_model": cfg.RERANKER_MODEL,
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap_ndcg": {
@@ -1763,7 +1835,8 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
         _update_config_enable_rrf(True)
         print("[pillar_c] config.ENABLE_RRF default set to True.")
     else:
-        print("[pillar_c] Gate FAILED — config.ENABLE_RRF unchanged (True, env-driven).")
+        _update_config_enable_rrf(False)
+        print("[pillar_c] Gate FAILED — config.ENABLE_RRF reverted to False.")
 
     return 0 if gate_pass else 1
 
@@ -1831,57 +1904,61 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_e] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    # Lexicon-only catalog — fresh instance, ENABLE_CLAP_EMOTION=False
-    print("[pillar_e] Loading lexicon-only catalog (ENABLE_CLAP_EMOTION=False)...")
-    cat_lexicon = Catalog.load_fresh(ENABLE_CLAP_EMOTION=False)
+    # --- Fixed v7.2 baseline isolation: base = lexicon emotion, treat = CLAP emotion ---
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_CLAP_EMOTION": True}
 
-    # CLAP catalog — fresh instance, ENABLE_CLAP_EMOTION=True
-    print("[pillar_e] Loading CLAP catalog (ENABLE_CLAP_EMOTION=True)...")
-    cat_clap = Catalog.load_fresh(ENABLE_CLAP_EMOTION=True)
+    print("[pillar_e] Building lexicon-only catalog (v7.2, lexicon emotion)...")
+    cat_lexicon = Catalog.build_isolated(base_flags)
+    print("[pillar_e] Building CLAP catalog (v7.2 + CLAP emotion)...")
+    cat_clap = Catalog.build_isolated(treat_flags)
+    assert "fused_emotion" in cat_lexicon.df.columns and "fused_emotion" in cat_clap.df.columns, \
+        "[pillar_e] fused_emotion must exist in both arms"
 
     sys_lexicon = BrightifyBaseline(cat_lexicon)
     sys_clap    = BrightifyBaseline(cat_clap)
 
-    # --- Per-query NDCG@10 for paired bootstrap ---
-    print("\n[pillar_e] Computing per-query NDCG@10 (lexicon vs CLAP)...")
-    ndcg_lex_pq: list = []
-    ndcg_clap_pq: list = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rl = sys_lexicon.recommend(seed_idx, top_k=10)
-        rc = sys_clap.recommend(seed_idx, top_k=10)
-        ndcg_lex_pq.append(ndcg_at_k(rl, rel_set, 10) if rl else 0.0)
-        ndcg_clap_pq.append(ndcg_at_k(rc, rel_set, 10) if rc else 0.0)
+    seeds = list(gt_mapping.keys())
+    rng = np.random.default_rng(42)
+    if len(seeds) > 200:
+        sample_set = {seeds[i] for i in rng.choice(len(seeds), 200, replace=False).tolist()}
+    else:
+        sample_set = set(seeds)
 
-    _seeds_e = list(gt_mapping.keys())
-    _sc_lex_e  = dict(zip(_seeds_e, ndcg_lex_pq))
-    _sc_clap_e = dict(zip(_seeds_e, ndcg_clap_pq))
+    # --- Lexicon arm (v7.2) ---
+    print("\n[pillar_e] Computing lexicon arm (v7.2)...")
+    ndcg_lex_pq: list = []
+    ild_lex_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rl = sys_lexicon.recommend(seed_idx, top_k=10)
+            ndcg_lex_pq.append(ndcg_at_k(rl, set(relevant), 10) if rl else 0.0)
+            if seed_idx in sample_set and rl:
+                ild_lex_vals.append(ild_lyrics(rl, cat_lexicon))
+
+    # --- CLAP arm (v7.2 + CLAP emotion) ---
+    print("[pillar_e] Computing CLAP arm (v7.2 + CLAP)...")
+    ndcg_clap_pq: list = []
+    ild_clap_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rc = sys_clap.recommend(seed_idx, top_k=10)
+            ndcg_clap_pq.append(ndcg_at_k(rc, set(relevant), 10) if rc else 0.0)
+            if seed_idx in sample_set and rc:
+                ild_clap_vals.append(ild_lyrics(rc, cat_clap))
+
+    _sc_lex_e  = dict(zip(seeds, ndcg_lex_pq))
+    _sc_clap_e = dict(zip(seeds, ndcg_clap_pq))
     _clusters_e = build_cluster_seeds(playlists)
     delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_lex_e, _sc_clap_e, _clusters_e, n_boot=10_000)
     mean_lex  = float(np.mean(ndcg_lex_pq))
     mean_clap = float(np.mean(ndcg_clap_pq))
 
-    print(f"\n[pillar_e] Paired bootstrap NDCG@10 (N={len(ndcg_lex_pq)}, n_boots=10000):")
+    print(f"\n[pillar_e] Cluster bootstrap NDCG@10 "
+          f"(N={len(ndcg_lex_pq)} queries / {len(_clusters_e)} playlists, n_boots=10000):")
     print(f"  lexicon mean = {mean_lex:.5f}")
     print(f"  clap    mean = {mean_clap:.5f}")
     print(f"  delta   = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
-
-    # --- ILD comparison ---
-    print("\n[pillar_e] Computing ILD_lyrics (sample 200 queries)...")
-    rng = np.random.default_rng(42)
-    sample_seeds = list(gt_mapping.keys())
-    if len(sample_seeds) > 200:
-        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
-
-    ild_lex_vals: list = []
-    ild_clap_vals: list = []
-    for s in sample_seeds:
-        rl = sys_lexicon.recommend(s, top_k=10)
-        rc = sys_clap.recommend(s, top_k=10)
-        if rl:
-            ild_lex_vals.append(ild_lyrics(rl, cat_lexicon))
-        if rc:
-            ild_clap_vals.append(ild_lyrics(rc, cat_clap))
 
     ild_lex  = float(np.mean(ild_lex_vals))  if ild_lex_vals  else 0.0
     ild_clap = float(np.mean(ild_clap_vals)) if ild_clap_vals else 0.0
@@ -1929,8 +2006,10 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
         queries = stratified_sample(cat_lexicon.df, n=500, seed=42)
 
     print(f"\n[pillar_e] Computing property metrics ({len(queries)} queries)...")
-    prop_lexicon = _run_system(sys_lexicon, queries, cat_lexicon, top_k=10)
-    prop_clap    = _run_system(sys_clap,    queries, cat_clap,    top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        prop_lexicon = _run_system(sys_lexicon, queries, cat_lexicon, top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        prop_clap    = _run_system(sys_clap,    queries, cat_clap,    top_k=10)
 
     iter5_path = "var/runtime/backtest/reports/iter_5_pillar_C/report.json"
     iter5_report: dict = {}
@@ -1951,6 +2030,7 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
                 "model": _cfg.CLAP_MODEL,
                 "clap_emotions_file": _cfg.CLAP_EMOTIONS_FILE,
                 "clap_coverage_pct": round(clap_cov * 100, 2),
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap_ndcg": {
@@ -2002,7 +2082,8 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
         _update_config_enable_clap_emotion(True)
         print("[pillar_e] Gate PASSED — ENABLE_CLAP_EMOTION=True set as default.")
     else:
-        print("[pillar_e] Gate FAILED — ENABLE_CLAP_EMOTION stays False.")
+        _update_config_enable_clap_emotion(False)
+        print("[pillar_e] Gate FAILED — ENABLE_CLAP_EMOTION reverted to False.")
 
     return 0 if gate_pass else 1
 
@@ -2044,57 +2125,61 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_f] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    # Baseline — fresh instance, KG+context disabled
-    print("[pillar_f] Loading baseline catalog (KG+context disabled)...")
-    cat_base = Catalog.load_fresh(ENABLE_KG=False, ENABLE_VN_CONTEXT=False)
+    # --- Fixed v7.2 baseline isolation: base = all pillars off, treat = +KG +VN ---
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_KG": True, "ENABLE_VN_CONTEXT": True}
 
-    # Pillar F — fresh instance, KG+context enabled
-    print("[pillar_f] Loading Pillar F catalog (KG+context enabled)...")
-    cat_kg = Catalog.load_fresh(ENABLE_KG=True, ENABLE_VN_CONTEXT=True)
+    print("[pillar_f] Building baseline catalog (v7.2: all pillars off)...")
+    cat_base = Catalog.build_isolated(base_flags)
+    print("[pillar_f] Building treatment catalog (v7.2 + KG + VN context)...")
+    cat_kg = Catalog.build_isolated(treat_flags)
+    assert cat_base.rec.kg_matrix is None,  "[pillar_f] baseline must NOT load KG"
+    assert cat_kg.rec.kg_matrix is not None, "[pillar_f] treatment MUST load KG"
 
     sys_base = BrightifyBaseline(cat_base)
     sys_kg   = BrightifyBaseline(cat_kg)
 
-    # --- Per-query NDCG@10 for paired bootstrap ---
-    print("\n[pillar_f] Computing per-query NDCG@10 (base vs KG+context)...")
-    ndcg_base_pq: list = []
-    ndcg_kg_pq: list = []
-    for seed_idx, relevant in gt_mapping.items():
-        rel_set = set(relevant)
-        rb = sys_base.recommend(seed_idx, top_k=10)
-        rk = sys_kg.recommend(seed_idx, top_k=10)
-        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
-        ndcg_kg_pq.append(  ndcg_at_k(rk, rel_set, 10) if rk else 0.0)
+    seeds = list(gt_mapping.keys())
+    rng = np.random.default_rng(42)
+    if len(seeds) > 200:
+        sample_set = {seeds[i] for i in rng.choice(len(seeds), 200, replace=False).tolist()}
+    else:
+        sample_set = set(seeds)
 
-    _seeds_f = list(gt_mapping.keys())
-    _sc_base_f = dict(zip(_seeds_f, ndcg_base_pq))
-    _sc_kg_f   = dict(zip(_seeds_f, ndcg_kg_pq))
+    # --- Base arm (recommend-time flags pinned to v7.2) ---
+    print("\n[pillar_f] Computing base arm (v7.2)...")
+    ndcg_base_pq: list = []
+    ild_base_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+            if seed_idx in sample_set and rb:
+                ild_base_vals.append(ild_lyrics(rb, cat_base))
+
+    # --- Treatment arm (recommend-time flags pinned to v7.2 + KG/VN) ---
+    print("[pillar_f] Computing treatment arm (v7.2 + KG)...")
+    ndcg_kg_pq: list = []
+    ild_kg_vals: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rk = sys_kg.recommend(seed_idx, top_k=10)
+            ndcg_kg_pq.append(ndcg_at_k(rk, set(relevant), 10) if rk else 0.0)
+            if seed_idx in sample_set and rk:
+                ild_kg_vals.append(ild_lyrics(rk, cat_kg))
+
+    _sc_base_f = dict(zip(seeds, ndcg_base_pq))
+    _sc_kg_f   = dict(zip(seeds, ndcg_kg_pq))
     _clusters_f = build_cluster_seeds(playlists)
     delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_f, _sc_kg_f, _clusters_f, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_kg   = float(np.mean(ndcg_kg_pq))
 
-    print(f"\n[pillar_f] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"\n[pillar_f] Cluster bootstrap NDCG@10 "
+          f"(N={len(ndcg_base_pq)} queries / {len(_clusters_f)} playlists, n_boots=10000):")
     print(f"  base mean = {mean_base:.5f}")
     print(f"  kg   mean = {mean_kg:.5f}")
     print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
-
-    # --- ILD comparison ---
-    print("\n[pillar_f] Computing ILD_lyrics (sample 200 queries)...")
-    rng = np.random.default_rng(42)
-    sample_seeds = list(gt_mapping.keys())
-    if len(sample_seeds) > 200:
-        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
-
-    ild_base_vals: list = []
-    ild_kg_vals: list = []
-    for s in sample_seeds:
-        rb = sys_base.recommend(s, top_k=10)
-        rk = sys_kg.recommend(s, top_k=10)
-        if rb:
-            ild_base_vals.append(ild_lyrics(rb, cat_base))
-        if rk:
-            ild_kg_vals.append(ild_lyrics(rk, cat_kg))
 
     ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_kg   = float(np.mean(ild_kg_vals))   if ild_kg_vals   else 0.0
@@ -2126,8 +2211,10 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
         queries = stratified_sample(cat_base.df, n=500, seed=42)
 
     print(f"\n[pillar_f] Computing property metrics ({len(queries)} queries)...")
-    prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
-    prop_kg   = _run_system(sys_kg,   queries, cat_kg,   top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        prop_base = _run_system(sys_base, queries, cat_base, top_k=10)
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        prop_kg   = _run_system(sys_kg,   queries, cat_kg,   top_k=10)
 
     iter6_path = "var/runtime/backtest/reports/iter_6_pillar_E/report.json"
     iter6_report: dict = {}
@@ -2148,6 +2235,7 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
                 "kg_embeddings_file": _cfg.KG_EMBEDDINGS_FILE,
                 "kg_dim": _cfg.KG_DIM,
                 "enable_vn_context": True,
+                "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
                 "bootstrap_ndcg": {
@@ -2359,7 +2447,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     print("=" * 80)
     print("  CI95 uses cluster bootstrap (resample over 32 playlists, not 1050 queries)")
     print("  to correct pseudo-replication from the editorial GT structure.")
-    print("  Bonferroni-corrected α = 0.05/6 ≈ 0.008 for 6 simultaneous pillar tests.")
+    print("  LIMITATION: gates use per-test 95% CI and do NOT apply a multiple-")
+    print("  comparison correction. With 6 simultaneous pillar tests the family-wise")
+    print("  error rate is ~26%; a Bonferroni target would be α=0.05/6≈0.008.")
     print("  Pillar C / Pillar E: CI=[0,0] is expected — RRF and CLAP do not affect")
     print("  recommend_by_song() paths tested by editorial GT. Their benefit is in")
     print("  recommend_by_colors() / search queries (untested path).")
