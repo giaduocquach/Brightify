@@ -1,26 +1,34 @@
-# PLAN 2 — BACKTEST FRAMEWORK & METRICS ĐÁNH GIÁ
+# PLAN 2 — BACKTEST + CẢI THIỆN HỆ THỐNG (vòng lặp)
 
-**Ngày tạo:** 2026-05-26
-**Phạm vi:** Xây dựng framework backtest offline + metrics đánh giá toàn diện cho recommendation engine của Brightify. Mục tiêu: đo lường có khoa học mọi thay đổi trong [PLAN_SYSTEM_UPGRADE.md].
+**Ngày viết lại:** 2026-05-27 (v3 — tích hợp improvement loop)
+**Thay thế:** bản v2 (2026-05-27) chỉ đo, không có vòng cải thiện.
+**Phạm vi:** Framework backtest offline cho hệ thống **không có user** → đo → tìm điểm yếu → cải thiện → đo lại → báo cáo. Một chu kỳ khép kín.
 
-> **Trạng thái hiện tại:** Đã có endpoint admin `/api/backtest/run`, `/api/backtest/test-weights`, `/api/backtest/dataset-stats` nhưng **chưa có metrics implementation cụ thể**, không có ground truth, không có baseline comparison framework.
+> **3 thay đổi lớn so với bản v2:**
+> 1. **Không có user → chọn metric phù hợp thật sự** — loại hẳn mọi metric cần interaction history, chỉ giữ offline-valid.
+> 2. **Vòng lặp Measure → Identify → Tune → Re-measure** — không chỉ gate mà còn dùng kết quả để cải thiện weights và thứ tự nâng cấp pillar.
+> 3. **Final report template** — định nghĩa trước báo cáo cuối sẽ trình bày gì, kết quả thế nào, cải thiện như nào, lý do.
 
 ---
 
 ## MỤC LỤC
 
 1. [Mục tiêu & nguyên tắc](#1-mục-tiêu--nguyên-tắc)
-2. [Lý thuyết & lựa chọn metric](#2-lý-thuyết--lựa-chọn-metric)
-3. [Kiến trúc backtest framework](#3-kiến-trúc-backtest-framework)
-4. [Ground truth & test set construction](#4-ground-truth--test-set-construction)
-5. [Bộ metric đầy đủ](#5-bộ-metric-đầy-đủ)
-6. [Baseline systems](#6-baseline-systems)
-7. [Backtest scenarios](#7-backtest-scenarios)
-8. [Implementation roadmap](#8-implementation-roadmap)
-9. [Reporting & dashboard](#9-reporting--dashboard)
-10. [User study (qualitative)](#10-user-study-qualitative)
-11. [Continuous evaluation (CI gate)](#11-continuous-evaluation-ci-gate)
-12. [Tài liệu tham khảo](#12-tài-liệu-tham-khảo)
+2. [Data reality — đối chiếu DB thật](#2-data-reality--đối-chiếu-db-thật)
+3. [Offline-only metric selection — tại sao chọn cái này](#3-offline-only-metric-selection)
+4. [Validity threats & cách xử lý](#4-validity-threats--cách-xử-lý)
+5. [Decommission legacy backtest](#5-decommission-legacy-backtest)
+6. [Kiến trúc framework — Measure + Improve loop](#6-kiến-trúc-framework)
+7. [Ground truth strategy](#7-ground-truth-strategy)
+8. [Bộ metric — phân nhóm đầy đủ](#8-bộ-metric)
+9. [Baseline systems](#9-baseline-systems)
+10. [Scenarios — map 1:1 với 6 method thật](#10-scenarios)
+11. [Vòng lặp cải thiện — Weight Opt + Pillar Priority](#11-vòng-lặp-cải-thiện)
+12. [Statistical methodology](#12-statistical-methodology)
+13. [Implementation roadmap (iterative)](#13-implementation-roadmap)
+14. [Final Report Template](#14-final-report-template)
+15. [Backlog — data blocked](#15-backlog)
+16. [Tài liệu tham khảo](#16-tài-liệu-tham-khảo)
 
 ---
 
@@ -28,1011 +36,880 @@
 
 ### 1.1 Mục tiêu
 
-1. **Đo lường khách quan** mọi thay đổi engine (gating mọi PR upgrade).
-2. **So sánh** với baselines (popularity, content-only, alternatives).
-3. **Beyond-accuracy** — không chỉ NDCG/MAP mà còn diversity, novelty, mood-coherence, fairness.
-4. **Reproducible** — bộ test, seed, framework version đều fixed.
-5. **CI-integrated** — pipeline tự động chạy mỗi PR.
+Hệ thống hiện tại **không có user, không có interaction history**. Mọi đánh giá phải offline-valid. Mục tiêu:
+
+1. **Đo trạng thái hiện tại** (v7.2) bằng metric offline hợp lệ.
+2. **Tìm điểm yếu cụ thể** qua ablation và discriminativeness check.
+3. **Cải thiện có căn cứ** — weight optimization + upgrade pillar theo thứ tự ablation chỉ ra.
+4. **Đo lại sau mỗi cải thiện** — so sánh delta có CI.
+5. **Xuất báo cáo cuối** — trình bày toàn bộ chu kỳ: đo gì, kết quả, cải thiện thế nào, lý do.
 
 ### 1.2 Nguyên tắc
 
-1. **No accuracy-only** — McNee 2006 critique: "being accurate is not enough".
-2. **No offline-online overclaim** — Garcin 2014 cảnh báo correlation offline/online yếu. Mọi kết luận "v8 tốt hơn v7" phải pair offline + user study.
-3. **Temporal correctness** — không train trên future, không test trên past (Time-to-Split, RecSys 2025).
-4. **Reproducibility** — seed mọi sampling, version-lock libraries.
-5. **Per-segment analysis** — báo cáo per-quadrant Q1-Q4, per-genre, per-popularity-bucket.
+1. **Offline-first** — không tự nhét metric cần user history vào, không giả vờ chạy được.
+2. **Validity-first** — ground truth phải gắn nhãn `external` / `semi-independent` / `engine-derived`. Chỉ 2 nhãn đầu được dùng để kết luận "tốt hơn".
+3. **No tautology** — không đo engine bằng chính input của nó (V-A/quadrant/emotion là input → không làm relevance label).
+4. **Improvement-driven** — mỗi số đo phải dẫn đến hành động cụ thể (tune weight, upgrade pillar, hoặc "không cần làm gì").
+5. **Reproducible** — seed=42, lock version, catalog đồng nhất với engine.
+6. **Report-ready** — mọi số đo kèm CI 95%, support N, nhãn validity.
 
 ---
 
-## 2. LÝ THUYẾT & LỰA CHỌN METRIC
+## 2. DATA REALITY — ĐỐI CHIẾU DB THẬT
 
-### 2.1 Bài học từ literature
+Truy vấn DB Docker (`brightify_db`, 5,548 songs) ngày 2026-05-27:
 
-| Source | Key takeaway |
-|---|---|
-| **McNee, Riedl, Konstan (CHI 2006)** | Accuracy CAN HURT recsys. Must measure beyond. |
-| **Garcin et al. (RecSys 2014)** | Offline-online correlation weak. Validate online. |
-| **Castells (AI Magazine 2022)** | Offline evaluation challenges: bias, sparsity. |
-| **Time-to-Split (RecSys 2025)** | Leave-one-out có temporal leakage. Dùng global timeline split. |
-| **Critical Reexamination ILD (2023)** | ILD bị bias bởi distance metric. Phải report multiple distance functions. |
-| **itemKNN deviation (arXiv 2407.13531)** | Cùng algo, khác framework → khác kết quả. Phải lock framework version. |
-| **Kaminskas & Bridge (TiiS 2016)** | Diversity, novelty, serendipity, coverage = beyond-accuracy core. |
-| **Vargas & Castells 2011** | EFD (Expected Free Discovery), rank-aware novelty. |
+| Trường | Trạng thái | Dùng được cho |
+|---|---|---|
+| `valence`, `energy`, `arousal` | ✅ 5548/5548 | MoodCoherence, V-A, Calibration |
+| `tempo` | ✅ 5548/5548 | TempoCoherence |
+| `color_hex` | ✅ 5548/5548 | ColorCoherence (CIEDE2000) |
+| PhoBERT 768-dim embeddings | ✅ 5548/5548 | ILD_lyrics, lyrics search |
+| Essentia audio features (timbral/rhythmic/tonal) | ✅ 5548/5548 | ILD_audio, ablation |
+| `fused_emotion` (13 lớp, runtime) | ✅ | Calibration error |
+| `mood_quadrant` | ✅ nhưng **lệch nặng** | Stratify sampling (không làm relevance label) |
+| `mood_tags` (MTG-Jamendo JSON) | ⚠️ chất lượng thấp | Semi-independent GT — phải qua discriminativeness check trước |
+| `genres` / `artist_genres` | ❌ **0 rows** | → Backlog §15 |
+| `popularity` | ❌ **toàn bộ = 0** | → Backlog §15 |
+| `release_year` | ❌ **rỗng** | → Backlog §15 |
+| user interactions | ❌ **dropped** | → Backlog §15 |
 
-### 2.2 Đặc thù Brightify ảnh hưởng metric chọn
+### 2.1 Phân bố mood_quadrant (mất cân bằng nghiêm trọng)
 
-| Đặc thù | Implication |
-|---|---|
-| **Content-based, no user accounts** | Cannot use classic user-CF metrics. Phải dùng synthetic users / item-item / session-based. |
-| **Multimodal (audio + lyrics + color + image)** | Cần per-modality ablation. ILD trên nhiều spaces. |
-| **Vietnamese-specific** | Mood labels phải validated bởi annotators Việt. |
-| **Mood quadrant explicit** | Direct MoodCoherence — unique advantage. |
-| **Catalog ~4,300 songs** | Small enough for full evaluation; lớn enough cho statistical significance. |
+```
+Q3 Sad/Depressed : 3459  (62.3%)
+Q4 Calm/Peaceful : 1991  (35.9%)
+Q1 Happy/Excited :   84  ( 1.5%)
+Q2 Angry/Tense   :   14  ( 0.25%)
+```
+
+Q2 (n=14): **exempt khỏi pass/fail per-quadrant** — chỉ 14 bài, statistically vô nghĩa. Gộp Q1+Q2 = "high-energy" khi cần phân tích.
+Quadrant **chỉ dùng để stratify sampling**, không bao giờ làm relevance label.
 
 ---
 
-## 3. KIẾN TRÚC BACKTEST FRAMEWORK
+## 3. OFFLINE-ONLY METRIC SELECTION
 
-### 3.0 Storage layout cho backtest artifacts
+### Tại sao không dùng metric cần user?
 
-> Tham chiếu [PLAN_DOCKERIZATION.md §7](PLAN_DOCKERIZATION.md#7-data-layout--persistence-master-guide). Backtest artifacts đặt trong T2 (`var/runtime/backtest/`) để versionable, backupable, không trộn với code.
+Hệ thống không có user, không có play history, không có ratings. Các metric phổ biến như RMSE, CTR, dwell time, serendipity user-based, CF precision — **đều cần interaction data**. Cố tình implement chúng = tạo số vô nghĩa.
+
+### Metric hợp lệ cho hệ thống offline content-based:
+
+```
+Câu hỏi đặt ra → Metric trả lời
+
+"Recommendations có đa dạng không?"
+    → ILD (Inter-List Diversity) trong 4 không gian
+
+"Catalog có được phơi bày đều không?"
+    → Coverage, Artist Gini
+
+"Recommendations có giữ mood nhất quán không?"
+    → MoodCoherence, TempoCoherence, ColorCoherence
+
+"Phân bố cảm xúc trong recs có khớp với seed không?"
+    → Calibration error (KL divergence, 13 emotion)
+
+"Nếu A gợi ý B thì B có gợi ý lại A không?"
+    → Similar-song symmetry (consistency)
+
+"Recommendations có bất ngờ / không quá gần seed không?"
+    → Content-serendipity proxy (1 − sim(item, seed))
+
+"Engine chạy nhanh không?"
+    → Latency p50/p95/p99
+
+"Có đúng với playlist người thật tạo không?" (cần crawl)
+    → NDCG@K, Precision@K, Recall@K với editorial playlists
+```
+
+**Bảng quyết định metric — giữ hay bỏ:**
+
+| Metric | Giữ? | Lý do |
+|---|---|---|
+| ILD (4 không gian) | ✅ GIỮ | Hoàn toàn offline, đo diversity recs |
+| Coverage, Artist Gini | ✅ GIỮ | Catalog-level, không cần user |
+| MoodCoherence, TempoCoherence, ColorCoherence | ✅ GIỮ | Brightify-specific, dùng ngay |
+| Calibration error (KL/13 emotion) | ✅ GIỮ | Offline, diagnose emotion distribution |
+| Similar-song symmetry | ✅ GIỮ | Offline consistency check |
+| Content-serendipity proxy | ✅ GIỮ | Proxy hợp lệ khi không có user |
+| Latency p50/p95/p99 | ✅ GIỮ | Operational, không cần data |
+| NDCG/P/R với editorial playlists | ✅ GIỮ (Phase 2+) | External GT, valid |
+| NDCG/P/R với V-A/quadrant làm GT | ❌ BỎ | Tautology — input của engine |
+| Novelty/EFD/AvgPopRank | ❌ BỎ | popularity=0, không có data |
+| GenreCoherence | ❌ BỎ | genres=0, không có data |
+| Serendipity user-based | ❌ BỎ | Cần interaction history |
+| CF baselines | ❌ BỎ | Cần interaction history |
+| Temporal split | ❌ BỎ | release_year rỗng |
+
+---
+
+## 4. VALIDITY THREATS & CÁCH XỬ LÝ
+
+### 4.1 Tautology (mối đe dọa số 1)
+
+Engine `recommend_by_song` fuse 7 signal trong đó có V-A, emotion, mood_quadrant. Nếu ground truth xây từ các trường này thì đo engine bằng chính input của nó → **không phân biệt được v7.2 vs v8.0**.
+
+**Xử lý:** Mọi GT phải gắn nhãn:
+- `external` — editorial playlists từ nguồn ngoài (xếp hạng được)
+- `semi-independent` — mood_tags MTG-Jamendo (không trong fusion, nhưng cần check)
+- `engine-derived` — V-A/quadrant/emotion (chỉ sanity floor, không xếp hạng)
+
+### 4.2 Mất cân bằng quadrant
+
+Q3 = 62.3% → nếu stratify không đúng, mọi số micro sẽ bị Q3 áp đảo. **Bắt buộc stratified sampling** + báo cáo macro (trung bình per-quadrant) lẫn micro.
+
+### 4.3 mood_tags chất lượng thấp
+
+Sample: `{"corporate": 0.179, "slow": 0.116}` — confidence thấp, tag lặp lại. Phải chạy **discriminativeness check** trước khi tin làm semi-independent GT (xem §7.3).
+
+### 4.4 Framework reproducibility
+
+- `seed=42` cho mọi sampling.
+- Catalog đồng nhất: backtest wrap **chính instance `MusicRecommender` đang chạy** (cùng CSV, cùng 5548 hàng).
+- Lock numpy/scikit-learn/scipy version trong report.
+
+---
+
+## 5. DECOMMISSION LEGACY BACKTEST
+
+Làm trước tiên. Legacy `tools/backtest.py` (898 dòng) dùng lazy import — xóa không làm chết app lúc startup.
+
+| File/dòng | Hành động |
+|---|---|
+| `tools/backtest.py` | **Xóa** toàn bộ |
+| `api/system.py` L50 `BacktestRequest` | Xóa model |
+| `api/system.py` L55 `WeightTestRequest` | Xóa model |
+| `api/system.py` L165 `POST /api/backtest/run` | Xóa (wire lại Phase 3) |
+| `api/system.py` L214 `POST /api/backtest/test-weights` | Xóa |
+| `api/system.py` L249 `GET /api/backtest/dataset-stats` | Giữ, rewire sang `backtest_v2.dataset_stats` |
+| Lazy import `from tools.backtest import ...` (L160,169,236,280) | Xóa |
+
+**Salvage ý tưởng** (reimplement sạch, không copy code):
+- Similar-song symmetry/consistency → `metrics/property.py`
+- Color→emotion alignment test → `metrics/property.py`
+- `response_time` tracking → `metrics/operational.py`
+
+---
+
+## 6. KIẾN TRÚC FRAMEWORK
+
+### 6.1 Vòng lặp tổng thể
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  MEASURE (v7.2 baseline)                                │
+│  → Group A: ILD, Coverage, Gini, Coherence, Calibration │
+│  → Group B: NDCG/P/R vs editorial (Phase 2+)            │
+└───────────────┬─────────────────────────────────────────┘
+                │ Kết quả: số baseline + điểm yếu
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  IDENTIFY WEAK SPOTS                                     │
+│  → Ablation: drop từng signal → delta NDCG/ILD          │
+│  → Signal yếu nhất → pillar upgrade đó trước            │
+└───────────────┬─────────────────────────────────────────┘
+                │ Quyết định: tune weights trước, pillar sau
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  IMPROVE                                                 │
+│  → Bước 1: Weight optimization (nhanh, không code nhiều)│
+│  → Bước 2: Pillar upgrade (theo thứ tự ablation)        │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  RE-MEASURE                                              │
+│  → Chạy lại full backtest                               │
+│  → Paired bootstrap: delta vs LOCKED v7.2               │
+│  → CI không chứa 0 → kết luận có ý nghĩa                │
+└───────────────┬─────────────────────────────────────────┘
+                │ Nếu đủ tốt → Final Report
+                │ Nếu chưa → quay lại IDENTIFY
+                ▼
+        FINAL REPORT (§14)
+```
+
+### 6.2 Storage layout
 
 ```
 var/runtime/backtest/
-├── ground_truth/                          # T2, weekly snapshot
-│   ├── mood_based_v1.json                 # Mood/genre/era-based labels (Phương pháp 1)
-│   ├── playlist_editorial_v1.json         # Crawled editorial playlists (Phương pháp 2)
-│   ├── synthetic_users_v1.json            # 500 virtual users + sessions (Phương pháp 3)
-│   ├── vn_mood_gold_v1.json               # Hand-annotated gold standard (Plan 1 Pillar E)
-│   └── manifest.json                      # version info + checksums
-│
-├── test_sets/                             # T2, versioned
-│   ├── backtest_test_set_v1.json          # Combined test set (queries + expected results)
-│   └── backtest_test_set_v2.json          # ... (khi có version mới)
-│
-├── baselines/                             # T2, gold reference
-│   ├── popularity_v1.json
-│   ├── random_v1.json
-│   ├── lyrics_only_v1.json
-│   ├── audio_only_v1.json
-│   ├── va_only_v1.json
-│   ├── brightify_v7.2.json                # LOCKED baseline cho CI gating
-│   └── brightify_v8.0.json                # New baseline sau Plan 1 (per pillar)
-│
-├── reports/                               # T2, archival, off-site backup
-│   └── 2026-05-26_full/                   # Per-run timestamped folder
-│       ├── config.yaml                    # Run config snapshot
-│       ├── report.md                      # Human-readable
-│       ├── report.json                    # Machine-readable (CI gating)
-│       ├── dashboard.html                 # Plotly interactive
-│       ├── per_segment/                   # Per-quadrant, per-genre breakdowns
-│       │   ├── by_quadrant.json
-│       │   ├── by_genre.json
-│       │   └── by_popularity.json
-│       └── raw_predictions/               # For deep debugging (large)
-│           └── brightify_v7.2_predictions.jsonl
-│
-└── ci_artifacts/                          # T2, short retention (last 30 PRs)
-    └── pr_1234/
-        ├── report.json
-        └── delta_vs_baseline.json         # CI gate output
-```
-
-**Path env vars** (từ Plan 3 §7.4):
-
-```bash
-BACKTEST_PATH=/opt/brightify/var/runtime/backtest   # prod
-BACKTEST_PATH=./var/runtime/backtest                 # dev
-```
-
-App đọc qua `BACKTEST_PATH` env var để cùng code chạy được cả dev và prod.
-
-### 3.1 Module structure
-
-```
-tools/backtest/
-├── __init__.py
-├── core.py                  # BacktestRunner main class
-├── metrics/
-│   ├── __init__.py
-│   ├── accuracy.py          # Precision@K, Recall@K, NDCG@K, MAP@K, MRR, Hit@K
-│   ├── diversity.py         # ILD, Coverage, Gini
-│   ├── novelty.py           # EFD, AvgPopularityRank
-│   ├── serendipity.py       # Kaminskas serendipity
-│   ├── music_specific.py    # MoodCoherence, TempoCoherence, GenreCoherence
-│   └── fairness.py          # ArtistGini, ArtistExposure
-├── datasets/
-│   ├── __init__.py
-│   ├── builder.py           # Test set construction
-│   ├── synthetic_users.py   # Virtual user generator
-│   └── ground_truth.py      # Ground truth labeling
+├── ground_truth/
+│   ├── editorial_playlists_v1.json   # PRIMARY — external
+│   ├── mood_tags_weak_v1.json        # SECONDARY — semi-independent (sau check)
+│   ├── va_sanity_v1.json             # SANITY-ONLY — engine-derived
+│   └── manifest.json                 # version + checksum + nhãn validity
+├── test_sets/
+│   └── test_set_v1.json              # 500 queries, stratified seed=42
 ├── baselines/
-│   ├── popularity.py
-│   ├── random_baseline.py
-│   ├── content_lyrics_only.py
-│   ├── content_audio_only.py
-│   └── multimodal_full.py   # Brightify engine reference
-├── runners/
-│   ├── full_evaluation.py
-│   ├── ablation.py
-│   ├── sensitivity.py       # Weight sweep
-│   └── per_segment.py       # Per quadrant/genre/popularity
+│   └── brightify_v7.2.json           # LOCKED — reference cho gating
+├── reports/
+│   ├── iter_0_baseline/              # đo trạng thái gốc
+│   ├── iter_1_weight_opt/            # sau weight optimization
+│   ├── iter_2_pillar_<X>/            # sau mỗi pillar upgrade
+│   └── final/                        # báo cáo tổng kết
+└── weight_search/
+    ├── grid_results.csv
+    └── optimal_weights.yaml          # weights tốt nhất tìm được
+```
+
+### 6.3 Module structure
+
+```
+tools/backtest_v2/
+├── __init__.py
+├── core.py            # BacktestConfig, BacktestRunner, BacktestReport
+├── catalog.py         # wrap MusicRecommender, index mapping
+├── metrics/
+│   ├── property.py    # Group A: ILD(4), Coverage, Gini, Coherence(3), Calibration, symmetry, serendipity_proxy
+│   ├── operational.py # Group A+: Latency p50/p95/p99
+│   └── accuracy.py    # Group B: NDCG, P, R, MAP, MRR, Hit@K
+├── ground_truth/
+│   ├── editorial.py   # crawl + fuzzy-match VN playlists
+│   ├── mood_tags_weak.py
+│   └── va_sanity.py   # sanity floor (tagged engine-derived)
+├── improve/
+│   ├── weight_opt.py  # scipy.optimize, grid search, constraint: ILD không giảm
+│   └── ablation.py    # drop-one-signal, compute delta, rank signals by importance
+├── baselines/
+│   ├── random_b.py  audio_only.py  lyrics_only.py  va_only.py
+│   └── brightify.py   # wrap full engine (inject weights)
+├── stats.py           # stratified sampler, paired bootstrap, CI
 ├── reporters/
 │   ├── markdown.py
-│   ├── json_export.py
-│   └── dashboard_html.py
-└── cli.py                   # CLI entry: python -m tools.backtest run
+│   └── json_export.py
+└── cli.py             # python -m tools.backtest_v2 ...
 ```
 
-### 3.2 Core API
-
-```python
-# tools/backtest/core.py
-
-@dataclass
-class BacktestConfig:
-    catalog_path: Path
-    embeddings_path: Path
-    test_set_path: Path
-    ground_truth_path: Path
-    metrics: List[str] = field(default_factory=lambda: ["all"])
-    k_values: List[int] = field(default_factory=lambda: [5, 10, 20, 50])
-    baselines: List[str] = field(default_factory=lambda: ["popularity", "random", "content_lyrics", "content_audio", "brightify"])
-    output_dir: Path = Path("logs/backtest")
-    seed: int = 42
-
-class BacktestRunner:
-    def __init__(self, config: BacktestConfig):
-        self.config = config
-        self.dataset = TestSet.load(config.test_set_path)
-        self.ground_truth = GroundTruth.load(config.ground_truth_path)
-        self.systems = {name: build_baseline(name) for name in config.baselines}
-
-    def run(self) -> BacktestReport:
-        results = {}
-        for system_name, system in self.systems.items():
-            predictions = system.predict_all(self.dataset)
-            results[system_name] = self._compute_all_metrics(predictions)
-        return BacktestReport(results)
-
-    def _compute_all_metrics(self, predictions):
-        return {
-            "accuracy": compute_accuracy(predictions, self.ground_truth, self.config.k_values),
-            "diversity": compute_diversity(predictions, self.dataset.embeddings),
-            "novelty": compute_novelty(predictions, self.dataset.popularity),
-            "music_specific": compute_music_metrics(predictions, self.dataset.catalog),
-            "fairness": compute_fairness(predictions, self.dataset.catalog),
-        }
-```
-
-### 3.3 CLI
+### 6.4 CLI
 
 ```bash
-# Full evaluation
-python -m tools.backtest run --config configs/backtest_full.yaml
+# Đo baseline
+python -m tools.backtest_v2 run --config configs/backtest_v0.yaml
 
-# Ablation: remove one signal at a time
-python -m tools.backtest ablation --signals timbral,rhythmic,tonal,lyrics,va,emotion,mood
+# Đo với external GT
+python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1
 
-# Weight sweep
-python -m tools.backtest sensitivity --weight lyrics --range 0.15,0.35,0.05
+# Ablation (sau khi refactor weights→config)
+python -m tools.backtest_v2 ablation --signals timbral,rhythmic,tonal,lyrics,va,emotion,mood
 
-# Per-segment
-python -m tools.backtest segment --by mood_quadrant
-python -m tools.backtest segment --by genre
-python -m tools.backtest segment --by popularity_bucket
+# Weight optimization
+python -m tools.backtest_v2 optimize-weights --ground-truth editorial_playlists_v1 \
+    --method recommend_by_song --constraint "ild_lyrics >= baseline * 0.95"
+
+# So sánh 2 iteration
+python -m tools.backtest_v2 compare iter_0_baseline iter_1_weight_opt
+
+# Sinh báo cáo cuối
+python -m tools.backtest_v2 final-report --iterations iter_0,iter_1,iter_2
 ```
 
 ---
 
-## 4. GROUND TRUTH & TEST SET CONSTRUCTION
+## 7. GROUND TRUTH STRATEGY
 
-### 4.1 Vấn đề
+| # | Nguồn | Nhãn validity | Vai trò | Effort |
+|---|---|---|---|---|
+| 1 | Editorial VN playlists (crawl 50–100) | `external` | **PRIMARY** — xếp hạng version, weight opt | Cao |
+| 2 | mood_tags MTG-Jamendo | `semi-independent` | SECONDARY (sau khi qua §7.3) | Thấp |
+| 3 | V-A / quadrant / emotion | `engine-derived` | **SANITY-ONLY** — phát hiện hỏng nặng | Rất thấp |
 
-Brightify không có user history → không có "real" ground truth từ implicit feedback. Phải tạo ground truth synthetic.
+### 7.1 Editorial playlists (PRIMARY, Phase 2)
 
-### 4.2 Phương pháp 1: Mood/Genre/Era-based ground truth
+**Nguồn crawl: YouTube Music qua `ytmusicapi`** — đã có sẵn trong codebase (`tools/collect_data.py`), không cần auth, có `get_playlist(playlistId, limit=None)` và `search(query, filter="playlists")`.
 
-**Cho mỗi seed song, "relevant items" là:**
-- Cùng mood_quadrant (Q1-Q4) ⇒ relevance = 0.5
-- Cùng top-3 emotion tags ⇒ relevance += 0.3
-- Cùng genre primary ⇒ relevance += 0.2
-- Cùng era (5-year window) ⇒ relevance += 0.1
-- Cosine V-A distance < 0.2 ⇒ relevance += 0.2
-
-Cap relevance at 1.0. Tracks with relevance ≥ 0.5 → relevant set.
-
-**Pros:** Deterministic, reproducible, scalable.
-**Cons:** Tautological — engine training trên cùng features sẽ tự động "đúng".
-
-### 4.3 Phương pháp 2: Editorial playlist labels
-
-**Sử dụng playlists thực tế từ YTMusic/Spotify VN làm ground truth:**
-
-- Crawl 100-200 editorial Vietnamese playlists ("Top Hits V-pop", "Buồn man mác", "Nhạc Tết 2026", ...)
-- Mỗi playlist = một "query intent".
-- Tracks trong playlist = relevant items.
-- Tracks ngoài = irrelevant.
-
-**Workflow:**
-
-```
-tools/backtest/datasets/playlist_crawler.py:
-  - Crawl playlist với keyword search (mood, theme, genre)
-  - Lưu: {playlist_id, name, description, tracks: [track_ids]}
-  - Map track_ids → Brightify catalog (fuzzy match name+artist)
-
-Filter:
-  - Drop playlists < 10 tracks Brightify catalog hit
-  - Drop playlists > 70% catalog coverage (too general)
-  - Keep ~100 high-quality playlists
-```
-
-**Pros:** External validation; matches real-world Vietnamese taste.
-**Cons:** Editorial biased toward popular; ToS compliance.
-
-### 4.4 Phương pháp 3: Synthetic users (BPR-style)
-
-Tạo "virtual users" với taste profile rõ ràng:
+**Protocol crawl:**
 
 ```python
-# tools/backtest/datasets/synthetic_users.py
+# tools/backtest_v2/ground_truth/editorial.py
+from ytmusicapi import YTMusic
 
-@dataclass
-class SyntheticUser:
-    user_id: str
-    favorite_quadrant: str           # Q1-Q4
-    favorite_genres: List[str]
-    favorite_emotions: List[str]
-    preferred_era: Tuple[int, int]   # year range
-    diversity_preference: float       # 0=consistent, 1=eclectic
+PLAYLIST_QUERIES = [
+    "nhạc buồn tâm trạng", "nhạc chill việt nam", "nhạc tập trung học bài",
+    "nhạc tan làm thư giãn", "nhạc đôi lứa couple", "nhạc tết vui",
+    "nhạc gym tập thể dục", "nhạc indie việt", "v-pop ballad hay nhất",
+    "nhạc acoustic việt nam", "nhạc rap việt", "nhạc trữ tình",
+]
 
-def generate_users(n=500, seed=42) -> List[SyntheticUser]:
-    # ...
+def crawl_editorial_playlists(n_queries=50):
+    yt = YTMusic()
+    playlists = []
+    for q in PLAYLIST_QUERIES:
+        results = yt.search(q, filter="playlists", limit=5)
+        for r in results:
+            pl = yt.get_playlist(r["playlistId"], limit=None)
+            playlists.append({"intent": q, "tracks": pl["tracks"]})
+    return playlists
 
-def simulate_listening_history(user: SyntheticUser, catalog, n_listens=50):
-    """Sample songs từ catalog theo preference; weighted random."""
-    # ...
+def fuzzy_match_to_catalog(playlists, catalog_df):
+    # normalize diacritics (unicodedata.normalize NFKD)
+    # match bằng track_name + artist, threshold cosine ≥ 0.85
+    # trả về: {playlist_intent: [catalog_idx, ...]}
+    ...
 ```
 
-**Mỗi virtual user → leave-N-out evaluation:** mask N% history, dùng engine predict, đo accuracy.
+**Filter sau crawl:**
+- Bỏ playlist < 10 hit trong catalog.
+- Bỏ playlist > 70% catalog coverage (quá chung, không discriminative).
+- Target: 50–100 playlist sau filter, mỗi playlist ≥ 10 matched tracks.
 
-### 4.5 Phương pháp 4: Hand-annotated VN test set
+**Lưu ý:**
+- Chỉ lưu `track_name + artist + catalog_idx mapping` — không lưu audio (ToS).
+- `ytmusicapi` không cần auth để search/get public playlists.
+- Rate limit nhẹ: thêm `time.sleep(0.1)` giữa request (pattern từ `collect_data.py:YTMUSIC_DELAY`).
 
-Như đã đề xuất trong [PLAN_SYSTEM_UPGRADE.md] Pillar E:
-- 500 songs × 5 annotators × {valence, arousal, top-3 emotions}.
-- Cohen's κ ≥ 0.6 inter-rater agreement.
-- Budget ~$500-1000.
+### 7.2 KHÔNG dùng quadrant-membership làm relevance
 
-Dùng làm **gold standard** cho MoodCoherence, V-A regression accuracy.
+Tautology (engine dùng quadrant làm input) + mất cân bằng (Q3=62.3% → precision giả cao). Quadrant chỉ dùng **stratify sampling** và **báo cáo per-segment**.
 
-### 4.6 Khuyến nghị
+### 7.3 mood_tags discriminativeness check (gate cho nguồn #2)
 
-**Kết hợp cả 4 phương pháp:**
-- Synthetic mood-based: 70% test set (scale + reproducibility).
-- Editorial playlists: 20% (external validation).
-- Synthetic users: 10% (session simulation).
-- Hand-annotated VN: gold standard cho mood-specific metrics.
-
-### 4.7 Temporal split
-
-```python
-# Item-temporal split (Brightify không có user interactions)
-train_end = "2024-12-31"
-test_start = "2025-01-01"
-
-train_songs = catalog[catalog.release_date < train_end]
-test_songs = catalog[catalog.release_date >= test_start]
-
-# Train engine artifacts (embeddings, normalization stats) chỉ trên train_songs
-# Evaluate trên test_songs
+Chạy trước khi tin:
 ```
-
-Hoặc nếu engine không cần training (pure content-based): random 80/10/10 split với fixed seed.
+- Entropy phân bố top-tag toàn catalog: nếu >80% bài có cùng 1–2 tag → loại.
+- Số distinct top-tag: nếu <5 distinct → loại.
+- Correlation mood_tags ↔ V-A của engine: nếu r > 0.7 → hạ xuống engine-derived.
+```
+Chỉ promote lên `semi-independent` nếu qua đủ 3 điều kiện.
 
 ---
 
-## 5. BỘ METRIC ĐẦY ĐỦ
-
-### 5.1 Accuracy metrics
-
-#### **Precision@K**
-
-```python
-def precision_at_k(predicted: List[int], relevant: Set[int], k: int) -> float:
-    return len(set(predicted[:k]) & relevant) / k
-```
-
-K values: 5, 10, 20, 50.
-
-#### **Recall@K**
-
-```python
-def recall_at_k(predicted: List[int], relevant: Set[int], k: int) -> float:
-    return len(set(predicted[:k]) & relevant) / len(relevant) if relevant else 0
-```
-
-#### **NDCG@K (rank-aware, graded)**
-
-```python
-def ndcg_at_k(predicted: List[int], relevance_scores: Dict[int, float], k: int) -> float:
-    dcg = sum((2**relevance_scores.get(item, 0) - 1) / np.log2(idx + 2)
-              for idx, item in enumerate(predicted[:k]))
-    ideal = sorted(relevance_scores.values(), reverse=True)[:k]
-    idcg = sum((2**r - 1) / np.log2(idx + 2) for idx, r in enumerate(ideal))
-    return dcg / idcg if idcg > 0 else 0
-```
-
-**Brightify-specific:** relevance_score = graded (0.0 - 1.0) từ mood/genre/V-A blend.
-
-#### **MAP@K**
-
-```python
-def average_precision_at_k(predicted: List[int], relevant: Set[int], k: int) -> float:
-    score = 0.0
-    hits = 0
-    for i, item in enumerate(predicted[:k]):
-        if item in relevant:
-            hits += 1
-            score += hits / (i + 1)
-    return score / min(len(relevant), k) if relevant else 0
-```
-
-#### **MRR (Mean Reciprocal Rank)**
-
-```python
-def reciprocal_rank(predicted: List[int], relevant: Set[int]) -> float:
-    for i, item in enumerate(predicted, 1):
-        if item in relevant:
-            return 1.0 / i
-    return 0.0
-```
-
-#### **Hit@K**
-
-```python
-def hit_at_k(predicted: List[int], relevant: Set[int], k: int) -> int:
-    return 1 if (set(predicted[:k]) & relevant) else 0
-```
-
-### 5.2 Diversity metrics
-
-#### **Intra-List Diversity (ILD)**
-
-```python
-def ild(predicted: List[int], embeddings: np.ndarray, distance="cosine") -> float:
-    n = len(predicted)
-    if n < 2:
-        return 0
-    dist_fn = cosine_distance if distance == "cosine" else euclidean_distance
-    total = sum(dist_fn(embeddings[predicted[i]], embeddings[predicted[j]])
-                for i in range(n) for j in range(i+1, n))
-    return total / (n * (n-1) / 2)
-```
-
-**Report on multiple embedding spaces:**
-- ILD_lyrics (PhoBERT 768-dim)
-- ILD_audio (MERT 768-dim after Pillar A) hoặc Essentia features
-- ILD_va (Valence-Arousal 2-dim)
-- ILD_color (CIE Lab 3-dim)
-
-#### **Coverage (Catalog Coverage)**
-
-```python
-def coverage(all_recommendations: List[List[int]], catalog_size: int) -> float:
-    unique_items = set()
-    for rec in all_recommendations:
-        unique_items.update(rec)
-    return len(unique_items) / catalog_size
-```
-
-#### **Artist Gini**
-
-```python
-def artist_gini(all_recommendations: List[List[int]], song_to_artist: Dict[int, str]) -> float:
-    artist_counts = Counter()
-    for rec in all_recommendations:
-        for song in rec:
-            artist_counts[song_to_artist[song]] += 1
-
-    counts = sorted(artist_counts.values())
-    n = len(counts)
-    cumsum = np.cumsum(counts)
-    return (2 * np.sum((np.arange(1, n+1)) * counts) - (n+1) * cumsum[-1]) / (n * cumsum[-1])
-```
-
-### 5.3 Novelty metrics
-
-#### **Expected Free Discovery (EFD, Vargas & Castells 2011)**
-
-```python
-def efd(predicted: List[int], popularity: Dict[int, float], k: int) -> float:
-    """Higher = more novel. Use log2(1/p)."""
-    return np.mean([-np.log2(popularity.get(item, 1e-9)) for item in predicted[:k]])
-```
-
-Popularity = play_count / total_plays. Nếu không có user log: dùng popularity từ Spotify/YouTube external data.
-
-#### **Average Popularity Rank**
-
-```python
-def avg_popularity_rank(predicted: List[int], popularity_ranks: Dict[int, int], k: int) -> float:
-    """Lower = more novel."""
-    return np.mean([popularity_ranks.get(item, len(popularity_ranks)) for item in predicted[:k]])
-```
-
-### 5.4 Serendipity (Kaminskas & Bridge 2016)
-
-```python
-def serendipity(predicted: List[int],
-                relevant: Set[int],
-                user_history: Set[int],
-                embeddings: np.ndarray,
-                k: int) -> float:
-    """
-    Serendipity = unexpectedness × relevance
-    Unexpectedness = 1 - max similarity với user history
-    """
-    history_emb = embeddings[list(user_history)].mean(axis=0) if user_history else None
-    scores = []
-    for item in predicted[:k]:
-        if history_emb is not None:
-            unexp = 1 - cosine_similarity(embeddings[item], history_emb)
-        else:
-            unexp = 1.0
-        rel = 1.0 if item in relevant else 0.0
-        scores.append(unexp * rel)
-    return np.mean(scores)
-```
-
-### 5.5 Music-specific metrics (Brightify unique)
-
-#### **MoodCoherence**
-
-```python
-def mood_coherence(predicted: List[int], song_va: np.ndarray, k: int) -> float:
-    """1 - mean pairwise V-A distance, normalized to [0, 1]."""
-    n = min(k, len(predicted))
-    if n < 2:
-        return 1.0
-    va_subset = song_va[predicted[:n]]
-    distances = []
-    for i in range(n):
-        for j in range(i+1, n):
-            distances.append(np.linalg.norm(va_subset[i] - va_subset[j]))
-    mean_dist = np.mean(distances)
-    max_dist = np.sqrt(2)  # max V-A distance trong [0,1]²
-    return 1 - (mean_dist / max_dist)
-```
-
-#### **TempoCoherence**
-
-```python
-def tempo_coherence(predicted: List[int], tempos: np.ndarray, k: int) -> float:
-    """Lower CV = more coherent."""
-    bpm = tempos[predicted[:k]]
-    cv = np.std(bpm) / np.mean(bpm) if np.mean(bpm) > 0 else 1
-    return max(0, 1 - cv)
-```
-
-#### **GenreCoherence**
-
-```python
-def genre_coherence(predicted: List[int], genres: List[List[str]], k: int) -> float:
-    """Entropy-based: 1 - normalized entropy của genre distribution."""
-    all_genres = []
-    for item in predicted[:k]:
-        all_genres.extend(genres[item])
-    counts = Counter(all_genres)
-    total = sum(counts.values())
-    entropy = -sum((c/total) * np.log2(c/total) for c in counts.values() if c > 0)
-    max_entropy = np.log2(len(counts)) if len(counts) > 1 else 1
-    return 1 - (entropy / max_entropy)
-```
-
-#### **SequentialSmoothness (cho playlist)**
-
-```python
-def sequential_smoothness(predicted: List[int],
-                          va: np.ndarray,
-                          tempos: np.ndarray) -> float:
-    """Mean adjacent transition distance."""
-    transitions = []
-    for i in range(len(predicted) - 1):
-        va_diff = np.linalg.norm(va[predicted[i]] - va[predicted[i+1]])
-        bpm_diff = abs(tempos[predicted[i]] - tempos[predicted[i+1]]) / 200
-        transitions.append(0.7 * va_diff + 0.3 * bpm_diff)
-    return 1 - np.mean(transitions)
-```
-
-#### **ColorCoherence (Brightify unique)**
-
-```python
-def color_coherence(predicted: List[int], colors_lab: np.ndarray, k: int) -> float:
-    """CIEDE2000 pairwise distance."""
-    # ...
-```
-
-### 5.6 Fairness metrics
-
-#### **Artist Exposure Equity**
-
-Đã ở 5.2 (Artist Gini).
-
-#### **Long-tail Coverage**
-
-```python
-def longtail_coverage(all_recommendations: List[List[int]],
-                       popularity_ranks: Dict[int, int],
-                       longtail_threshold: int = 100) -> float:
-    """% of recommended items in long-tail (rank > threshold)."""
-    longtail_items = {i for i, rank in popularity_ranks.items() if rank > longtail_threshold}
-    all_recs = [item for rec in all_recommendations for item in rec]
-    return sum(1 for item in all_recs if item in longtail_items) / len(all_recs)
-```
-
-### 5.7 Tóm tắt bảng metric
-
-| Category | Metric | Formula sigil | Brightify priority |
-|---|---|---|---|
-| Accuracy | Precision@10 | `\|R∩T\|/10` | Core |
-| Accuracy | Recall@50 | `\|R∩T\|/\|R\|` | Core |
-| Accuracy | **NDCG@10** | rank-aware graded | **Primary** |
-| Accuracy | MAP@10 | mean AP | Core |
-| Accuracy | MRR | 1/rank first hit | Aux |
-| Accuracy | Hit@10 | binary | Aux |
-| Diversity | **ILD@10** (4 spaces) | mean pair dist | **Primary** |
-| Diversity | Coverage | `\|unique\|/\|catalog\|` | Core |
-| Diversity | Artist Gini | inequality | Core |
-| Novelty | EFD | `mean -log2 popularity` | Core |
-| Novelty | AvgPopRank | mean rank | Aux |
-| Serendipity | Kaminskas | unexp × rel | Aux |
-| Music | **MoodCoherence** | 1 - mean V-A dist | **Brightify-unique** |
-| Music | TempoCoherence | 1 - CV(BPM) | Core |
-| Music | GenreCoherence | 1 - genre entropy | Core |
-| Music | **ColorCoherence** | CIEDE2000 mean | **Brightify-unique** |
-| Music | SequentialSmoothness | trans dist | Aux (playlist) |
-| Fairness | Artist Gini | (cùng diversity) | Core |
-| Fairness | LongtailCoverage | % rank > threshold | Aux |
-
-**Primary**: phải report mọi run.
-**Core**: report standard runs.
-**Aux**: deep-dive runs.
-
----
-
-## 6. BASELINE SYSTEMS
-
-Để biết Brightify "tốt hơn baseline bao nhiêu":
-
-### 6.1 Random baseline
-
-```python
-class RandomBaseline:
-    def predict(self, query, top_k=10):
-        return np.random.choice(self.catalog_ids, size=top_k, replace=False)
-```
-
-### 6.2 Popularity baseline
-
-```python
-class PopularityBaseline:
-    def predict(self, query, top_k=10):
-        # Always returns top-K by popularity (ignore query).
-        return self.popularity_sorted[:top_k]
-```
-
-### 6.3 Content-only baselines
-
-```python
-class LyricsOnlyBaseline:
-    """Cosine similarity on PhoBERT embedding only."""
-    def predict(self, query, top_k=10):
-        emb = self.encode(query.text)
-        sims = cosine_similarity(self.embeddings, emb)
-        return np.argsort(-sims)[:top_k]
-
-class AudioOnlyBaseline:
-    """Cosine similarity on audio feature vector only."""
-    # ...
-```
-
-### 6.4 V-A only baseline
-
-```python
-class VABaseline:
-    """Nearest neighbors trong V-A space."""
-    # ...
-```
-
-### 6.5 Brightify v7.2 (current)
-
-```python
-class BrightifyV72:
-    """Full 7-signal fusion (production engine)."""
-    # Wrap core.recommendation_engine.MusicRecommender
-```
-
-### 6.6 Brightify v8.0 (target)
-
-```python
-class BrightifyV80:
-    """Upgraded engine with MERT + RRF + MMR (after PLAN_SYSTEM_UPGRADE)."""
-    # ...
-```
-
-### 6.7 External baselines (optional)
-
-**RecBole standardized models:**
-- BPR (collaborative filtering pure, requires synthetic users)
-- ItemKNN (content-based using audio features)
-- LightGCN (graph-based, synthetic interactions)
-
-**Cornac multimodal models:**
-- VBPR (Visual BPR)
-- AMR (Adversarial Multimedia Recsys)
-- ConvMF (Convolutional Matrix Factorization)
-
----
-
-## 7. BACKTEST SCENARIOS
-
-### 7.1 Scenario 1: Cold-start (item-level)
-
-**Query:** seed song mới release < 30 ngày.
-**Ground truth:** mood/genre/era-based.
-**Metric:** NDCG@10, Coverage.
-**Pass:** NDCG@10 ≥ 0.4, Coverage ≥ 70%.
-
-### 7.2 Scenario 2: Mood-based query
-
-**Query:** mood keyword ("buồn", "happy", "chill").
-**Ground truth:** editorial playlists tagged với mood đó.
-**Metric:** Precision@10, MoodCoherence.
-**Pass:** Precision@10 ≥ 0.7, MoodCoherence ≥ 0.85.
-
-### 7.3 Scenario 3: Color query
-
-**Query:** hex color list.
-**Ground truth:** songs có color_hex predicted gần (CIEDE2000 < 20).
-**Metric:** Precision@10, ColorCoherence.
-**Pass:** Precision@10 ≥ 0.6, ColorCoherence ≥ 0.80.
-
-### 7.4 Scenario 4: Lyrics search (semantic)
-
-**Query:** Vietnamese keyword phrase ("yêu thương buồn", "nhớ nhung").
-**Ground truth:** songs có lyrics chứa keywords + cùng emotion.
-**Metric:** Recall@50, MAP@10.
-**Pass:** Recall@50 ≥ 0.7, MAP@10 ≥ 0.5.
-
-### 7.5 Scenario 5: Song-to-song similar
-
-**Query:** seed track_id.
-**Ground truth:** editorial "similar songs" hoặc same-mood-quadrant + same-genre.
-**Metric:** NDCG@10, ArtistGini (avoid same-artist bias).
-**Pass:** NDCG@10 ≥ 0.5, ArtistGini ≤ 0.4.
-
-### 7.6 Scenario 6: Image query
-
-**Query:** sample images (sunset, party, nature, ...).
-**Ground truth:** annotated mood mapping (e.g., sunset → calm/romantic Q4).
-**Metric:** Precision@10, MoodCoherence.
-
-### 7.7 Scenario 7: Emotion journey
-
-**Query:** start V-A → end V-A.
-**Ground truth:** synthetic Bézier waypoint với mood gradient.
-**Metric:** SequentialSmoothness, MoodCoherence per-step.
-**Pass:** SequentialSmoothness ≥ 0.7, no step jump > 0.3 V-A.
-
-### 7.8 Scenario 8: Diversity stress test
-
-**Query:** 100 random seed songs, top-10 each.
-**Metric:** Coverage, Artist Gini, LongtailCoverage.
-**Pass:** Coverage ≥ 60%, Artist Gini ≤ 0.4.
-
-### 7.9 Scenario 9: Per-quadrant balance
-
-Split test set by mood_quadrant (Q1/Q2/Q3/Q4). Run all metrics per quadrant.
-**Pass:** Performance không lệch quá 15% giữa quadrants.
-
-### 7.10 Scenario 10: Ablation per signal
-
-Drop 1 signal at a time (timbral, rhythmic, tonal, lyrics, va, emotion, mood). Measure NDCG@10 delta.
-
-**Expected:** Lyrics drop = -8% (biggest impact). Other = -2-5%.
-
----
-
-## 8. IMPLEMENTATION ROADMAP
-
-### Tuần 1: Foundation
-
-- [ ] Create `tools/backtest/` module structure.
-- [ ] Implement `BacktestConfig`, `BacktestRunner`.
-- [ ] Migrate existing `tools/backtest.py` logic vào `runners/full_evaluation.py`.
-- [ ] Add CLI `python -m tools.backtest`.
-
-### Tuần 2: Metrics implementation
-
-- [ ] `metrics/accuracy.py`: Precision/Recall/NDCG/MAP/MRR/Hit.
-- [ ] `metrics/diversity.py`: ILD (4 spaces), Coverage, ArtistGini.
-- [ ] `metrics/novelty.py`: EFD, AvgPopRank.
-- [ ] `metrics/music_specific.py`: MoodCoherence, TempoCoherence, GenreCoherence, ColorCoherence, SequentialSmoothness.
-- [ ] `metrics/fairness.py`: LongtailCoverage.
-- [ ] Unit tests cho mỗi metric.
-
-### Tuần 3: Ground truth
-
-- [ ] `datasets/ground_truth.py`: Mood/genre/era-based labeling.
-- [ ] `datasets/playlist_crawler.py`: External editorial playlists crawler.
-- [ ] `datasets/synthetic_users.py`: 500 virtual users + listening simulation.
-- [ ] Generate test set v1: save to `data/backtest_test_set_v1.json`.
-
-### Tuần 4: Baselines
-
-- [ ] Implement 6 baselines (random, popularity, lyrics-only, audio-only, va-only, brightify-v72).
-- [ ] Run full evaluation comparison.
-- [ ] Generate baseline report.
-
-### Tuần 5: Scenarios
-
-- [ ] Implement 10 backtest scenarios.
-- [ ] Per-segment runners (per quadrant, per genre).
-
-### Tuần 6: Reporting
-
-- [ ] `reporters/markdown.py`: detailed text report.
-- [ ] `reporters/json_export.py`: machine-readable.
-- [ ] `reporters/dashboard_html.py`: interactive HTML dashboard với plotly.
-
-### Tuần 7: User study setup
-
-- [ ] Design survey (NPS, perceived diversity/novelty, preference vs alternatives).
-- [ ] Recruit 30-50 Vietnamese listeners.
-- [ ] Pilot study với 5 users.
-
-### Tuần 8: Integration
-
-- [ ] CI integration (run reduced backtest mỗi PR; full weekly).
-- [ ] Admin endpoint refactor: `/api/backtest/run` → call new framework.
-- [ ] Documentation + onboarding.
-
----
-
-## 9. REPORTING & DASHBOARD
-
-### 9.1 Markdown report template
-
-```markdown
-# Backtest Report — {date}
-
-## Configuration
-- Engine version: v7.2
-- Test set: backtest_test_set_v1
-- N queries: 1,000
-- K values: 5, 10, 20, 50
-- Seed: 42
-
-## Summary
-
-| System | NDCG@10 | Precision@10 | Recall@50 | ILD@10 | Coverage | MoodCoherence |
-|---|---|---|---|---|---|---|
-| Random | 0.05 | 0.04 | 0.20 | 0.85 | 0.95 | 0.20 |
-| Popularity | 0.32 | 0.30 | 0.45 | 0.35 | 0.05 | 0.40 |
-| Lyrics-only | 0.48 | 0.45 | 0.60 | 0.45 | 0.65 | 0.65 |
-| Audio-only | 0.42 | 0.40 | 0.55 | 0.55 | 0.70 | 0.70 |
-| **Brightify v7.2** | **0.65** | **0.62** | **0.78** | **0.60** | **0.72** | **0.85** |
-
-## Per-scenario breakdown
-...
-
-## Per-quadrant breakdown
-...
-
-## Ablation (per signal drop)
-...
-
-## Observations & Recommendations
-...
-```
-
-### 9.2 HTML dashboard
-
-- Interactive plotly charts:
-  - Line chart: each metric at K=5,10,20,50.
-  - Bar chart: system comparison per metric.
-  - Heatmap: per-segment performance.
-  - Scatter: NDCG vs ILD (trade-off).
-
-### 9.3 JSON export
+## 8. BỘ METRIC
+
+### Group A — Property metrics (không cần ground truth) → v0
+
+| Metric | Không gian / công thức | Ghi chú |
+|---|---|---|
+| **ILD_lyrics** | mean pairwise cosine dist, PhoBERT 768 | ✅ |
+| **ILD_audio** | Essentia audio_matrix (~timbral+rhythmic+tonal) | ✅ |
+| **ILD_va** | V-A 2-dim Euclidean | ✅ |
+| **ILD_color** | CIE Lab 3-dim từ `color_hex`, CIEDE2000 | ✅ |
+| **Coverage** | `|unique recs| / 5548` | ✅ |
+| **Artist Gini** | Gini coefficient phơi bày artist | ✅ |
+| **MoodCoherence** | `1 − mean pairwise V-A dist / √2` | Brightify-specific |
+| **TempoCoherence** | `1 − CV(BPM)` trong top-K | ✅ |
+| **ColorCoherence** | CIEDE2000 mean pairwise trong top-K | Brightify-specific |
+| **Calibration error** | `KL(p_seed_emotion ‖ q_recs_emotion)` trên 13 lớp, α=0.01 | Steck 2018 |
+| **Similar-song symmetry** | B∈rec(A) ⇒ A∈rec(B)? (Jaccard overlap) | Offline consistency |
+| **Content-serendipity proxy** | `mean(1 − sim(rec_i, seed))` | Thay serendipity user-based |
+
+**Calibration — lý do thêm:** MoodCoherence đo recs chụm quanh V-A trung bình của seed; Calibration đo phân bố 13 emotion trong recs có khớp phân bố 13 emotion của seed hay không. Hai metric bổ sung nhau: MoodCoherence bắt trường hợp drift V-A, Calibration bắt trường hợp mất đa dạng emotion.
+
+### Group A+ — Operational (đo được ngay)
+
+| Metric | Đo gì |
+|---|---|
+| **Latency p50/p95/p99** | ms per method, N=200 lần lặp, seed cố định |
+| **Throughput** (tùy chọn) | query/s khi concurrent |
+
+### Group B — Accuracy (cần external/semi GT) → Phase 2+
+
+| Metric | Công thức |
+|---|---|
+| **NDCG@K** | graded gain, `(2^rel − 1)/log2(i+2)` — **Primary ranking metric** |
+| Precision@K | `|pred[:k] ∩ rel| / k` |
+| Recall@K | `|pred[:k] ∩ rel| / |rel|` |
+| MAP@K | mean average precision |
+| MRR | `1 / rank(first hit)` |
+| Hit@K | binary |
+
+K = {5, 10, 20}. **NDCG@10 là số chính** cho mọi so sánh version.
+
+### Nhãn validity bắt buộc trong report JSON
 
 ```json
 {
-  "metadata": {
-    "timestamp": "2026-05-26T10:00:00Z",
-    "engine_version": "v7.2",
-    "config_hash": "abc123",
-    "test_set_id": "v1"
+  "ndcg_at_10": {
+    "value": 0.61, "ci95": [0.58, 0.64],
+    "ground_truth": "editorial_playlists_v1",
+    "validity": "external",
+    "support_by_quadrant": {"Q1": 84, "Q2": 14, "Q3": 3459, "Q4": 1991}
   },
-  "systems": {
-    "brightify_v72": {
-      "accuracy": {
-        "precision_at_10": 0.62,
-        "ndcg_at_10": 0.65,
-        ...
-      },
-      "diversity": { ... },
-      "per_quadrant": { ... }
-    }
+  "ild_lyrics": {
+    "value": 0.42, "ci95": [0.40, 0.44],
+    "ground_truth": null,
+    "validity": "property"
   }
 }
 ```
 
 ---
 
-## 10. USER STUDY (QUALITATIVE)
+## 9. BASELINE SYSTEMS
 
-### 10.1 Mục tiêu
-
-Validate offline metrics với perceived quality từ Vietnamese listeners.
-
-### 10.2 Setup
-
-- **N**: 30-50 participants (target Gen Z & Millennials).
-- **Recruitment**: Facebook groups, Discord servers V-pop, music school students.
-- **Compensation**: ~$10-20 per session (60 phút).
-
-### 10.3 Protocol
-
-**Session 1 (30 min): Blind comparison**
-
-Hiển thị 3 playlist ẩn danh A/B/C cho cùng query (e.g., "buồn"):
-- A = Brightify v7.2
-- B = Random
-- C = Popularity
-
-User rate mỗi playlist (1-5 stars) trên 5 dimensions:
-1. Relevance ("Có khớp với mood không?")
-2. Diversity ("Có đa dạng không?")
-3. Discovery ("Có bài hay mà chưa biết không?")
-4. Coherence ("Các bài có nối liền nhau không?")
-5. Overall ("Bạn có thích playlist này không?")
-
-**Session 2 (30 min): Free exploration**
-
-User dùng Brightify free với 5 task:
-1. Tìm bài hợp tâm trạng hiện tại.
-2. Tạo playlist tập gym.
-3. Khám phá bài mới.
-4. Tìm bài tương tự bài yêu thích.
-5. Color/image query.
-
-Sau mỗi task, NPS + open-ended feedback.
-
-### 10.4 Metrics tổng hợp
-
-- **NPS**: % Promoters (9-10) - % Detractors (0-6).
-- **Top-line satisfaction**: avg rating across 5 dimensions.
-- **Per-feature usage**: count uses of color/image/lyrics features.
-- **Qualitative themes**: open coding của open-ended responses (top 5 strengths, top 5 weaknesses).
-
-### 10.5 Validation
-
-Correlation between offline metrics và user ratings:
-
-| Offline metric | Expected user rating dimension | Min correlation |
+| Baseline | Trạng thái | Vai trò |
 |---|---|---|
-| NDCG@10 | Relevance | ρ ≥ 0.5 |
-| ILD@10 | Diversity | ρ ≥ 0.4 |
-| EFD | Discovery | ρ ≥ 0.4 |
-| MoodCoherence | Coherence | ρ ≥ 0.5 |
-
-Nếu correlation thấp → offline metric không đại diện tốt → cần re-design.
+| Random | ✅ | Sàn dưới tuyệt đối |
+| Audio-only (Essentia cosine) | ✅ | Ablate về 1 signal |
+| Lyrics-only (PhoBERT cosine) | ✅ | Ablate về 1 signal |
+| V-A only | ✅ | Ablate về 1 signal |
+| **Brightify v7.2 (full engine)** | ✅ **LOCKED** | Reference gating — không thay đổi |
+| mood_tags-NN | ⚠️ optional | Chỉ khi mood_tags qua §7.3 |
+| ~~Popularity baseline~~ | ❌ BỎ | popularity=0 |
 
 ---
 
-## 11. CONTINUOUS EVALUATION (CI GATE)
+## 10. SCENARIOS — MAP 1:1 VỚI 6 METHOD
 
-### 11.1 GitHub Actions workflow
+| # | Method | Weights nguồn | Metric chính | Ground truth phù hợp |
+|---|---|---|---|---|
+| 1 | `recommend_by_colors` | `config.WEIGHTS_COLOR_QUERY_WITH_LYRICS` | ColorCoherence, MoodCoherence | color→emotion editorial |
+| 2 | `recommend_by_song` | **HARDCODE** → cần refactor→`config.RECO_SONG_WEIGHTS` | NDCG@10 (ext), ILD, symmetry | editorial "similar songs" |
+| 3 | `recommend_by_mood` | `config.WEIGHTS_MOOD_QUERY` | Precision@10 (ext), MoodCoherence | editorial mood playlists |
+| 4 | `recommend_by_image` | `config.WEIGHTS_IMAGE_QUERY_WITH_LYRICS` | MoodCoherence, Calibration | annotated image→mood |
+| 5 | `recommend_by_lyrics_keywords` | `config.WEIGHTS_LYRICS_QUERY` | Recall@50, MAP@10 | lyrics + emotion editorial |
+| 6 | `generate_emotion_journey` | n/a (interpolation) | SequentialSmoothness, MoodCoherence/step | synthetic Bézier waypoint |
 
-```yaml
-# .github/workflows/backtest.yml
-name: Backtest CI
+### 10.1 Prerequisite bắt buộc: refactor weights recommend_by_song
 
-on:
-  pull_request:
-    paths:
-      - 'core/**'
-      - 'config.py'
-      - 'tools/backtest/**'
+`recommend_by_song` hardcode `[0.12, 0.10, 0.08, 0.28, 0.17, 0.15, 0.10]` tại `core/recommendation_engine.py:522`. Vi phạm rule "config-only". **Phải chuyển vào `config.RECO_SONG_WEIGHTS`** để:
+- Ablation có thể inject `weights=0` cho từng signal.
+- Weight optimizer có thể search trên không gian weights.
+- Đúng rule dự án.
 
-jobs:
-  backtest-quick:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
-      - name: Install
-        run: pip install -r requirements.txt
-      - name: Quick backtest
-        run: python -m tools.backtest run --config configs/backtest_quick.yaml
-      - name: Compare with baseline
-        run: python -m tools.backtest compare --baseline data/baseline_metrics.json --tolerance 0.03
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: backtest-report
-          path: logs/backtest/
+Đây là task Phase 0, làm trước khi chạy bất kỳ ablation nào.
 
-  backtest-full:
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    if: github.event.pull_request.labels.*.name == 'full-backtest'
-    steps:
-      # ... full evaluation
+---
+
+## 11. VÒNG LẶP CẢI THIỆN
+
+### 11.1 Weight Optimization (sau khi có external GT)
+
+**Mục tiêu:** Tìm `config.RECO_SONG_WEIGHTS` tốt hơn weights tay hiện tại mà không cần đoán.
+
+**Điều kiện tiên quyết:** Có editorial_playlists_v1 (external GT, Phase 2).
+
+**Protocol:**
+
+```python
+# tools/backtest_v2/improve/weight_opt.py
+from scipy.optimize import minimize
+
+def optimize_weights(runner, ground_truth, baseline_ild):
+    """
+    Tối ưu signal weights cho recommend_by_song.
+    Objective: maximize NDCG@10 (external).
+    Constraint: ILD_lyrics >= baseline_ild * 0.95 (không collapse diversity).
+    """
+    def objective(w):
+        w_norm = w / w.sum()
+        report = runner.run(override_weights={"recommend_by_song": w_norm})
+        return -report.metrics["ndcg_at_10"]["value"]
+
+    constraints = [
+        {"type": "ineq", "fun": lambda w: run_ild(w) - baseline_ild * 0.95},
+        {"type": "eq",   "fun": lambda w: w.sum() - 1.0},
+    ]
+    bounds = [(0.0, 0.5)] * 7  # không signal nào vượt 50%
+
+    result = minimize(
+        objective,
+        x0=config.RECO_SONG_WEIGHTS,  # khởi đầu từ weights hiện tại
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 200}
+    )
+    return result.x
 ```
 
-### 11.2 Gating rules
+**Output:** `weight_search/optimal_weights.yaml` → sau khi verify thủ công → cập nhật `config.RECO_SONG_WEIGHTS`.
 
-**Auto-reject PR nếu:**
-- NDCG@10 giảm > 3% so với baseline.
-- MoodCoherence giảm > 5%.
-- Coverage giảm > 10%.
-- Latency p95 tăng > 30%.
+**Lưu ý overfitting:** Chia editorial playlists thành 80% optimize / 20% validate. Không bao giờ optimize trên toàn bộ GT.
 
-**Require manual review nếu:**
-- ILD trade-off với NDCG.
-- Per-quadrant performance lệch > 15%.
+### 11.2 Ablation → Pillar Priority
 
-### 11.3 Weekly full evaluation
+**Mục tiêu:** Dùng kết quả ablation để quyết định nâng cấp pillar nào trước, thay vì đoán.
 
-Cron job mỗi Chủ nhật:
-- Run full evaluation trên latest main.
-- Generate dashboard.
-- Post comment trong Slack/Discord channel #engineering.
+**Protocol:**
 
----
+```
+Với mỗi signal s ∈ {timbral, rhythmic, tonal, lyrics, va, emotion, mood}:
+    Chạy backtest với weights[s] = 0, normalize phần còn lại.
+    Ghi lại: ΔNDCG@10, ΔILD_lyrics, ΔMoodCoherence.
 
-## 12. TÀI LIỆU THAM KHẢO
+Signal có |ΔNDCG@10| lớn nhất = signal quan trọng nhất.
+Signal đang yếu nhất (abs score thấp) = ứng viên upgrade đầu tiên.
+```
 
-### Papers (primary sources)
+**Ví dụ mapping ablation → pillar:**
 
-- McNee, Riedl, Konstan 2006 — "Being Accurate is Not Enough" — [CHI 2006](https://dl.acm.org/doi/abs/10.1145/1125451.1125659)
-- Garcin et al. 2014 — "Offline and Online Evaluation of News Recommender Systems" — RecSys 2014
-- Castells 2022 — "Offline Recommender System Evaluation: Challenges and New Directions" — [AI Magazine](https://onlinelibrary.wiley.com/doi/10.1002/aaai.12051)
-- Time to Split 2025 — [arXiv 2507.16289](https://arxiv.org/abs/2507.16289)
-- Critical Reexamination ILD 2023 — [arXiv 2305.13801](https://arxiv.org/pdf/2305.13801)
-- Critical Study Data Leakage 2020 — [arXiv 2010.11060](https://arxiv.org/pdf/2010.11060)
-- itemKNN deviation 2024 — [arXiv 2407.13531](https://arxiv.org/pdf/2407.13531)
-- Kaminskas & Bridge 2016 — "Diversity, Serendipity, Novelty, Coverage" — [ACM TiiS](https://dl.acm.org/doi/10.1145/2926720)
-- Vargas & Castells 2011 — "Rank and Relevance in Novelty and Diversity Metrics" — [paper](https://repositorio.uam.es/bitstream/handle/10486/12773/61509_Vargas_Sandoval_Saul.pdf)
-- Unfair Artist Exposure 2020 — [arXiv 2003.11634](https://arxiv.org/pdf/2003.11634)
-- Optimizing Generalized Gini 2022 — [arXiv 2204.06521](https://arxiv.org/abs/2204.06521)
+| Signal yếu / quan trọng | Pillar cần upgrade | Từ PLAN_SYSTEM_UPGRADE |
+|---|---|---|
+| lyrics (PhoBERT) | Pillar B — ViDeBERTa/ViSoBERT | Thay embedding model |
+| timbral/rhythmic/tonal | Pillar A — MERT/CLAP | Thay audio embedding |
+| va / emotion | Pillar E — MLP emotion combiner | Cải thiện V-A estimation |
+| Diversity thấp | Pillar D — MMR/DPP | Cải thiện diversity post-processing |
 
-### Frameworks
+**Output:** `reports/ablation/signal_importance.json` + khuyến nghị thứ tự pillar.
 
-- [RecBole](https://recbole.io) — PyTorch, 100+ algorithms, unified API.
-- [Cornac](https://cornac.preferred.ai) — Multimodal recsys focus (best for Brightify).
-- [Microsoft Recommenders](https://github.com/microsoft/recommenders) — Notebook-driven.
-- [LensKit](https://lkpy.lenskit.org) — Reproducibility focused.
+### 11.3 Iteration protocol
 
-### Evaluation guides
+Mỗi lần cải thiện (weight tune hoặc pillar upgrade):
 
-- [Evidently AI - 10 Metrics to Evaluate Recommender Systems](https://www.evidentlyai.com/ranking-metrics/evaluating-recommender-systems)
-- [Aman's AI Journal - RecSys Metrics](https://aman.ai/recsys/metrics/)
-- [Weaviate - Retrieval Evaluation Metrics](https://weaviate.io/blog/retrieval-evaluation-metrics)
-
-### Internal docs
-
-- `docs/PLAN_SYSTEM_UPGRADE.md` — companion upgrade plan.
-- `docs/PLAN_DOCKERIZATION.md` — deployment.
-- Current `tools/backtest.py` — legacy implementation, sẽ refactor.
-- `api/system.py` — admin backtest endpoints, sẽ wire vào framework mới.
+```
+1. Commit code + config mới.
+2. Chạy: python -m tools.backtest_v2 run --output iter_N_<tên>
+3. Chạy: python -m tools.backtest_v2 compare iter_{N-1} iter_N
+4. Kiểm tra:
+   - NDCG@10 (ext): CI không chứa 0 và dương → cải thiện thật
+   - ILD_lyrics: không giảm > 5% so với iter_0 (không collapse diversity)
+   - Latency p95: không tăng > 30%
+5. Nếu pass → giữ, tiếp tục iteration tiếp.
+   Nếu fail → revert config/code, ghi lý do vào report.
+```
 
 ---
 
-**Hết Plan 2.**
+## 12. STATISTICAL METHODOLOGY
+
+### 12.1 Sampling
+
+- Stratified theo `mood_quadrant`, seed=42, ~500 queries.
+- Báo cáo `N` per quadrant. **Q2 (n=14): exempt pass/fail**.
+
+### 12.2 So sánh A vs B
+
+- **Paired bootstrap** (10,000 resample) trên per-query metric → 95% CI cho delta.
+- Kết luận "B tốt hơn A" khi **CI của delta không chứa 0** trên `external`/`semi-independent`.
+
+### 12.3 Macro vs Micro
+
+- **Macro**: trung bình trên 4 quadrant (chống Q3 áp đảo).
+- **Micro**: trung bình toàn query.
+- Nếu macro ↔ micro khác lớn → dấu hiệu bias theo quadrant, cần investigate.
+
+---
+
+## 13. IMPLEMENTATION ROADMAP
+
+### Phase 0 — Prerequisites (làm trước mọi thứ)
+
+- [ ] **Decommission legacy** (§5): xóa `tools/backtest.py`, gỡ 2 model + 3 route trong `api/system.py`.
+- [ ] **Refactor weights → config** (§10.1): `recommend_by_song` hardcode → `config.RECO_SONG_WEIGHTS`.
+- [ ] **mood_tags discriminativeness check** (§7.3): quyết định dùng được không.
+- [ ] Skeleton `tools/backtest_v2/` + `BacktestConfig` + `BacktestRunner` rỗng + CLI.
+- [ ] **Pin scipy explicit** trong `requirements-app.txt` (`scipy>=1.11`). Hiện scipy 1.17.1 đã cài transitively qua scikit-learn, nhưng `improve/weight_opt.py` import trực tiếp `scipy.optimize` → phải khai báo explicit để không vỡ khi scikit-learn đổi dependency.
+
+**Output Phase 0:** Code sạch, không legacy, weights có thể inject, dependency rõ ràng.
+
+---
+
+### Phase 1 — Đo baseline v7.2 (Group A, không cần GT)
+
+- [ ] `catalog.py`: wrap `MusicRecommender`, map `original_index`.
+- [ ] `stats.py`: stratified sampler + paired bootstrap + CI.
+- [ ] `metrics/property.py`: ILD(4), Coverage, Artist Gini, MoodCoherence, TempoCoherence, ColorCoherence, Calibration, symmetry, serendipity_proxy.
+- [ ] `metrics/operational.py`: Latency p50/p95/p99 per method.
+- [ ] Baselines: random, audio_only, lyrics_only, va_only, brightify_v7.2 (locked).
+- [ ] `reporters/`: markdown + JSON với nhãn validity.
+- [ ] Chạy → lưu vào `reports/iter_0_baseline/`.
+
+**Output Phase 1:** Số baseline đầy đủ cho 5 system × 11 property metric. Có thể gate PR ngay ("ILD không được giảm, MoodCoherence không được giảm").
+
+---
+
+### Phase 2 — Ground truth ngoài (mở khóa Group B)
+
+- [ ] `ground_truth/editorial.py`: crawl 50–100 VN playlist + fuzzy-match.
+- [ ] `metrics/accuracy.py`: NDCG/P/R/MAP/MRR/Hit.
+- [ ] Chạy accuracy trên external GT → `reports/iter_0_baseline/accuracy_ext.json`.
+- [ ] (nếu mood_tags pass §7.3) thêm semi-independent source.
+
+**Output Phase 2:** Số NDCG@10 đầu tiên với `external` label. Có thể so sánh version.
+
+---
+
+### Phase 3 — Ablation + identify weak spots
+
+- [ ] `improve/ablation.py`: drop-one-signal, compute delta NDCG + ILD per signal.
+- [ ] Chạy ablation đầy đủ → `reports/iter_0_baseline/ablation/signal_importance.json`.
+- [ ] Sinh khuyến nghị: "Signal X yếu nhất → upgrade Pillar Y trước".
+- [ ] `va_sanity.py`: engine-derived sanity floor (labeled).
+- [ ] GitHub Actions: quick backtest (Group A) mỗi PR `core/**`.
+
+**Output Phase 3:** Thứ tự ưu tiên upgrade pillar có căn cứ, không phải đoán.
+
+---
+
+### Phase 4 — Weight optimization (quick win trước pillar)
+
+- [ ] `improve/weight_opt.py`: scipy SLSQP, optimize NDCG@10 (ext), constraint ILD.
+- [ ] Split editorial GT: 80% optimize / 20% validate.
+- [ ] Chạy optimizer → `weight_search/optimal_weights.yaml`.
+- [ ] Review thủ công → update `config.RECO_SONG_WEIGHTS`.
+- [ ] Chạy backtest → `reports/iter_1_weight_opt/`.
+- [ ] Compare iter_0 vs iter_1 → delta + CI.
+
+**Output Phase 4:** Weights tốt hơn với CI, hoặc "weights hiện tại đã gần optimal, không cần đổi nhiều".
+
+---
+
+### Phase 5 — Pillar upgrades (theo thứ tự ablation)
+
+Mỗi pillar = 1 iteration. Ví dụ nếu ablation cho "lyrics yếu nhất":
+
+- [ ] Implement Pillar B (ViDeBERTa/ViSoBERT routing).
+- [ ] Chạy backtest → `reports/iter_2_pillar_B/`.
+- [ ] Compare iter_1 vs iter_2 → delta.
+- [ ] Nếu pass gate → giữ. Nếu fail → revert, ghi lý do.
+
+Lặp lại cho từng pillar theo thứ tự ablation đã chỉ ra.
+
+---
+
+### Phase 6 — Final Report
+
+- [ ] `python -m tools.backtest_v2 final-report --iterations iter_0,iter_1,iter_2,...`
+- [ ] Wire lại `/api/backtest/*` vào framework mới.
+- [ ] Sinh báo cáo tổng kết theo template §14.
+
+---
+
+## 14. FINAL REPORT TEMPLATE
+
+Đây là cấu trúc báo cáo cuối sau khi hoàn thành toàn bộ vòng lặp.
+
+---
+
+### `reports/final/REPORT.md`
+
+```markdown
+# Brightify Recommendation Engine — Evaluation & Improvement Report
+**Ngày:** {date}
+**Catalog:** 5,548 songs
+**Engine baseline:** v7.2 | **Engine sau cải thiện:** v{X.Y}
+**Ground truth primary:** editorial_playlists_v1 ({N} playlists, {M} matched songs)
+
+---
+
+## 1. TÓM TẮT (Executive Summary)
+
+| Metric | v7.2 baseline | v{X.Y} cuối | Delta | Ý nghĩa |
+|---|---|---|---|---|
+| NDCG@10 ✅ (ext) | 0.XX | 0.YY | +Z% (p<0.05) | Khớp editorial playlists tốt hơn |
+| ILD_lyrics | 0.XX | 0.YY | ±Z% | Diversity nhạc tương tự |
+| MoodCoherence | 0.XX | 0.YY | ±Z% | Độ nhất quán mood |
+| Latency p95 | XX ms | YY ms | ±Z% | Tốc độ phản hồi |
+| Coverage | X% | Y% | ±Z% | Phơi bày catalog |
+
+**Kết luận 1 câu:** [ví dụ: "Sau weight optimization và nâng cấp Pillar B, NDCG@10 tăng 12% với CI [+8%, +16%], diversity giữ nguyên."]
+
+---
+
+## 2. PHƯƠNG PHÁP ĐÁNH GIÁ
+
+### 2.1 Metric được chọn và lý do
+
+**Hệ thống không có user** → không dùng click-through, dwell time, CF metrics.
+Chỉ dùng:
+- **Property metrics** (Group A): đo tính chất output, không cần ground truth.
+- **Accuracy metrics** (Group B): đo với editorial playlists người thật tạo.
+
+**Metric bị loại và lý do:**
+
+| Metric | Lý do loại |
+|---|---|
+| Novelty/EFD | popularity=0 toàn catalog |
+| GenreCoherence | genres=0 toàn catalog |
+| Serendipity user-based | Không có interaction history |
+| NDCG với V-A/quadrant làm GT | Tautology — engine dùng V-A làm input |
+| Temporal split | release_year rỗng |
+
+### 2.2 Ground truth và nhãn validity
+
+| Nguồn | Nhãn | Dùng cho |
+|---|---|---|
+| Editorial VN playlists ({N} playlists) | `external ✅` | Xếp hạng version, weight optimization |
+| mood_tags MTG-Jamendo | `semi-independent ⚠️` / loại (tuỳ kết quả check §7.3) | SECONDARY hoặc không dùng |
+| V-A/quadrant | `engine-derived 🚫` | Sanity floor only |
+
+### 2.3 Test set
+
+- 500 queries, stratified theo mood_quadrant, seed=42.
+- Split: 80% cho optimization, 20% hold-out validation.
+- Q2 (n=14) exempt khỏi pass/fail per-quadrant.
+
+---
+
+## 3. TRẠNG THÁI BASELINE (v7.2)
+
+### 3.1 Property metrics
+
+| Metric | Random | Audio-only | Lyrics-only | V-A only | Brightify v7.2 |
+|---|---|---|---|---|---|
+| ILD_lyrics | X.XX | X.XX | X.XX | X.XX | **X.XX** |
+| ILD_audio | ... | | | | |
+| MoodCoherence | ... | | | | |
+| TempoCoherence | ... | | | | |
+| ColorCoherence | ... | | | | |
+| Calibration err | ... | | | | |
+| Coverage | ... | | | | |
+| Artist Gini | ... | | | | |
+| Symmetry (Jaccard) | ... | | | | |
+| Serendipity proxy | ... | | | | |
+
+### 3.2 Accuracy metrics (external GT)
+
+| Metric | Random | Lyrics-only | Brightify v7.2 |
+|---|---|---|---|
+| NDCG@5 ✅ | X.XX | X.XX | **X.XX** |
+| NDCG@10 ✅ | ... | | |
+| NDCG@20 ✅ | ... | | |
+| Precision@10 | ... | | |
+| Recall@10 | ... | | |
+| MRR | ... | | |
+
+### 3.3 Per-quadrant (Brightify v7.2)
+
+| Quadrant | N | NDCG@10 | MoodCoherence | 95% CI NDCG |
+|---|---|---|---|---|
+| Q1 Happy | 84 | X.XX | X.XX | [X, X] |
+| Q3 Sad | 3459 | X.XX | X.XX | [X, X] |
+| Q4 Calm | 1991 | X.XX | X.XX | [X, X] |
+| Q2 (n=14) | 14 | — | — | EXEMPT |
+
+### 3.4 Latency baseline
+
+| Method | p50 | p95 | p99 |
+|---|---|---|---|
+| recommend_by_song | XX ms | XX ms | XX ms |
+| recommend_by_mood | ... | | |
+| recommend_by_colors | ... | | |
+| recommend_by_image | ... | | |
+| recommend_by_lyrics_keywords | ... | | |
+| generate_emotion_journey | ... | | |
+
+---
+
+## 4. ABLATION — TÌM ĐIỂM YẾU
+
+### 4.1 Tầm quan trọng từng signal (recommend_by_song)
+
+| Signal bị drop | ΔNDCG@10 | ΔILD_lyrics | ΔMoodCoherence | Kết luận |
+|---|---|---|---|---|
+| lyrics | −X.XX | +X.XX | −X.XX | Signal quan trọng nhất |
+| va | −X.XX | ... | | |
+| emotion | ... | | | |
+| timbral | ... | | | |
+| rhythmic | ... | | | |
+| tonal | ... | | | |
+| mood | ... | | | |
+
+### 4.2 Thứ tự upgrade pillar theo ablation
+
+1. Pillar {X} — {tên} (signal yếu nhất: {signal}, ΔNDCG = −X.XX)
+2. Pillar {Y} — ...
+3. ...
+
+**Lý do:** [giải thích ngắn tại sao thứ tự này]
+
+---
+
+## 5. CẢI THIỆN — TỪNG ITERATION
+
+### Iteration 1: Weight Optimization
+
+**Vấn đề phát hiện:** [ví dụ: "Lyrics weight hiện tại 0.28 quá thấp; ablation cho thấy nó chiếm 35% tầm quan trọng."]
+**Hành động:** Chạy scipy SLSQP optimize NDCG@10 (ext), constraint ILD ≥ 95% baseline.
+**Weights mới:** `[X.XX, X.XX, X.XX, X.XX, X.XX, X.XX, X.XX]` (tổng = 1.0)
+**Kết quả:**
+
+| Metric | iter_0 | iter_1 | Delta | CI 95% | Kết luận |
+|---|---|---|---|---|---|
+| NDCG@10 ✅ | X.XX | X.XX | +X.XX | [+a, +b] | ✅ Cải thiện |
+| ILD_lyrics | X.XX | X.XX | ±X.XX | [a, b] | ✅ Giữ được |
+| Latency p95 | XX ms | XX ms | ±X% | — | ✅ OK |
+
+**Lý do cải thiện:** [ví dụ: "Tăng lyrics weight từ 0.28→0.35 khớp với tầm quan trọng thật trong ablation."]
+
+---
+
+### Iteration 2: Pillar {X} Upgrade
+
+**Vấn đề phát hiện:** [ví dụ: "PhoBERT lyrics embedding chưa tốt cho nhạc Việt; cosine similarity thấp với bài có lyrics tương nghĩa."]
+**Hành động:** [ví dụ: "Thay PhoBERT → ViDeBERTa-base, re-extract embedding 5548 bài."]
+**Kết quả:**
+
+| Metric | iter_1 | iter_2 | Delta | CI 95% | Kết luận |
+|---|---|---|---|---|---|
+| NDCG@10 ✅ | X.XX | X.XX | +X.XX | [a, b] | ✅ / ❌ |
+| ILD_lyrics | ... | | | | |
+| Latency p95 | ... | | | | |
+
+**Lý do cải thiện / không cải thiện:** [giải thích cụ thể]
+
+*[Lặp lại cho mỗi iteration]*
+
+---
+
+## 6. TỔNG KẾT SO SÁNH (v7.2 → v{X.Y})
+
+| Metric | v7.2 | v{X.Y} | Delta tổng | Significant? |
+|---|---|---|---|---|
+| NDCG@10 ✅ | X.XX | X.XX | +X.XX | p<0.05 ✅ |
+| ILD_lyrics | ... | | | |
+| MoodCoherence | ... | | | |
+| Latency p95 | ... | | | |
+
+**Kết luận tổng:** [2–3 câu tóm tắt những gì đã cải thiện, cải thiện nhiều nhất nhờ cái gì, và những gì không cải thiện được + lý do.]
+
+---
+
+## 7. HẠN CHẾ & ĐIỀU KHÔNG ĐO ĐƯỢC
+
+| Hạn chế | Tác động | Cần làm để giải quyết |
+|---|---|---|
+| Không có user → không có implicit feedback | Không biết người dùng thật có hài lòng không | Thu thập play history khi có user |
+| popularity=0 → không đo được novelty | Không biết engine có thiên vị bài nổi tiếng không | Backfill youtube_view_count |
+| genres=0 → không đo GenreCoherence | Không biết recs có đồng thể loại không | Backfill genres |
+| Editorial playlists: {N} playlists, {M} matched tracks | Coverage thấp → precision/recall bị ảnh hưởng | Thêm playlist, backfill thiếu |
+| Q2 chỉ 14 bài | Không đánh giá được high-energy segment | Thu thập thêm nhạc Q2 |
+| Offline ↔ Online gap | Số offline có thể không predict user satisfaction | A/B test khi có user |
+
+---
+
+## 8. KHUYẾN NGHỊ TIẾP THEO
+
+1. **Backfill data** (ưu tiên): youtube_view_count (mở novelty), genres (mở genre metrics).
+2. **Tiếp tục iteration pillar** theo thứ tự ablation đã xác định.
+3. **Khi có user**: thêm implicit feedback (play ratio, skip rate) → upgrade sang hybrid metric.
+4. **Editorial playlist**: mở rộng lên 200+ playlist để tăng coverage GT.
+```
+
+---
+
+## 15. BACKLOG — DATA BLOCKED
+
+Các hạng mục dưới đây **không thể làm** do data không tồn tại. Không implement để tránh tạo số giả.
+
+| Hạng mục | Bị chặn bởi | Cần làm để mở khóa |
+|---|---|---|
+| Novelty (EFD, AvgPopRank), Popularity baseline | `popularity=0` toàn bộ | Thêm `youtube_view_count` migration + re-crawl |
+| GenreCoherence, per-genre segment | `genres=0` | Backfill genres từ metadata / auto-classifier |
+| Temporal split | `release_year` rỗng | Backfill release_date trong pipeline |
+| Serendipity user-based, CF baselines | Không có interaction history | Thu thập play events (cần feature user auth) |
+| Hand-annotated VN mood gold | Budget annotation | ~$500–1000, 500 bài × 5 annotator |
+| User study qualitative | Recruit | 30–50 listener VN |
+
+---
+
+## 16. TÀI LIỆU THAM KHẢO
+
+- McNee, Riedl, Konstan 2006 — "Being Accurate is Not Enough" — CHI 2006.
+- Garcin et al. 2014 — Offline/Online eval gap — RecSys 2014.
+- Steck 2018 — "Calibrated Recommendations" — RecSys 2018.
+- Kaminskas & Bridge 2016 — Diversity/Serendipity/Novelty/Coverage — ACM TiiS.
+- Critical Reexamination ILD 2023 — arXiv 2305.13801.
+- itemKNN deviation 2024 — arXiv 2407.13531 (lock framework version).
+
+**Internal:**
+- `docs/PLAN_SYSTEM_UPGRADE.md` — 7 pillar upgrade (Pillar A–G), roadmap 6 tháng.
+- `docs/PLAN_DOCKERIZATION.md §7` — data layout, artifact tiers.
+- `core/recommendation_engine.py` — 6 method + 7-signal fusion.
+- ~~`tools/backtest.py`~~ — **đã xóa (Phase 0)**.
+
+---
+
+**Hết Plan 2 (v3 — 2026-05-27). Vòng lặp: Measure → Identify → Tune → Re-measure → Report.**

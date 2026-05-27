@@ -22,6 +22,8 @@ services:
         max-file: "5"
 
   app:
+    # replicas > 1 không dùng được cùng container_name cố định → reset để compose tự đặt tên
+    container_name: !reset null
     secrets:
       - admin_key
     environment:

@@ -58,16 +58,16 @@
 | **A** | MERT-95M model weights | T3 | `var/volumes/hf_cache/` (HF auto) | — | Re-downloadable |
 | **A** | MERT embeddings (4,300 × 768) | T2 | `var/runtime/processed/mert_embeddings.npy` | `song_embeddings.mert_embedding Vector(768)` | Weekly snapshot |
 | **A** | CLAP model | T3 | `var/volumes/hf_cache/` | — | Re-downloadable |
-| **A** | CLAP zero-shot prompts (VN+EN) | T1 | `app/core/clap_prompts.py` | — | Git |
+| **A** | CLAP zero-shot prompts (VN+EN) | T1 | `core/clap_prompts.py` | — | Git |
 | **B** | ViDeBERTa model | T3 | `var/volumes/hf_cache/` | — | Re-downloadable |
 | **B** | ViSoBERT model | T3 | `var/volumes/hf_cache/` | — | Re-downloadable |
-| **B** | Lyrics style classifier rules | T1 | `app/core/lyrics_router.py` | — | Git |
+| **B** | Lyrics style classifier rules | T1 | `core/lyrics_router.py` | — | Git |
 | **B** | ViDeBERTa embeddings (alt) | T2 | `var/runtime/processed/videberta_embeddings.npy` | `song_embeddings.videberta_embedding Vector(768)` (nếu A/B chuyển sang) | Snapshot |
-| **C** | RRF fusion logic | T1 | `app/core/retrieval.py` | — | Git |
+| **C** | RRF fusion logic | T1 | `core/retrieval.py` | — | Git |
 | **C** | Cross-encoder model | T3 | `var/volumes/hf_cache/` | — | Re-downloadable |
 | **C** | Cross-encoder fine-tuned (optional) | T2 | `var/runtime/trained_models/reranker_v1/` | — | Per-version backup |
 | **C** | Training pairs cho rerank | T2 | `var/runtime/annotations/rerank_pairs.jsonl` | — | Git LFS hoặc snapshot |
-| **D** | MMR/DPP code | T1 | `app/core/diversity.py` | — | Git |
+| **D** | MMR/DPP code | T1 | `core/diversity.py` | — | Git |
 | **D** | Similarity matrix cache (optional) | T3 (Redis) | Redis key `sim_matrix:*` | — | Ephemeral |
 | **E** | VN mood annotations (500 songs × 5 raters) | T2 | `var/runtime/annotations/vn_mood_500.csv` | `vn_mood_annotations` (tùy chọn) | Snapshot + Git LFS |
 | **E** | MLP combiner weights | T2 | `var/runtime/trained_models/emotion_combiner_v1.onnx` | — | Per-version backup |
@@ -76,8 +76,8 @@
 | **F** | KG triples export | T2 | `var/runtime/datasets/kg_triples.tsv` | (derived from DB) | Regenerable |
 | **F** | KG embeddings (TransE/RotatE) | T2 | `var/runtime/processed/kg_song_embeddings.npy` | `song_embeddings.kg_embedding Vector(64)` | Snapshot |
 | **F** | Weather API cache | T3 (Redis) | Redis key `weather:lat:lon` | — | Ephemeral, TTL 30 phút |
-| **F** | VN holiday calendar | T1 | `app/config/vn_holidays.yaml` | — | Git |
-| **G** | Async DB engine config | T1 | `app/db/engine.py` | — | Git |
+| **F** | VN holiday calendar | T1 | `core/vn_holidays.yaml` | — | Git |
+| **G** | Async DB engine config | T1 | `db/engine.py` | — | Git |
 | **G** | Redis cache entries | T3 | `var/volumes/redis_data/` | — | Ephemeral |
 | **G** | Rate limit counters | T3 | Redis | — | Ephemeral |
 | **G** | Structured logs | T2 | `var/logs/app/` | — | Local rotate, off-site optional |
@@ -847,42 +847,59 @@ def run_pipeline_phase(phase: int):
 
 ---
 
-## 10. ROADMAP 6 THÁNG
+## 10. ROADMAP — THỨ TỰ PILLAR DO ABLATION QUYẾT ĐỊNH
 
-### Tháng 1: Foundation
+> **⚠️ Cập nhật quan trọng:** Lịch cứng 6 tháng bên dưới là **tham khảo ban đầu**, không còn là thứ tự thực thi.
+> **Thứ tự thật sự** được quyết định bởi kết quả ablation từ [PLAN_BACKTEST_METRICS.md §11.2 Phase 3](PLAN_BACKTEST_METRICS.md#11-vòng-lặp-cải-thiện).
+>
+> Logic: Ablation drop-one-signal → signal nào gây ΔNDCG lớn nhất khi bị drop = signal yếu nhất
+> → upgrade pillar tương ứng trước. Mapping signal → pillar:
+>
+> | Signal ablation yếu | Pillar cần làm trước |
+> |---|---|
+> | `lyrics` (PhoBERT) | **Pillar B** — ViDeBERTa/ViSoBERT |
+> | `timbral/rhythmic/tonal` | **Pillar A** — MERT/CLAP |
+> | `va` / `emotion` | **Pillar E** — MLP emotion combiner |
+> | ILD thấp / diversity kém | **Pillar D** — MMR/DPP |
+> | Retrieval recall thấp | **Pillar C** — RRF + rerank |
+>
+> Làm backtest Phase 0–3 trước, xem số ablation, rồi quay lại plan này implement pillar theo thứ tự đó.
 
-- **Tuần 1-2**: Pillar A bước 1 — MERT embedding extraction (pipeline + migration).
-- **Tuần 3-4**: Pillar A bước 2-3 — CLAP zero-shot + fusion integration.
+### Pillar cứng — không phụ thuộc ablation (làm bất kỳ lúc nào):
 
-### Tháng 2: Retrieval & NLP
+- **Pillar G** (Backend: async SQLAlchemy, Redis cache, structured logging) — không ảnh hưởng AI quality, làm song song được.
+- **Pillar E bước 1** (VN mood annotation) — bắt đầu sớm vì tốn calendar time (3 tuần chờ annotator).
 
-- **Tuần 5-6**: Pillar C — RRF fusion + multi-source candidate generation.
-- **Tuần 7**: Pillar B — ViDeBERTa/ViSoBERT routing.
-- **Tuần 8**: Pillar D — MMR diversity.
+### Tham khảo lịch gốc (chỉ dùng cho effort estimation):
 
-### Tháng 3: Quality
+**Tháng 1: Foundation**
+- Tuần 1-2: Pillar A bước 1 — MERT embedding extraction (pipeline + migration).
+- Tuần 3-4: Pillar A bước 2-3 — CLAP zero-shot + fusion integration.
 
-- **Tuần 9-10**: Pillar E bước 1 — Vietnamese mood annotation start.
-- **Tuần 11**: Pillar C bước 3 — Cross-encoder rerank.
-- **Tuần 12**: Pillar D bước 2 — DPP implementation.
+**Tháng 2: Retrieval & NLP**
+- Tuần 5-6: Pillar C — RRF fusion + multi-source candidate generation.
+- Tuần 7: Pillar B — ViDeBERTa/ViSoBERT routing.
+- Tuần 8: Pillar D — MMR diversity.
 
-### Tháng 4: Backend
+**Tháng 3: Quality**
+- Tuần 9-10: Pillar E bước 1 — Vietnamese mood annotation start.
+- Tuần 11: Pillar C bước 3 — Cross-encoder rerank.
+- Tuần 12: Pillar D bước 2 — DPP implementation.
 
-- **Tuần 13-14**: Pillar G — Async SQLAlchemy migration.
-- **Tuần 15**: Pillar G — Redis cache + rate limiter.
-- **Tuần 16**: Pillar G — Structured logging.
+**Tháng 4: Backend**
+- Tuần 13-14: Pillar G — Async SQLAlchemy migration.
+- Tuần 15: Pillar G — Redis cache + rate limiter.
+- Tuần 16: Pillar G — Structured logging.
 
-### Tháng 5: Polish
+**Tháng 5: Polish**
+- Tuần 17-18: Pillar E bước 2 — MLP combiner training (sau khi data đủ).
+- Tuần 19: Pillar F — KG embeddings + weather API.
+- Tuần 20: Pillar E bước 3 — CLAP integration.
 
-- **Tuần 17-18**: Pillar E bước 2 — MLP combiner training (sau khi data đủ).
-- **Tuần 19**: Pillar F — KG embeddings + weather API.
-- **Tuần 20**: Pillar E bước 3 — CLAP integration.
-
-### Tháng 6: Validation & Launch
-
-- **Tuần 21-22**: Backtest toàn diện (PLAN_BACKTEST_METRICS).
-- **Tuần 23**: User study Vietnamese listeners (30-50 người).
-- **Tuần 24**: v8.0 release + retrospective.
+**Tháng 6: Validation & Launch**
+- Tuần 21-22: Final Report (PLAN_BACKTEST_METRICS §14).
+- Tuần 23: User study Vietnamese listeners (30-50 người).
+- Tuần 24: v8.0 release + retrospective.
 
 ---
 

@@ -1,0 +1,36 @@
+# Staging overrides: prod-like (nginx + migrate) nhưng 1 replica, resource khiêm tốn,
+# dùng env-based password (không bắt buộc Docker secrets như prod).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+#    or: make staging
+
+services:
+  app:
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.5"
+        reservations:
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  db:
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "1.5"
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"

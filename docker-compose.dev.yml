@@ -19,17 +19,20 @@ services:
   app:
     build:
       target: runtime
+    # --reload-dir chỉ nhận THƯ MỤC (uvicorn lọc bỏ file lẻ qua is_dir), nên không thể
+    # watch riêng config.py/app.py. Watch cả /app: watchfiles tự bỏ qua .venv/.git/
+    # __pycache__/node_modules (DefaultFilter.ignore_dirs) và chỉ reload trên *.py.
+    # Loại các thư mục không phải nguồn app để tránh reload thừa.
     command: >
       uvicorn app:app
       --host 0.0.0.0
       --port 8000
       --reload
-      --reload-dir /app/api
-      --reload-dir /app/core
-      --reload-dir /app/db
-      --reload-dir /app/config.py
-      --reload-dir /app/app.py
-      --reload-dir /app/logging_config.py
+      --reload-dir /app
+      --reload-exclude 'tools/*'
+      --reload-exclude 'test/*'
+      --reload-exclude 'alembic/*'
+      --reload-exclude 'static/*'
       --log-level debug
     environment:
       DEBUG: "true"

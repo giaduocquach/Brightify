@@ -2,7 +2,7 @@
 
 init: ## Create var/ structure + secrets on first setup
 	@mkdir -p var/runtime/{music_files,album_art,artist_images,checkpoints,processed,essentia_models,annotations,trained_models}
-	@mkdir -p var/runtime/backtest/{ground_truth,test_sets,baselines,reports,ci_artifacts}
+	@mkdir -p var/runtime/backtest/{ground_truth,test_sets,baselines,reports,ci_artifacts,weight_search}
 	@mkdir -p var/volumes/{postgres_data,redis_data,hf_cache}
 	@mkdir -p var/secrets var/backups/{db,snapshots,models} var/logs/{app,nginx,postgres}
 	@mkdir -p logs/app logs/nginx  # default LOGS_PATH=./logs used by docker-compose
