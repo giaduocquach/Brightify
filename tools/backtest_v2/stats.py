@@ -127,3 +127,45 @@ def ci_from_samples(
     ci_low = float(np.percentile(boot_means, 2.5))
     ci_high = float(np.percentile(boot_means, 97.5))
     return observed, ci_low, ci_high
+
+
+def cluster_paired_bootstrap(
+    scores_a: Dict[int, float],
+    scores_b: Dict[int, float],
+    clusters: List[List[int]],
+    n_boot: int = 10_000,
+    seed: int = 42,
+) -> Tuple[float, float, float]:
+    """Cluster bootstrap CI: resample playlists, not individual queries.
+
+    Corrects pseudo-replication when multiple queries share the same playlist.
+    clusters: list of seed-idx lists, one per playlist.
+    Returns (observed_delta, ci_low, ci_high) at 95% level.
+    """
+    cluster_data: List[np.ndarray] = []
+    for cluster_seeds in clusters:
+        diffs = [
+            scores_b[s] - scores_a[s]
+            for s in cluster_seeds
+            if s in scores_a and s in scores_b
+        ]
+        if diffs:
+            cluster_data.append(np.array(diffs, dtype=float))
+
+    if not cluster_data:
+        return 0.0, 0.0, 0.0
+
+    all_diffs = np.concatenate(cluster_data)
+    observed = float(np.mean(all_diffs))
+
+    rng = np.random.default_rng(seed)
+    M = len(cluster_data)
+    boot_means = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = rng.integers(0, M, size=M)
+        resampled = np.concatenate([cluster_data[j] for j in idx])
+        boot_means[i] = resampled.mean()
+
+    ci_low  = float(np.percentile(boot_means, 2.5))
+    ci_high = float(np.percentile(boot_means, 97.5))
+    return observed, ci_low, ci_high

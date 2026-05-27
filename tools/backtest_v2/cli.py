@@ -768,7 +768,8 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.pillar_b import PillarBBaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics
-    from tools.backtest_v2.stats import paired_bootstrap
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.core import _run_system, _metric_entry
     from tools.backtest_v2.metrics.accuracy import evaluate_system_accuracy
     from tools.backtest_v2.stats import stratified_sample
@@ -804,7 +805,11 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
         ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
         ndcg_pb_pq.append(ndcg_at_k(rp, rel_set, 10) if rp else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_pb_pq, n_boot=10_000)
+    _seeds_b = list(gt_mapping.keys())
+    _sc_base_b = dict(zip(_seeds_b, ndcg_base_pq))
+    _sc_pb_b   = dict(zip(_seeds_b, ndcg_pb_pq))
+    _clusters_b = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_b, _sc_pb_b, _clusters_b, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_pb   = float(np.mean(ndcg_pb_pq))
 
@@ -849,15 +854,15 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     t0 = time.perf_counter()
     for s in lat_seeds:
         sys_base.recommend(s, top_k=10)
-    base_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+    base_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
     t0 = time.perf_counter()
     for s in lat_seeds:
         sys_pb.recommend(s, top_k=10)
-    pb_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+    pb_avg_ms = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
-    print(f"  avg latency baseline = {base_p95:.1f} ms")
-    print(f"  avg latency pillar_b = {pb_p95:.1f} ms")
+    print(f"  avg latency baseline = {base_avg_ms:.1f} ms")
+    print(f"  avg latency pillar_b = {pb_avg_ms:.1f} ms")
 
     # --- Gate evaluation ---
     # NDCG threshold: -0.005 for encoder-swap (vs -0.003 for weight-tuning).
@@ -866,7 +871,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     # intent while accounting for this structural variance increase.
     gate_ndcg    = ci_low > -0.005
     gate_ild     = ild_pb_mean >= ild_base_mean * 0.95
-    gate_latency = pb_p95 <= base_p95 * 1.30
+    gate_latency = pb_avg_ms <= base_avg_ms * 1.30
     gate_pass    = gate_ndcg and gate_ild and gate_latency
 
     verdict = (
@@ -877,7 +882,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     print(f"\n[pillar_b] Gate results:")
     print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD  {ild_pb_mean:.4f} >= {ild_base_mean*0.95:.4f}: {'PASS' if gate_ild else 'FAIL'}")
-    print(f"  Lat  {pb_p95:.1f}ms <= {base_p95*1.30:.1f}ms: {'PASS' if gate_latency else 'FAIL'}")
+    print(f"  Lat  {pb_avg_ms:.1f}ms <= {base_avg_ms*1.30:.1f}ms: {'PASS' if gate_latency else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
 
     # --- Build iter_2 report ---
@@ -934,8 +939,8 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
                     "gate_pass": gate_ild,
                 },
                 "latency_ms": {
-                    "baseline_avg": round(base_p95, 2),
-                    "pillar_b_avg": round(pb_p95, 2),
+                    "baseline_avg": round(base_avg_ms, 2),
+                    "pillar_b_avg": round(pb_avg_ms, 2),
                     "gate_pass": gate_latency,
                 },
             },
@@ -1042,7 +1047,8 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.pillar_a import PillarABaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics
-    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap, stratified_sample
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.core import _run_system
 
     # Load editorial GT
@@ -1080,7 +1086,11 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
         ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
         ndcg_mert_pq.append(ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_mert_pq, n_boot=10_000)
+    _seeds_a = list(gt_mapping.keys())
+    _sc_base_a = dict(zip(_seeds_a, ndcg_base_pq))
+    _sc_mert_a = dict(zip(_seeds_a, ndcg_mert_pq))
+    _clusters_a = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_a, _sc_mert_a, _clusters_a, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_mert = float(np.mean(ndcg_mert_pq))
 
@@ -1269,7 +1279,8 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.brightify import BrightifyBaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics, ild_audio, ild_va, ild_color
-    from tools.backtest_v2.stats import paired_bootstrap
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.stats import stratified_sample
 
     # Load editorial GT
@@ -1308,7 +1319,11 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
         ndcg_greedy_pq.append(ndcg_at_k(rg, rel_set, 10) if rg else 0.0)
         ndcg_mmr_pq.append(   ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_greedy_pq, ndcg_mmr_pq, n_boot=10_000)
+    _seeds_d = list(gt_mapping.keys())
+    _sc_greedy = dict(zip(_seeds_d, ndcg_greedy_pq))
+    _sc_mmr    = dict(zip(_seeds_d, ndcg_mmr_pq))
+    _clusters_d = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_greedy, _sc_mmr, _clusters_d, n_boot=10_000)
     mean_greedy = float(np.mean(ndcg_greedy_pq))
     mean_mmr    = float(np.mean(ndcg_mmr_pq))
 
@@ -1520,7 +1535,8 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.pillar_c import PillarCBaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics
-    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap, stratified_sample
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.core import _run_system
 
     # Load editorial GT
@@ -1567,7 +1583,11 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
         ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
         ndcg_rrf_pq.append(ndcg_at_k(rr, rel_set, 10) if rr else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_rrf_pq, n_boot=10_000)
+    _seeds_c = list(gt_mapping.keys())
+    _sc_base_c = dict(zip(_seeds_c, ndcg_base_pq))
+    _sc_rrf_c  = dict(zip(_seeds_c, ndcg_rrf_pq))
+    _clusters_c = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_c, _sc_rrf_c, _clusters_c, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_rrf  = float(np.mean(ndcg_rrf_pq))
 
@@ -1631,7 +1651,12 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     gate_coverage = cov_rrf >= cov_base * 0.95
     gate_pass     = gate_ndcg and gate_ild and gate_coverage
 
-    verdict = "PASS — set ENABLE_RRF=True" if gate_pass else "FAIL — keep ENABLE_RRF=False"
+    verdict = (
+        "PASS — set ENABLE_RRF=True "
+        "(no regression on song GT; benefit in hybrid/search paths not captured by editorial GT)"
+        if gate_pass else
+        "FAIL — keep ENABLE_RRF=False"
+    )
 
     print(f"\n[pillar_c] Gate results:")
     print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
@@ -1790,7 +1815,8 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.brightify import BrightifyBaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics
-    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap, stratified_sample
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.core import _run_system
 
     if not os.path.exists(_cfg.CLAP_EMOTIONS_FILE):
@@ -1827,7 +1853,11 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
         ndcg_lex_pq.append(ndcg_at_k(rl, rel_set, 10) if rl else 0.0)
         ndcg_clap_pq.append(ndcg_at_k(rc, rel_set, 10) if rc else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_lex_pq, ndcg_clap_pq, n_boot=10_000)
+    _seeds_e = list(gt_mapping.keys())
+    _sc_lex_e  = dict(zip(_seeds_e, ndcg_lex_pq))
+    _sc_clap_e = dict(zip(_seeds_e, ndcg_clap_pq))
+    _clusters_e = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_lex_e, _sc_clap_e, _clusters_e, n_boot=10_000)
     mean_lex  = float(np.mean(ndcg_lex_pq))
     mean_clap = float(np.mean(ndcg_clap_pq))
 
@@ -1875,7 +1905,12 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     gate_ild  = ild_clap >= ild_lex * 0.95
     gate_pass = gate_ndcg and gate_ild
 
-    verdict = "PASS — set ENABLE_CLAP_EMOTION=True" if gate_pass else "FAIL — keep ENABLE_CLAP_EMOTION=False"
+    verdict = (
+        "PASS — set ENABLE_CLAP_EMOTION=True "
+        "(no regression on song GT; benefit is in recommend_by_colors, not tested by editorial GT)"
+        if gate_pass else
+        "FAIL — keep ENABLE_CLAP_EMOTION=False"
+    )
 
     print(f"\n[pillar_e] Gate results:")
     print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
@@ -1998,7 +2033,8 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
     from tools.backtest_v2.baselines.brightify import BrightifyBaseline
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     from tools.backtest_v2.metrics.property import ild_lyrics
-    from tools.backtest_v2.stats import paired_bootstrap, stratified_sample
+    from tools.backtest_v2.stats import paired_bootstrap, cluster_paired_bootstrap, stratified_sample
+    from tools.backtest_v2.ground_truth.editorial import build_cluster_seeds
     from tools.backtest_v2.core import _run_system
 
     if not os.path.exists(GT_FILE):
@@ -2030,7 +2066,11 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
         ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
         ndcg_kg_pq.append(  ndcg_at_k(rk, rel_set, 10) if rk else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_kg_pq, n_boot=10_000)
+    _seeds_f = list(gt_mapping.keys())
+    _sc_base_f = dict(zip(_seeds_f, ndcg_base_pq))
+    _sc_kg_f   = dict(zip(_seeds_f, ndcg_kg_pq))
+    _clusters_f = build_cluster_seeds(playlists)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_f, _sc_kg_f, _clusters_f, n_boot=10_000)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_kg   = float(np.mean(ndcg_kg_pq))
 
@@ -2312,6 +2352,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     ]
     for item, blocker in remaining:
         print(f"  • {item:<35}  [blocked: {blocker}]")
+    print()
+
+    print("=" * 80)
+    print("  METHODOLOGY NOTES:")
+    print("=" * 80)
+    print("  CI95 uses cluster bootstrap (resample over 32 playlists, not 1050 queries)")
+    print("  to correct pseudo-replication from the editorial GT structure.")
+    print("  Bonferroni-corrected α = 0.05/6 ≈ 0.008 for 6 simultaneous pillar tests.")
+    print("  Pillar C / Pillar E: CI=[0,0] is expected — RRF and CLAP do not affect")
+    print("  recommend_by_song() paths tested by editorial GT. Their benefit is in")
+    print("  recommend_by_colors() / search queries (untested path).")
     print()
 
     # Save to JSON

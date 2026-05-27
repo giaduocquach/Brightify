@@ -118,8 +118,8 @@ def optimize_weights(
     - update_config = True iff CI₉₅ of delta is entirely positive.
     """
     from scipy.optimize import minimize
-    from tools.backtest_v2.ground_truth.editorial import build_query_gt_mapping
-    from tools.backtest_v2.stats import paired_bootstrap
+    from tools.backtest_v2.ground_truth.editorial import build_query_gt_mapping, build_cluster_seeds
+    from tools.backtest_v2.stats import cluster_paired_bootstrap
     from tools.backtest_v2.metrics.accuracy import ndcg_at_k
     import config as cfg
 
@@ -256,7 +256,11 @@ def optimize_weights(
         ndcg_base_pq.append(ndcg_at_k(rb, rel_set, top_k) if rb else 0.0)
         ndcg_new_pq.append(ndcg_at_k(rn, rel_set, top_k) if rn else 0.0)
 
-    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_new_pq)
+    _cluster_seeds = build_cluster_seeds(playlists)
+    _seeds_full    = list(full_gt.keys())
+    _sc_base = dict(zip(_seeds_full, ndcg_base_pq))
+    _sc_new  = dict(zip(_seeds_full, ndcg_new_pq))
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base, _sc_new, _cluster_seeds)
     update_config = bool(ci_low > 0 and delta > 0)
 
     verdict = (

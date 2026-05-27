@@ -287,6 +287,19 @@ def build_query_gt_mapping(playlists: List[Dict[str, Any]]) -> Dict[int, List[in
     return mapping
 
 
+def build_cluster_seeds(playlists: List[Dict[str, Any]]) -> List[List[int]]:
+    """Return [[seed_idx, ...], ...] — one inner list per playlist.
+
+    Used with cluster_paired_bootstrap to correct pseudo-replication:
+    queries from the same playlist share a relevant set and are not independent.
+    """
+    return [
+        [m["catalog_idx"] for m in pl["matched"]]
+        for pl in playlists
+        if len(pl["matched"]) >= 2
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Main entry point (used by CLI)
 # ---------------------------------------------------------------------------
