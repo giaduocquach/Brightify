@@ -185,6 +185,24 @@ DPI = 100
 COLOR_PALETTE = 'husl'
 
 # ============================================================================
+# Pillar B — Vietnamese NLP Upgrade (ViDeBERTa / ViSoBERT)
+# ============================================================================
+# ENABLE_PILLAR_B=False keeps the default PhoBERT behavior (safe rollback).
+# Set True to activate dual-encoder routing in process_data.py.
+# The backtest reads EMBEDDINGS_FILE_PILLAR_B when this is True.
+ENABLE_PILLAR_B = False
+
+LYRICS_ENCODER = os.environ.get("LYRICS_ENCODER", "phobert")  # phobert | videberta | visobert
+LYRICS_MODEL_MAP = {
+    "phobert":   "vinai/phobert-base-v2",
+    "videberta": "Fsoft-AIC/videberta-base",
+    "visobert":  "uitnlp/visobert",
+}
+EMBEDDINGS_FILE_PILLAR_B = 'data/vietnamese_music_embeddings_pillar_b.npy'
+EMBEDDINGS_META_FILE_PILLAR_B = 'data/embeddings_metadata_pillar_b.json'
+HF_CACHE_DIR = os.environ.get("HF_CACHE_DIR", "var/volumes/hf_cache")
+
+# ============================================================================
 # System Settings
 # ============================================================================
 RANDOM_SEED = 42

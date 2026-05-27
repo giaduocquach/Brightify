@@ -70,6 +70,22 @@ class Catalog:
         rec = get_recommender()
         return cls(rec)
 
+    @classmethod
+    def load_with_embeddings(cls, embeddings_path: str) -> "Catalog":
+        """Load a fresh MusicRecommender with a custom embeddings file.
+
+        Used by Pillar B backtest to compare PhoBERT vs ViDeBERTa/ViSoBERT
+        without mutating the singleton used by the live app.
+        """
+        import config as cfg
+        from core.recommendation_engine import MusicRecommender
+        rec = MusicRecommender(
+            data_path=cfg.PROCESSED_FILE,
+            embeddings_path=embeddings_path,
+            verbose=False,
+        )
+        return cls(rec)
+
     # ------------------------------------------------------------------
     # Unified recommend interface used by all baselines and the runner
     # ------------------------------------------------------------------

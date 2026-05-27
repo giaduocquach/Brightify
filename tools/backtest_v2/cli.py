@@ -727,6 +727,262 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_pillar_b(args: argparse.Namespace) -> int:
+    """Phase 5 Pillar B: compare ViDeBERTa/ViSoBERT vs PhoBERT via paired bootstrap.
+
+    Prerequisites:
+      1. Run:  python tools/process_data.py --pillar-b
+         to generate data/vietnamese_music_embeddings_pillar_b.npy
+      2. Run this command.
+
+    Gates (all must pass):
+      - NDCG@10 ext: pillar_b CI₉₅ lower bound > -0.003 (not deteriorate significantly)
+      - ILD_lyrics: pillar_b >= baseline * 0.95
+      - latency p95: pillar_b <= baseline_p95 * 1.30 (embeddings pre-computed → should be equal)
+    """
+    import datetime
+    import json
+    import os
+    import sys
+    import time
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    import config as cfg
+
+    emb_path = cfg.EMBEDDINGS_FILE_PILLAR_B
+    if not os.path.exists(emb_path):
+        print(f"[pillar_b] ERROR: embeddings file not found: {emb_path}")
+        print("[pillar_b] Run first:  python tools/process_data.py --pillar-b")
+        return 1
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.baselines.pillar_b import PillarBBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import paired_bootstrap
+    from tools.backtest_v2.core import _run_system, _metric_entry
+    from tools.backtest_v2.metrics.accuracy import evaluate_system_accuracy
+    from tools.backtest_v2.stats import stratified_sample
+
+    # Load editorial GT
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_b] GT file not found: {GT_FILE}")
+        print("[pillar_b] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_b] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    # Load baseline (PhoBERT) catalog
+    print("[pillar_b] Loading baseline catalog (PhoBERT)...")
+    cat_base = Catalog.load()
+
+    # Load Pillar B catalog (ViDeBERTa/ViSoBERT)
+    print(f"[pillar_b] Loading Pillar B catalog ({emb_path})...")
+    cat_pb = Catalog.load_with_embeddings(emb_path)
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_b] Computing per-query NDCG@10 for both systems...")
+    sys_base = BrightifyBaseline(cat_base)
+    sys_pb   = PillarBBaseline(cat_pb)
+
+    ndcg_base_pq: list = []
+    ndcg_pb_pq: list   = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rb = sys_base.recommend(seed_idx, top_k=10)
+        rp = sys_pb.recommend(seed_idx, top_k=10)
+        ndcg_base_pq.append(ndcg_at_k(rb, rel_set, 10) if rb else 0.0)
+        ndcg_pb_pq.append(ndcg_at_k(rp, rel_set, 10) if rp else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_base_pq, ndcg_pb_pq, n_boot=10_000)
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_pb   = float(np.mean(ndcg_pb_pq))
+
+    print(f"\n[pillar_b] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
+    print(f"  baseline (PhoBERT)  mean = {mean_base:.5f}")
+    print(f"  pillar_b (ViDeBERTa) mean = {mean_pb:.5f}")
+    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD_lyrics comparison ---
+    print("\n[pillar_b] Computing ILD_lyrics (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_base_vals = []
+    ild_pb_vals   = []
+    for s in sample_seeds:
+        rb = sys_base.recommend(s, top_k=10)
+        rp = sys_pb.recommend(s, top_k=10)
+        if rb:
+            ild_base_vals.append(ild_lyrics(rb, cat_base))
+        if rp:
+            ild_pb_vals.append(ild_lyrics(rp, cat_pb))
+
+    ild_base_mean = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
+    ild_pb_mean   = float(np.mean(ild_pb_vals))   if ild_pb_vals   else 0.0
+    print(f"  ILD_lyrics baseline = {ild_base_mean:.5f}")
+    print(f"  ILD_lyrics pillar_b = {ild_pb_mean:.5f}  (threshold = {ild_base_mean * 0.95:.5f})")
+
+    # --- Latency p95 ---
+    print("\n[pillar_b] Measuring latency (50 calls each)...")
+    lat_seeds = list(gt_mapping.keys())[:50]
+
+    t0 = time.perf_counter()
+    for s in lat_seeds:
+        sys_base.recommend(s, top_k=10)
+    base_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000  # ms avg ≈ p95 proxy
+
+    t0 = time.perf_counter()
+    for s in lat_seeds:
+        sys_pb.recommend(s, top_k=10)
+    pb_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000
+
+    print(f"  avg latency baseline = {base_p95:.1f} ms")
+    print(f"  avg latency pillar_b = {pb_p95:.1f} ms")
+
+    # --- Gate evaluation ---
+    gate_ndcg    = ci_low > -0.003          # NDCG not deteriorate significantly
+    gate_ild     = ild_pb_mean >= ild_base_mean * 0.95
+    gate_latency = pb_p95 <= base_p95 * 1.30
+    gate_pass    = gate_ndcg and gate_ild and gate_latency
+
+    verdict = (
+        "PASS — roll out Pillar B, update ENABLE_PILLAR_B=True"
+        if gate_pass else
+        "FAIL — revert flag, keep PhoBERT"
+    )
+    print(f"\n[pillar_b] Gate results:")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  ILD  {ild_pb_mean:.4f} >= {ild_base_mean*0.95:.4f}: {'PASS' if gate_ild else 'FAIL'}")
+    print(f"  Lat  {pb_p95:.1f}ms <= {base_p95*1.30:.1f}ms: {'PASS' if gate_latency else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_2 report ---
+    output_dir = getattr(args, 'output', None) or "var/runtime/backtest/reports/iter_2_pillar_B"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Full property metrics for pillar_b
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            queries = json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(cat_pb.df, n=500, seed=42)
+    print(f"\n[pillar_b] Computing property metrics ({len(queries)} queries)...")
+    pb_prop = _run_system(sys_pb, queries, cat_pb, top_k=10)
+
+    print(f"[pillar_b] Computing full accuracy metrics...")
+    pb_acc = evaluate_system_accuracy(sys_pb, gt_mapping, top_k=20,
+                                      ground_truth_name="editorial_playlists_v1")
+    pb_prop.update(pb_acc)
+
+    # Load iter_1 for comparison baseline
+    iter1_path = "var/runtime/backtest/reports/iter_1_weight_opt/report.json"
+    iter1_report: dict = {}
+    if os.path.exists(iter1_path):
+        with open(iter1_path) as fh:
+            iter1_report = json.load(fh)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_2_pillar_B",
+            "n_catalog": cat_pb.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_b": {
+                "embeddings_file": emb_path,
+                "encoder": "ViDeBERTa (standard) + ViSoBERT (social)",
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_at_10_baseline": mean_base,
+                    "mean_ndcg_at_10_pillar_b": mean_pb,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_baseline": ild_base_mean,
+                    "ild_lyrics_pillar_b": ild_pb_mean,
+                    "gate_pass": gate_ild,
+                },
+                "latency_ms": {
+                    "baseline_avg": round(base_p95, 2),
+                    "pillar_b_avg": round(pb_p95, 2),
+                    "gate_pass": gate_latency,
+                },
+            },
+        },
+        "systems": {
+            "brightify_v7.2": iter1_report.get("systems", {}).get("brightify_v7.2", {}),
+            "brightify_pillar_b": pb_prop,
+        },
+        "latency": iter1_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    # Markdown report
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_2_pillar_B",
+    })
+
+    class _FakeRep:
+        meta = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_b] Reports saved to {output_dir}/")
+
+    # Update config flag if gate passes
+    if gate_pass:
+        _update_config_pillar_b()
+        print("[pillar_b] config.ENABLE_PILLAR_B set to True.")
+    else:
+        print("[pillar_b] Gate FAILED — config.ENABLE_PILLAR_B unchanged (False).")
+
+    return 0 if gate_pass else 1
+
+
+def _update_config_pillar_b() -> None:
+    """Set config.ENABLE_PILLAR_B = True."""
+    import re
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(r'ENABLE_PILLAR_B\s*=\s*False', 'ENABLE_PILLAR_B = True', src)
+    if n == 0:
+        print("[pillar_b] WARNING: could not find ENABLE_PILLAR_B in config.py")
+        return
+    with open("config.py", "w", encoding="utf-8") as fh:
+        fh.write(new_src)
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     return _not_implemented("Phase 6 (final report)")
 
@@ -776,6 +1032,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("iter_a")
     p_cmp.add_argument("iter_b")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_pb = sub.add_parser("run-pillar-b", help="Phase 5 Pillar B: ViDeBERTa/ViSoBERT vs PhoBERT")
+    p_pb.add_argument("--output", help="override output directory (default: iter_2_pillar_B)")
+    p_pb.set_defaults(func=cmd_run_pillar_b)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)

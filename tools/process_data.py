@@ -399,31 +399,68 @@ def create_engineered_features(df):
     return df
 
 
-def generate_embeddings(df, output_embeddings, output_metadata):
-    """Generate PhoBERT embeddings for lyrics, fallback vectors for no-lyrics tracks."""
+def _encode_batch_mean_pool(tokenizer, model, texts, device, max_length=256):
+    """Mean-pool last hidden state → (len(texts), 768) float32."""
+    encoded = tokenizer(texts, padding=True, truncation=True,
+                        max_length=max_length, return_tensors='pt')
+    encoded = {k: v.to(device) for k, v in encoded.items()}
+    with torch.no_grad():
+        outputs = model(**encoded)
+    attn = encoded['attention_mask']
+    tok_emb = outputs.last_hidden_state
+    mask_exp = attn.unsqueeze(-1).expand(tok_emb.size()).float()
+    s_emb = torch.sum(tok_emb * mask_exp, 1)
+    s_mask = torch.clamp(mask_exp.sum(1), min=1e-9)
+    return (s_emb / s_mask).cpu().numpy()
+
+
+def generate_embeddings(df, output_embeddings, output_metadata,
+                        enable_pillar_b: bool = False,
+                        hf_cache_dir: str = "var/volumes/hf_cache"):
+    """Generate lyrics embeddings.
+
+    enable_pillar_b=False (default): PhoBERT + ViTokenizer, unchanged.
+    enable_pillar_b=True: routes to ViDeBERTa (standard) / ViSoBERT (social).
+    Models are loaded sequentially to keep peak RAM low.
+    """
+    mode = "Pillar B (ViDeBERTa/ViSoBERT)" if enable_pillar_b else "PhoBERT"
     print(f"\n{'='*60}")
-    print("[7/7] Generating PhoBERT embeddings")
+    print(f"[7/7] Generating embeddings — {mode}")
     print(f"{'='*60}")
     
-    # Split: tracks with lyrics get PhoBERT, tracks without get fallback
     has_lyrics_mask = df.get('has_lyrics', df['plain_lyrics'].notna() & (df['plain_lyrics'].str.strip() != ''))
     idx_with = df.index[has_lyrics_mask].tolist()
     idx_without = df.index[~has_lyrics_mask].tolist()
-    print(f"   Tracks with lyrics: {len(idx_with):,} → PhoBERT")
+    enc_label = "Pillar B router" if enable_pillar_b else "PhoBERT"
+    print(f"   Tracks with lyrics: {len(idx_with):,} → {enc_label}")
     print(f"   Tracks without lyrics: {len(idx_without):,} → audio-feature fallback")
-    
+
     EMBEDDING_DIM = 768
-    
-    # --- PhoBERT embeddings for tracks with lyrics ---
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"   Device: {device}")
     if device.type == "cuda":
         print(f"   GPU: {torch.cuda.get_device_name(0)}")
-    
-    # Initialize all embeddings as zeros
+
     all_embeddings = np.zeros((len(df), EMBEDDING_DIM), dtype=np.float32)
-    
-    if idx_with:
+    lyrics_col = 'lyrics_cleaned' if 'lyrics_cleaned' in df.columns else 'plain_lyrics'
+
+    def _clean(text, segment_vi: bool = True) -> str:
+        if pd.isna(text) or str(text).strip() == '':
+            return ""
+        text = str(text)
+        text = re.sub(r'\[\d+:\d+\.\d+\]', '', text)
+        text = re.sub(r'http\S+', '', text)
+        text = re.sub(r'[^\w\s\u00C0-\u024F\u1E00-\u1EFF]', ' ', text, flags=re.IGNORECASE)
+        text = ' '.join(text.split())[:2000]
+        if segment_vi:
+            text = ViTokenizer.tokenize(text)
+        return text
+
+    if not idx_with:
+        pass
+    elif not enable_pillar_b:
+        # --- Default: PhoBERT ---
         print(f"   Loading model: {PHOBERT_MODEL}...")
         try:
             from transformers import AutoModel, AutoTokenizer
@@ -431,57 +468,85 @@ def generate_embeddings(df, output_embeddings, output_metadata):
             model = AutoModel.from_pretrained(PHOBERT_MODEL)
             model.eval()
             model.to(device)
-            print(f"✅ Model loaded ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
+            print(f"✅ PhoBERT loaded ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
         except Exception as e:
             print(f"❌ Error loading model: {e}")
             print("   Skipping embedding generation.")
             return
-        
-        lyrics_col = 'lyrics_cleaned' if 'lyrics_cleaned' in df.columns else 'plain_lyrics'
-        
-        def clean_for_bert(text):
-            if pd.isna(text) or str(text).strip() == '':
-                return ""
-            text = str(text)
-            text = re.sub(r'\[\d+:\d+\.\d+\]', '', text)
-            text = re.sub(r'http\S+', '', text)
-            text = re.sub(r'[^\w\s\u00C0-\u024F\u1E00-\u1EFF]', ' ', text, flags=re.IGNORECASE)
-            text = ' '.join(text.split())[:2000]
-            # Vietnamese word segmentation required by PhoBERT
-            text = ViTokenizer.tokenize(text)
-            return text
-        
-        lyrics_subset = df.loc[idx_with, lyrics_col].apply(clean_for_bert).tolist()
-        
+
+        lyrics_subset = df.loc[idx_with, lyrics_col].apply(
+            lambda t: _clean(t, segment_vi=True)
+        ).tolist()
+
         print(f"\n   Generating PhoBERT embeddings for {len(lyrics_subset):,} tracks...")
-        
-        with torch.no_grad():
-            for i in tqdm(range(0, len(lyrics_subset), BATCH_SIZE), desc="   PhoBERT"):
-                batch = lyrics_subset[i:i + BATCH_SIZE]
-                batch = [t if t else "không có lời" for t in batch]
-                
+        for i in tqdm(range(0, len(lyrics_subset), BATCH_SIZE), desc="   PhoBERT"):
+            batch = [t if t else "phông có lời" for t in lyrics_subset[i:i + BATCH_SIZE]]
+            try:
+                embs = _encode_batch_mean_pool(tokenizer, model, batch, device, MAX_SEQUENCE_LENGTH)
+                for j, emb in enumerate(embs):
+                    all_embeddings[idx_with[i + j]] = emb
+            except Exception as e:
+                print(f"\n   ⚠️ Error in batch {i}: {e}")
+
+        del model, tokenizer
+
+    else:
+        # --- Pillar B: ViDeBERTa (standard) + ViSoBERT (social) routing ---
+        os.makedirs(hf_cache_dir, exist_ok=True)
+        os.environ.setdefault("HF_HOME", hf_cache_dir)
+
+        from core.lyrics_router import get_encoder_name, coverage_stats
+
+        # Route on raw lyrics_cleaned (before encoder-specific re-cleaning)
+        # so that teen indicators like 'ko', 'hihi', '<3' are still present.
+        raw_texts = df.loc[idx_with, lyrics_col].fillna('').tolist()
+        encoder_per = [get_encoder_name(t, base_encoder="videberta") for t in raw_texts]
+
+        # ViDeBERTa/ViSoBERT use SentencePiece — no ViTokenizer pre-segmentation
+        lyrics_texts = [_clean(t, segment_vi=False) for t in raw_texts]
+        videberta_local = [i for i, enc in enumerate(encoder_per) if enc == "videberta"]
+        visobert_local  = [i for i, enc in enumerate(encoder_per) if enc == "visobert"]
+
+        stats = coverage_stats(lyrics_texts)
+        print(f"\n   Routing: {stats['standard']:,} standard → ViDeBERTa ({stats['standard_pct']}%)"
+              f"  |  {stats['social']:,} social → ViSoBERT ({stats['social_pct']}%)")
+
+        from transformers import AutoModel, AutoTokenizer
+
+        for enc_name, local_indices in [
+            ("videberta", videberta_local),
+            ("visobert",  visobert_local),
+        ]:
+            if not local_indices:
+                continue
+            model_id = app_config.LYRICS_MODEL_MAP[enc_name]
+            print(f"\n   Loading {enc_name}: {model_id}  ({len(local_indices):,} tracks)...")
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=hf_cache_dir)
+                model = AutoModel.from_pretrained(model_id, cache_dir=hf_cache_dir)
+                model.eval()
+                model.to(device)
+                print(f"   ✅ {enc_name} ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
+            except Exception as e:
+                print(f"   ❌ Could not load {enc_name}: {e}")
+                continue
+
+            batch_texts = [lyrics_texts[li] or "không có lời" for li in local_indices]
+            print(f"   Encoding {len(batch_texts):,} tracks with {enc_name}...")
+            for b_start in tqdm(range(0, len(batch_texts), BATCH_SIZE), desc=f"   {enc_name}"):
+                batch = batch_texts[b_start:b_start + BATCH_SIZE]
                 try:
-                    encoded = tokenizer(
-                        batch, padding=True, truncation=True,
-                        max_length=MAX_SEQUENCE_LENGTH, return_tensors='pt'
-                    )
-                    encoded = {k: v.to(device) for k, v in encoded.items()}
-                    outputs = model(**encoded)
-                    
-                    attention_mask = encoded['attention_mask']
-                    token_embeddings = outputs.last_hidden_state
-                    mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-                    sum_embeddings = torch.sum(token_embeddings * mask_expanded, 1)
-                    sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
-                    batch_embeddings = (sum_embeddings / sum_mask).cpu().numpy()
-                    
-                    for j, emb in enumerate(batch_embeddings):
-                        orig_idx = idx_with[i + j]
+                    embs = _encode_batch_mean_pool(tokenizer, model, batch, device, MAX_SEQUENCE_LENGTH)
+                    for j, emb in enumerate(embs):
+                        orig_idx = idx_with[local_indices[b_start + j]]
                         all_embeddings[orig_idx] = emb
-                        
                 except Exception as e:
-                    print(f"\n   ⚠️ Error in batch {i}: {e}")
-    
+                    print(f"\n   ⚠️ Error in batch {b_start}: {e}")
+
+            del model, tokenizer
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
     # --- Fallback embeddings for no-lyrics tracks ---
     # Option A: Weighted average of 10 most similar tracks (by audio features)
     # that have real PhoBERT embeddings — keeps all embeddings in the same space.
@@ -547,9 +612,16 @@ def generate_embeddings(df, output_embeddings, output_metadata):
     print(f"   Shape: {all_embeddings.shape}")
     print(f"   PhoBERT: {len(idx_with):,} / Fallback: {len(idx_without):,}")
     
+    encoder_model = (
+        f"ViDeBERTa({app_config.LYRICS_MODEL_MAP['videberta']}) + "
+        f"ViSoBERT({app_config.LYRICS_MODEL_MAP['visobert']})"
+        if enable_pillar_b else PHOBERT_MODEL
+    )
+    print(f"   Encoder: {encoder_model}")
     metadata = {
         'created_at': datetime.now().isoformat(),
-        'model': PHOBERT_MODEL,
+        'model': encoder_model,
+        'pillar_b': enable_pillar_b,
         'num_songs': len(df),
         'embedding_dim': EMBEDDING_DIM,
         'phobert_count': len(idx_with),
@@ -629,7 +701,12 @@ def main():
     parser.add_argument('--metadata', '-m', default=DEFAULT_METADATA_FILE, help='Metadata output file')
     parser.add_argument('--skip-embeddings', action='store_true', help='Skip embedding generation')
     parser.add_argument('--force', '-f', action='store_true', help='Overwrite existing files')
-    
+    parser.add_argument('--pillar-b', action='store_true',
+                        help='Generate Pillar B embeddings (ViDeBERTa/ViSoBERT routing) '
+                             'from existing processed CSV; skips full pipeline')
+    parser.add_argument('--hf-cache', default='var/volumes/hf_cache',
+                        help='HuggingFace model cache dir (default: var/volumes/hf_cache)')
+
     args = parser.parse_args()
     
     print("\n" + "=" * 60)
@@ -637,15 +714,33 @@ def main():
     print(f"   Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
-    # Check if output exists
-    if os.path.exists(args.output) and not args.force:
-        print(f"\n⚠️ Output file already exists: {args.output}")
-        response = input("   Overwrite? (y/n): ")
-        if response.lower() != 'y':
-            print("   Aborted.")
-            return
-    
     try:
+        if getattr(args, 'pillar_b', False):
+            # Pillar B shortcut: load existing processed CSV, only regenerate embeddings
+            import config as _cfg
+            pillar_b_emb = _cfg.EMBEDDINGS_FILE_PILLAR_B
+            pillar_b_meta = _cfg.EMBEDDINGS_META_FILE_PILLAR_B
+            print(f"\n[Pillar B] Loading existing processed CSV: {args.output}...")
+            if not os.path.exists(args.output):
+                print(f"❌ Processed CSV not found: {args.output}")
+                print("   Run without --pillar-b first to generate the processed dataset.")
+                sys.exit(1)
+            df = pd.read_csv(args.output)
+            print(f"   Loaded {len(df):,} tracks")
+            generate_embeddings(df, pillar_b_emb, pillar_b_meta,
+                                enable_pillar_b=True,
+                                hf_cache_dir=getattr(args, 'hf_cache', 'var/volumes/hf_cache'))
+            print(f"\n✅ Pillar B embeddings saved: {pillar_b_emb}")
+            return
+
+        # Check if output exists (for full pipeline only)
+        if os.path.exists(args.output) and not args.force:
+            print(f"\n⚠️ Output file already exists: {args.output}")
+            response = input("   Overwrite? (y/n): ")
+            if response.lower() != 'y':
+                print("   Aborted.")
+                return
+
         # Pipeline steps
         df = load_data(args.input)
         df = clean_data(df)
@@ -673,7 +768,9 @@ def main():
         
         # Generate embeddings
         if not args.skip_embeddings:
-            generate_embeddings(df, args.embeddings, args.metadata)
+            generate_embeddings(df, args.embeddings, args.metadata,
+                                enable_pillar_b=False,
+                                hf_cache_dir=getattr(args, 'hf_cache', 'var/volumes/hf_cache'))
         else:
             print("\n⏭️ Skipped embedding generation (--skip-embeddings)")
         
