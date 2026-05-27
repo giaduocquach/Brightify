@@ -1,0 +1,36 @@
+# Backtest v0 — Phase 1 baseline run
+# Property metrics only (Group A); no ground truth required.
+# Run: python -m tools.backtest_v2 run --config configs/backtest_v0.yaml
+
+seed: 42
+top_k: 10
+n_queries: 500
+output_dir: var/runtime/backtest/reports/iter_0_baseline
+iteration_name: iter_0_baseline
+
+methods:
+  - recommend_by_song
+
+baselines:
+  - random
+  - audio_only
+  - lyrics_only
+  - va_only
+  - brightify_v7.2
+
+metrics:
+  - ild_lyrics
+  - ild_audio
+  - ild_va
+  - ild_color
+  - coverage
+  - artist_gini
+  - mood_coherence
+  - tempo_coherence
+  - color_coherence
+  - calibration_error
+  - symmetry
+  - serendipity_proxy
+  - latency
+
+latency_n: 200
