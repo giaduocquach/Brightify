@@ -92,9 +92,52 @@ def _get_weather_shift(lat=10.8231, lon=106.6297) -> dict:  # HCM default
 
 ---
 
-## Backtest Notes (v8.0)
+## Item 5 — P5: Second Independent GT for Pillar F
 
-One methodology note for future re-runs:
+**Status:** Blocked — needs external data  
+**Blocker:** Expert labels or actual user listening session data  
+**Priority:** Medium (affects trustworthiness of the +107% headline)
 
-- **iter_6 (Pillar E) ran after iter_7 (Pillar F)** in actual execution order, so the iter_6 "lexicon baseline" already had KG enabled (NDCG=0.18632). The marginal effect of CLAP was measured on top of KG+MERT, not on top of A+B+C+D alone. The PASS verdict is still correct (Δ=0 in either context), but to get the exact isolated contribution of CLAP, re-run `python -m tools.backtest_v2 run-pillar-e` after setting `ENABLE_KG=False` temporarily.
-- **iter_5 (Pillar C) and iter_6 (Pillar E)** show CI₉₅=[0,0] because RRF and CLAP don't affect `recommend_by_song()` paths tested by the editorial GT. This is expected and correct.
+**Why needed:**  
+All current results (including Pillar F +118%) rest on a single GT source: editorial playlist co-occurrence from YouTube Music. KG embeddings are built from artist-album-song co-occurrence, which may correlate with playlist co-occurrence — i.e. the GT and the feature share the same underlying structure.
+
+A second structurally-different GT would either confirm Pillar F's gain is real or reveal it partially reflects circular reasoning.
+
+**Options (ranked by feasibility):**  
+1. Collect 200–300 explicit user listening sessions (next-song in actual listening history) — if the app is deployed
+2. Expert annotation: 30–50 seed songs, music experts label top-10 relevant songs each (~2 hours work)
+3. Cross-platform GT: crawl a second platform's playlist data (e.g. Spotify, Zing MP3) and match to catalog
+
+---
+
+## Item 6 — Re-run 6 Pillar Reports with Bonferroni CI
+
+**Status:** Not blocked — runnable now, low priority  
+**Why needed:**  
+Reports iter_2..iter_7 store CI values computed with 95% confidence (old code).  
+The gate code now uses `BONFERRONI_CI_LEVEL ≈ 0.9917` (CI~99.17%).  
+No verdicts change (verified: all strong PASSes remain PASS, FAIL remains FAIL),  
+but stored `.json` reports don't match the current gate standard.
+
+**How to fix:**  
+```bash
+python -m tools.backtest_v2 run-pillar-b   # iter_2
+python -m tools.backtest_v2 run-pillar-d   # iter_3
+python -m tools.backtest_v2 run-pillar-a   # iter_4
+python -m tools.backtest_v2 run-pillar-c   # iter_5
+python -m tools.backtest_v2 run-pillar-e   # iter_6
+python -m tools.backtest_v2 run-pillar-f   # iter_7
+```
+Estimated time: ~45 minutes (each catalog load + bootstrap run).
+
+---
+
+## Backtest Notes (v8.0 — updated)
+
+- **Isolation issue (RESOLVED):** Earlier runs had a baseline contamination issue (e.g. iter_6 ran with KG still on). This was fixed by `Catalog.build_isolated(V72_BASELINE_FLAGS)` + `_pinned_recommend_flags`, committed 2026-05-28. All pillar re-runs done on 2026-05-28 use the correct isolation.
+
+- **Pillar C / Pillar E show CI=[0,0]** on editorial GT — expected. RRF and CLAP don't affect `recommend_by_song()`. Their actual target path `recommend_by_colors()` was validated separately (2026-05-28):
+  - Pillar C color: Δ+0.056 CI95=[+0.025, +0.090] — **CONFIRMS**
+  - Pillar E color: Δ+0.065 CI95=[+0.028, +0.109] — **CONFIRMS**
+
+- **Stored reports vs current gate CI level:** iter_2..iter_7 reports store 95% CI values (pre-Bonferroni). See Item 6 above to re-run with the current 99.17% CI standard.
