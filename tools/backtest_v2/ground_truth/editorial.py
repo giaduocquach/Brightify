@@ -260,6 +260,37 @@ def save_editorial_gt(playlists: List[Dict[str, Any]], path: str = GT_FILE) -> N
     print(f"[editorial] Saved to {path}")
 
 
+def build_cross_artist_gt_mapping(
+    playlists: List[Dict[str, Any]],
+) -> Dict[int, List[int]]:
+    """Like build_query_gt_mapping but only keeps seed→relevant pairs from DIFFERENT artists.
+
+    Motivation: KG embeddings are built from artist co-occurrence, which may correlate
+    with editorial playlist co-occurrence (same artist appears in many playlists → easy
+    same-artist pairs inflate KG gain). This GT tests whether KG helps on cross-artist
+    retrieval, ruling out the circular-reasoning concern.
+    """
+    mapping: Dict[int, List[int]] = {}
+    for pl in playlists:
+        tracks = pl["matched"]
+        if len(tracks) < 2:
+            continue
+        for t_seed in tracks:
+            seed_idx    = t_seed["catalog_idx"]
+            seed_artist = t_seed.get("artist", "")
+            relevant = [
+                t["catalog_idx"] for t in tracks
+                if t["catalog_idx"] != seed_idx and t.get("artist", "") != seed_artist
+            ]
+            if not relevant:
+                continue
+            if seed_idx not in mapping:
+                mapping[seed_idx] = []
+            existing = set(mapping[seed_idx])
+            mapping[seed_idx].extend(i for i in relevant if i not in existing)
+    return {k: v for k, v in mapping.items() if v}
+
+
 def load_editorial_gt(path: str = GT_FILE) -> List[Dict[str, Any]]:
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)

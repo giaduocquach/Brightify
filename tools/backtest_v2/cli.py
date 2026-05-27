@@ -2305,6 +2305,150 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
     return 0 if gate_pass else 1
 
 
+def cmd_run_pillar_f_xartist(args: argparse.Namespace) -> int:
+    """Pillar F circularity check: KG gain on CROSS-ARTIST pairs only.
+
+    KG embeds artist co-occurrence; editorial GT also contains same-artist tracks
+    in the same playlist (easy pairs). This command re-runs Pillar F evaluation
+    keeping only seed→relevant pairs where the seed and relevant track have
+    DIFFERENT artists — directly testing the circularity concern.
+
+    Verdict interpretation:
+      - If KG delta is similar to main Pillar F result → circularity NOT supported.
+      - If KG delta collapses near 0 → KG mainly exploits same-artist proximity.
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_cross_artist_gt_mapping, build_cluster_seeds, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics
+    from tools.backtest_v2.stats import cluster_paired_bootstrap
+    from tools.backtest_v2.core import _run_system
+
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_f_xartist] GT file not found: {GT_FILE}")
+        return 1
+
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_cross_artist_gt_mapping(playlists)
+    clusters   = build_cluster_seeds(playlists)
+
+    n_full = sum(len(v) for v in build_query_gt_mapping_full(playlists).values())
+    n_xart = sum(len(v) for v in gt_mapping.values())
+    print(f"[pillar_f_xartist] Cross-artist GT: {len(playlists)} playlists, "
+          f"{len(gt_mapping)} seed queries, {n_xart} relevant pairs "
+          f"(vs {n_full} in full GT = {100*n_xart/max(n_full,1):.1f}% retained)")
+
+    if len(gt_mapping) < 10:
+        print("[pillar_f_xartist] ERROR: too few cross-artist pairs to evaluate. "
+              "Check artist field population in editorial GT.")
+        return 1
+
+    base_flags  = dict(V72_BASELINE_FLAGS)
+    treat_flags = {**V72_BASELINE_FLAGS, "ENABLE_KG": True, "ENABLE_VN_CONTEXT": True}
+
+    print("[pillar_f_xartist] Building baseline catalog (v7.2)...")
+    cat_base = Catalog.build_isolated(base_flags)
+    print("[pillar_f_xartist] Building treatment catalog (v7.2 + KG + VN)...")
+    cat_kg = Catalog.build_isolated(treat_flags)
+
+    sys_base = BrightifyBaseline(cat_base)
+    sys_kg   = BrightifyBaseline(cat_kg)
+
+    seeds = list(gt_mapping.keys())
+
+    print(f"\n[pillar_f_xartist] Computing base arm (v7.2, {len(seeds)} seeds)...")
+    ndcg_base_pq: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(base_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rb = sys_base.recommend(seed_idx, top_k=10)
+            ndcg_base_pq.append(ndcg_at_k(rb, set(relevant), 10) if rb else 0.0)
+
+    print(f"[pillar_f_xartist] Computing treatment arm (v7.2 + KG)...")
+    ndcg_kg_pq: list = []
+    with _pinned_recommend_flags(**_recommend_time_subset(treat_flags)):
+        for seed_idx, relevant in gt_mapping.items():
+            rk = sys_kg.recommend(seed_idx, top_k=10)
+            ndcg_kg_pq.append(ndcg_at_k(rk, set(relevant), 10) if rk else 0.0)
+
+    _sc_base = dict(zip(seeds, ndcg_base_pq))
+    _sc_kg   = dict(zip(seeds, ndcg_kg_pq))
+    delta, ci_low, ci_high = cluster_paired_bootstrap(
+        _sc_base, _sc_kg, clusters, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL
+    )
+    mean_base = float(np.mean(ndcg_base_pq))
+    mean_kg   = float(np.mean(ndcg_kg_pq))
+
+    print(f"\n[pillar_f_xartist] Cluster bootstrap NDCG@10 (cross-artist pairs only):")
+    print(f"  base mean = {mean_base:.5f}")
+    print(f"  kg   mean = {mean_kg:.5f}")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # Interpretation
+    if delta > 0.005 and ci_low > 0:
+        conclusion = "CIRCULARITY NOT SUPPORTED — KG gain persists on cross-artist pairs"
+    elif abs(delta) <= 0.005:
+        conclusion = "INCONCLUSIVE — delta near zero on cross-artist pairs"
+    else:
+        conclusion = "CIRCULARITY LIKELY — KG gain collapses on cross-artist pairs"
+
+    print(f"\n  Conclusion: {conclusion}")
+
+    # Save report
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/pillar_F_xartist"
+    os.makedirs(output_dir, exist_ok=True)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "pillar_F_xartist_circularity_check",
+            "ground_truth": "editorial_playlists_v1 (cross-artist pairs only)",
+            "n_playlists": len(playlists),
+            "n_seeds": len(gt_mapping),
+            "n_relevant_pairs_xartist": n_xart,
+            "pillar_f_xartist": {
+                "baseline": "v7.2_isolated",
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_base_pq),
+                    "n_boots": 10_000,
+                    "ci_level": BONFERRONI_CI_LEVEL,
+                    "mean_ndcg_base": mean_base,
+                    "mean_ndcg_kg": mean_kg,
+                    "delta": float(delta),
+                    "ci": [float(ci_low), float(ci_high)],
+                },
+                "conclusion": conclusion,
+            },
+        },
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+    print(f"\n[pillar_f_xartist] Report saved to {json_path}")
+
+    return 0
+
+
+def build_query_gt_mapping_full(playlists):
+    """Thin wrapper for local use — avoids re-importing editorial in this scope."""
+    from tools.backtest_v2.ground_truth.editorial import build_query_gt_mapping
+    return build_query_gt_mapping(playlists)
+
+
 def _update_config_enable_kg(enable: bool) -> None:
     import re
     value = "True" if enable else "False"
@@ -3004,6 +3148,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_pec.add_argument("--output", help="override output directory")
     p_pec.add_argument("--rebuild", action="store_true", help="force rebuild color GT")
     p_pec.set_defaults(func=cmd_run_pillar_e_color)
+
+    p_pfx = sub.add_parser(
+        "pillar-f-xartist",
+        help="Pillar F circularity check: KG gain on cross-artist pairs only",
+    )
+    p_pfx.add_argument("--output", help="override output directory")
+    p_pfx.set_defaults(func=cmd_run_pillar_f_xartist)
 
     return parser
 

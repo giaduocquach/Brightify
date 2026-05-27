@@ -46,29 +46,19 @@ Each can be picked up independently when the blocker is resolved.
 
 ## Item 3 — Pillar F: Weather API Context
 
-**Status:** Blocked — needs API key  
-**Blocker:** OpenWeatherMap API key (free tier: 1000 calls/day, sufficient)  
+**Status:** CODE DONE — waiting for API key only  
+**Blocker:** Set `OWM_API_KEY` environment variable (free tier at openweathermap.org, ~5 min signup)  
 **Cost:** Free  
 
-**What to build:**
-- Add weather-based V-A shift in `core/vn_context.py` alongside existing time-of-day shifts
-- Rainy/overcast day → lower arousal (−0.05), lower valence (−0.03)
-- Clear/sunny → higher arousal (+0.03), higher valence (+0.04)
-- Hot/humid → no valence change, slight arousal boost (+0.02)
+**Code shipped (2026-05-28):**
+- `core/vn_context.py`: `_get_weather_shift()` + wired into `get_context_shift(use_weather=True)`
+  - Rain/drizzle/thunder → V −0.03 / A −0.05
+  - Clear/sunny → V +0.04 / A +0.03
+  - Hot-humid (>32°C, >70% RH) → A +0.02
+  - Silent no-op if key missing or network error
+- `config.py`: `OWM_API_KEY`, `OWM_LAT`, `OWM_LON`, `OWM_TIMEOUT_S`
 
-**Implementation (ready to code, 30-min task once key is available):**
-```python
-# In vn_context.py, new function:
-def _get_weather_shift(lat=10.8231, lon=106.6297) -> dict:  # HCM default
-    resp = requests.get(
-        "https://api.openweathermap.org/data/2.5/weather",
-        params={"lat": lat, "lon": lon, "appid": OWM_API_KEY, "units": "metric"},
-        timeout=2,
-    )
-    ...
-```
-- Config: `OWM_API_KEY = os.environ.get("OWM_API_KEY", "")` in `config.py`
-- Fallback: if API unavailable/key missing, skip weather shift silently (already coded as no-op)
+**To activate:** `export OWM_API_KEY=your_key_here` — no code changes needed.
 
 ---
 
@@ -94,19 +84,26 @@ def _get_weather_shift(lat=10.8231, lon=106.6297) -> dict:  # HCM default
 
 ## Item 5 — P5: Second Independent GT for Pillar F
 
-**Status:** Blocked — needs external data  
-**Blocker:** Expert labels or actual user listening session data  
+**Status:** Partially addressed — cross-artist check done; full independent GT still blocked  
+**Blocker (full GT):** Expert labels or actual user listening session data  
 **Priority:** Medium (affects trustworthiness of the +107% headline)
 
-**Why needed:**  
-All current results (including Pillar F +118%) rest on a single GT source: editorial playlist co-occurrence from YouTube Music. KG embeddings are built from artist-album-song co-occurrence, which may correlate with playlist co-occurrence — i.e. the GT and the feature share the same underlying structure.
+**Proxy circularity check (DONE 2026-05-28):**  
+Added `pillar-f-xartist` command (`tools/backtest_v2/cli.py`) that re-runs Pillar F evaluation
+keeping only seed→relevant pairs from **different artists** in each playlist. This directly tests
+whether KG gain is real cross-artist retrieval or same-artist inflation.  
+Run: `python -m tools.backtest_v2 pillar-f-xartist`  
+Report saved to: `var/runtime/backtest/reports/pillar_F_xartist/`
 
-A second structurally-different GT would either confirm Pillar F's gain is real or reveal it partially reflects circular reasoning.
+**Why needed (full GT still relevant):**  
+Cross-artist check uses the same editorial GT source (YouTube Music playlists). A structurally
+different GT (different platform, different labelers) is the gold standard to rule out broader
+circularity between KG and playlist co-occurrence.
 
 **Options (ranked by feasibility):**  
 1. Collect 200–300 explicit user listening sessions (next-song in actual listening history) — if the app is deployed
 2. Expert annotation: 30–50 seed songs, music experts label top-10 relevant songs each (~2 hours work)
-3. Cross-platform GT: crawl a second platform's playlist data (e.g. Spotify, Zing MP3) and match to catalog
+3. Cross-platform GT: crawl a second platform's playlist data (e.g. Zing MP3) and match to catalog
 
 ---
 

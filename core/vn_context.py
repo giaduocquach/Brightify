@@ -13,7 +13,10 @@ Usage:
 from __future__ import annotations
 
 import datetime
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +74,49 @@ _TIME_OF_DAY: list[tuple[int, int, Dict]] = [
 ]
 
 
+def _get_weather_shift(lat: float, lon: float, api_key: str, timeout: int) -> Optional[Dict]:
+    """Fetch current weather and return a V-A shift dict, or None on any error.
+
+    Shift logic (Gomez & Danuser 2007 — weather affects emotional valence/arousal):
+      - Rain / drizzle / thunderstorm → lower arousal & valence (grey-sky effect)
+      - Clear / sunny → slight uplift
+      - Hot-humid (temp > 32°C, humidity > 70%) → mild arousal boost, no valence change
+    """
+    try:
+        import requests
+        resp = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"lat": lat, "lon": lon, "appid": api_key, "units": "metric"},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        weather_id = data.get("weather", [{}])[0].get("id", 800)
+        temp       = data.get("main", {}).get("temp", 25.0)
+        humidity   = data.get("main", {}).get("humidity", 60)
+        label      = data.get("weather", [{}])[0].get("description", "")
+
+        v_shift = 0.0
+        a_shift = 0.0
+
+        # Group 2xx = thunderstorm, 3xx = drizzle, 5xx = rain
+        if weather_id < 600:
+            v_shift = -0.03
+            a_shift = -0.05
+        # Group 8xx = clear (800 = clear sky)
+        elif weather_id == 800:
+            v_shift = +0.04
+            a_shift = +0.03
+        # Hot and humid
+        if temp > 32.0 and humidity > 70:
+            a_shift += 0.02
+
+        return {"valence_shift": v_shift, "arousal_shift": a_shift, "label": f"Thời tiết: {label}"}
+    except Exception:
+        return None
+
+
 def _check_fixed_holiday(today: datetime.date) -> Optional[Dict]:
     for month, day, info in _FIXED_HOLIDAYS:
         if today.month == month and today.day == day:
@@ -98,6 +144,7 @@ def get_context_shift(
     dt: Optional[datetime.datetime] = None,
     use_time: bool = True,
     use_holiday: bool = True,
+    use_weather: bool = True,
 ) -> Dict:
     """Return combined valence/arousal shift for the current (or given) datetime.
 
@@ -133,6 +180,24 @@ def get_context_shift(
         a_shift += t["arousal_shift"]
         if t["label"] not in labels:
             labels.append(t["label"])
+
+    if use_weather:
+        try:
+            import config as _cfg
+            api_key = getattr(_cfg, "OWM_API_KEY", "")
+            if api_key:
+                w = _get_weather_shift(
+                    lat=getattr(_cfg, "OWM_LAT", 10.8231),
+                    lon=getattr(_cfg, "OWM_LON", 106.6297),
+                    api_key=api_key,
+                    timeout=getattr(_cfg, "OWM_TIMEOUT_S", 2),
+                )
+                if w:
+                    v_shift += w["valence_shift"]
+                    a_shift += w["arousal_shift"]
+                    labels.append(w["label"])
+        except Exception:
+            pass  # weather shift is optional — never break recommendation path
 
     return {
         "valence_shift": round(v_shift, 3),

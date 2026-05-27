@@ -264,6 +264,14 @@ KG_DIM = 64
 # Context: applies valence/arousal shifts based on VN holidays + time-of-day.
 ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "True") == "True"
 
+# Weather context — requires OpenWeatherMap free-tier key (1000 calls/day).
+# Set OWM_API_KEY env var or leave blank to silently skip weather shifts.
+OWM_API_KEY = os.environ.get("OWM_API_KEY", "")
+# Default location: Hồ Chí Minh City
+OWM_LAT = float(os.environ.get("OWM_LAT", "10.8231"))
+OWM_LON = float(os.environ.get("OWM_LON", "106.6297"))
+OWM_TIMEOUT_S = 2  # seconds — never block recommendation path
+
 # ============================================================================
 # Pillar E — CLAP Zero-shot Emotion Detection (Wu et al. 2023, arXiv 2211.06687)
 # ============================================================================
