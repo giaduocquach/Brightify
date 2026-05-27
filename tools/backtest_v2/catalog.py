@@ -142,7 +142,7 @@ class Catalog:
     def load_with_embeddings(cls, embeddings_path: str) -> "Catalog":
         """Load a fresh MusicRecommender with a custom embeddings file.
 
-        Used by Pillar B backtest to compare PhoBERT vs ViDeBERTa/ViSoBERT
+        Used by Pillar B backtest to compare PhoBERT vs SimCSE
         without mutating the singleton used by the live app.
         """
         import config as cfg

@@ -260,6 +260,7 @@ def optimize_weights(
     _seeds_full    = list(full_gt.keys())
     _sc_base = dict(zip(_seeds_full, ndcg_base_pq))
     _sc_new  = dict(zip(_seeds_full, ndcg_new_pq))
+    # Single comparison (not a family of 6 pillar tests) → 95% CI is correct here.
     delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base, _sc_new, _cluster_seeds)
     update_config = bool(ci_low > 0 and delta > 0)
 

@@ -1,8 +1,8 @@
-"""Pillar B baseline — Brightify with ViDeBERTa/ViSoBERT lyrics embeddings.
+"""Pillar B baseline — Brightify with SimCSE lyrics embeddings.
 
 Loads a separate Catalog backed by EMBEDDINGS_FILE_PILLAR_B.
 The recommendation engine is identical to BrightifyBaseline; only the
-lyrics embedding matrix differs (ViDeBERTa vs PhoBERT).
+lyrics embedding matrix differs (SimCSE vs PhoBERT).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Any, List, Optional
 
 
 class PillarBBaseline:
-    """Brightify engine using Pillar B (ViDeBERTa/ViSoBERT) embeddings."""
+    """Brightify engine using Pillar B (SimCSE dangvantuan/vietnamese-embedding) embeddings."""
 
     def __init__(self, catalog: Any, weights: Optional[Any] = None) -> None:
         self.catalog = catalog

@@ -64,6 +64,17 @@ def _recommend_time_subset(flags: dict) -> dict:
     return {k: flags[k] for k in _RECOMMEND_TIME_KEYS if k in flags}
 
 
+# ---------------------------------------------------------------------------
+# Multiple-comparison correction (Bonferroni)
+# ---------------------------------------------------------------------------
+# 6 pillar NDCG gates tested against the same editorial GT → FWER ~26% with
+# per-test α=0.05.  Bonferroni target: α_family=0.05 / 6 pillars → each gate
+# uses a ~99.17% CI instead of 95%.  Wider CI = more conservative = correct.
+# run-full-system and color-path commands are single comparisons → 95% CI.
+_N_PILLAR_TESTS = 6
+BONFERRONI_CI_LEVEL = 1.0 - 0.05 / _N_PILLAR_TESTS  # ≈ 0.9917
+
+
 def _not_implemented(phase: str) -> int:
     print(f"[backtest_v2] not implemented yet — {phase}. See docs/PLAN_BACKTEST_METRICS.md")
     return 2
@@ -777,7 +788,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_run_pillar_b(args: argparse.Namespace) -> int:
-    """Phase 5 Pillar B: compare ViDeBERTa/ViSoBERT vs PhoBERT via paired bootstrap.
+    """Phase 5 Pillar B: compare SimCSE (dangvantuan/vietnamese-embedding) vs PhoBERT via paired bootstrap.
 
     Prerequisites:
       1. Run:  python tools/process_data.py --pillar-b
@@ -838,7 +849,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
 
     print("[pillar_b] Building baseline catalog (v7.2: all pillars off, PhoBERT)...")
     cat_base = Catalog.build_isolated(base_flags)
-    print(f"[pillar_b] Building Pillar B catalog (v7.2 + ViDeBERTa/ViSoBERT)...")
+    print(f"[pillar_b] Building Pillar B catalog (v7.2 + SimCSE)...")
     cat_pb = Catalog.build_isolated(treat_flags)
     assert cat_base.rec.embeddings is not None and cat_pb.rec.embeddings is not None, "[pillar_b] embeddings must load"
 
@@ -865,13 +876,13 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     _sc_base_b = dict(zip(_seeds_b, ndcg_base_pq))
     _sc_pb_b   = dict(zip(_seeds_b, ndcg_pb_pq))
     _clusters_b = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_b, _sc_pb_b, _clusters_b, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_b, _sc_pb_b, _clusters_b, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_pb   = float(np.mean(ndcg_pb_pq))
 
     print(f"\n[pillar_b] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
     print(f"  baseline (PhoBERT)  mean = {mean_base:.5f}")
-    print(f"  pillar_b (ViDeBERTa) mean = {mean_pb:.5f}")
+    print(f"  pillar_b (SimCSE)     mean = {mean_pb:.5f}")
     print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     # --- ILD_lyrics comparison ---
@@ -984,7 +995,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
             "ground_truth": "editorial_playlists_v1",
             "pillar_b": {
                 "embeddings_file": emb_path,
-                "encoder": "ViDeBERTa (standard) + ViSoBERT (social)",
+                "encoder": "SimCSE (dangvantuan/vietnamese-embedding)",
                 "baseline": "v7.2_isolated (all other pillars off)",
                 "gate_pass": gate_pass,
                 "verdict": verdict,
@@ -1170,7 +1181,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     _sc_base_a = dict(zip(_seeds_a, ndcg_base_pq))
     _sc_mert_a = dict(zip(_seeds_a, ndcg_mert_pq))
     _clusters_a = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_a, _sc_mert_a, _clusters_a, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_a, _sc_mert_a, _clusters_a, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_mert = float(np.mean(ndcg_mert_pq))
 
@@ -1427,7 +1438,7 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     _sc_greedy = dict(zip(seeds, ndcg_greedy_pq))
     _sc_mmr    = dict(zip(seeds, ndcg_mmr_pq))
     _clusters_d = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_greedy, _sc_mmr, _clusters_d, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_greedy, _sc_mmr, _clusters_d, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_greedy = float(np.mean(ndcg_greedy_pq))
     mean_mmr    = float(np.mean(ndcg_mmr_pq))
 
@@ -1675,7 +1686,7 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     _sc_base_c = dict(zip(seeds, ndcg_base_pq))
     _sc_rrf_c  = dict(zip(seeds, ndcg_rrf_pq))
     _clusters_c = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_c, _sc_rrf_c, _clusters_c, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_c, _sc_rrf_c, _clusters_c, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_rrf  = float(np.mean(ndcg_rrf_pq))
 
@@ -1950,7 +1961,7 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     _sc_lex_e  = dict(zip(seeds, ndcg_lex_pq))
     _sc_clap_e = dict(zip(seeds, ndcg_clap_pq))
     _clusters_e = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_lex_e, _sc_clap_e, _clusters_e, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_lex_e, _sc_clap_e, _clusters_e, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_lex  = float(np.mean(ndcg_lex_pq))
     mean_clap = float(np.mean(ndcg_clap_pq))
 
@@ -2171,7 +2182,7 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
     _sc_base_f = dict(zip(seeds, ndcg_base_pq))
     _sc_kg_f   = dict(zip(seeds, ndcg_kg_pq))
     _clusters_f = build_cluster_seeds(playlists)
-    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_f, _sc_kg_f, _clusters_f, n_boot=10_000)
+    delta, ci_low, ci_high = cluster_paired_bootstrap(_sc_base_f, _sc_kg_f, _clusters_f, n_boot=10_000, ci_level=BONFERRONI_CI_LEVEL)
     mean_base = float(np.mean(ndcg_base_pq))
     mean_kg   = float(np.mean(ndcg_kg_pq))
 
@@ -2485,7 +2496,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     PILLAR_SEQUENCE = [
         ("iter_0_baseline",  "Baseline v7.2"),
         ("iter_1_weight_opt","Weight optimisation"),
-        ("iter_2_pillar_B",  "Pillar B — ViDeBERTa/SimCSE NLP"),
+        ("iter_2_pillar_B",  "Pillar B — SimCSE NLP"),
         ("iter_3_pillar_D",  "Pillar D — MMR diversity"),
         ("iter_4_pillar_A",  "Pillar A — MERT audio embedding"),
         ("iter_5_pillar_C",  "Pillar C — RRF hybrid retrieval"),
@@ -2555,7 +2566,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     import config as cfg
     flags = [
-        ("ENABLE_PILLAR_B", cfg.ENABLE_PILLAR_B, "ViDeBERTa/SimCSE NLP"),
+        ("ENABLE_PILLAR_B", cfg.ENABLE_PILLAR_B, "SimCSE NLP"),
         ("DIVERSITY_METHOD", cfg.DIVERSITY_METHOD, "MMR reranking"),
         ("ENABLE_MERT",      cfg.ENABLE_MERT,     "MERT audio embedding"),
         ("ENABLE_RRF",       cfg.ENABLE_RRF,      "RRF hybrid retrieval"),
@@ -2582,11 +2593,11 @@ def cmd_report(args: argparse.Namespace) -> int:
     print("=" * 80)
     print("  METHODOLOGY NOTES:")
     print("=" * 80)
-    print("  CI95 uses cluster bootstrap (resample over 32 playlists, not 1050 queries)")
+    print("  CI uses cluster bootstrap (resample over 32 playlists, not 1050 queries)")
     print("  to correct pseudo-replication from the editorial GT structure.")
-    print("  LIMITATION: gates use per-test 95% CI and do NOT apply a multiple-")
-    print("  comparison correction. With 6 simultaneous pillar tests the family-wise")
-    print("  error rate is ~26%; a Bonferroni target would be α=0.05/6≈0.008.")
+    print(f"  Bonferroni correction applied: {_N_PILLAR_TESTS} simultaneous pillar tests →")
+    print(f"  each gate uses CI{BONFERRONI_CI_LEVEL*100:.2f}% (α≈0.05/{_N_PILLAR_TESTS}≈{0.05/_N_PILLAR_TESTS:.4f})")
+    print("  instead of 95%, keeping family-wise error rate at 5%.")
     print("  Pillar C / Pillar E: CI=[0,0] is expected — RRF and CLAP do not affect")
     print("  recommend_by_song() tested by editorial GT. Color-path tests available:")
     print("    python -m tools.backtest_v2 pillar-c-color  (RRF on color path)")
@@ -2938,7 +2949,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.add_argument("iter_b")
     p_cmp.set_defaults(func=cmd_compare)
 
-    p_pb = sub.add_parser("run-pillar-b", help="Phase 5 Pillar B: ViDeBERTa/ViSoBERT vs PhoBERT")
+    p_pb = sub.add_parser("run-pillar-b", help="Phase 5 Pillar B: SimCSE (dangvantuan/vietnamese-embedding) vs PhoBERT")
     p_pb.add_argument("--output", help="override output directory (default: iter_2_pillar_B)")
     p_pb.set_defaults(func=cmd_run_pillar_b)
 

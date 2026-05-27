@@ -84,11 +84,13 @@ def paired_bootstrap(
     b: Sequence[float],
     n_boot: int = 10_000,
     seed: int = 42,
+    ci_level: float = 0.95,
 ) -> Tuple[float, float, float]:
     """Paired bootstrap for (b - a).
 
-    Returns (delta_mean, ci_low, ci_high) at 95% level.
+    Returns (delta_mean, ci_low, ci_high) at ci_level confidence.
     Both sequences must be the same length (matched pairs).
+    Use ci_level = 1 - alpha/k for Bonferroni correction over k simultaneous tests.
     """
     arr_a = np.asarray(a, dtype=float)
     arr_b = np.asarray(b, dtype=float)
@@ -102,8 +104,9 @@ def paired_bootstrap(
         sample = rng.choice(diffs, size=n, replace=True)
         boot_means[i] = sample.mean()
 
-    ci_low = float(np.percentile(boot_means, 2.5))
-    ci_high = float(np.percentile(boot_means, 97.5))
+    tail = (1.0 - ci_level) / 2.0 * 100.0
+    ci_low = float(np.percentile(boot_means, tail))
+    ci_high = float(np.percentile(boot_means, 100.0 - tail))
     return observed, ci_low, ci_high
 
 
@@ -111,10 +114,11 @@ def ci_from_samples(
     values: Sequence[float],
     n_boot: int = 10_000,
     seed: int = 42,
+    ci_level: float = 0.95,
 ) -> Tuple[float, float, float]:
     """Bootstrap CI for the mean of a single sequence.
 
-    Returns (mean, ci_low, ci_high).
+    Returns (mean, ci_low, ci_high) at ci_level confidence.
     """
     arr = np.asarray(values, dtype=float)
     observed = float(np.mean(arr))
@@ -124,8 +128,9 @@ def ci_from_samples(
         rng.choice(arr, size=n, replace=True).mean()
         for _ in range(n_boot)
     ])
-    ci_low = float(np.percentile(boot_means, 2.5))
-    ci_high = float(np.percentile(boot_means, 97.5))
+    tail = (1.0 - ci_level) / 2.0 * 100.0
+    ci_low = float(np.percentile(boot_means, tail))
+    ci_high = float(np.percentile(boot_means, 100.0 - tail))
     return observed, ci_low, ci_high
 
 
@@ -135,12 +140,14 @@ def cluster_paired_bootstrap(
     clusters: List[List[int]],
     n_boot: int = 10_000,
     seed: int = 42,
+    ci_level: float = 0.95,
 ) -> Tuple[float, float, float]:
     """Cluster bootstrap CI: resample playlists, not individual queries.
 
     Corrects pseudo-replication when multiple queries share the same playlist.
     clusters: list of seed-idx lists, one per playlist.
-    Returns (observed_delta, ci_low, ci_high) at 95% level.
+    Returns (observed_delta, ci_low, ci_high) at ci_level confidence.
+    Use ci_level = 1 - alpha/k for Bonferroni correction over k simultaneous tests.
     """
     cluster_data: List[np.ndarray] = []
     for cluster_seeds in clusters:
@@ -166,6 +173,7 @@ def cluster_paired_bootstrap(
         resampled = np.concatenate([cluster_data[j] for j in idx])
         boot_means[i] = resampled.mean()
 
-    ci_low  = float(np.percentile(boot_means, 2.5))
-    ci_high = float(np.percentile(boot_means, 97.5))
+    tail = (1.0 - ci_level) / 2.0 * 100.0
+    ci_low  = float(np.percentile(boot_means, tail))
+    ci_high = float(np.percentile(boot_means, 100.0 - tail))
     return observed, ci_low, ci_high

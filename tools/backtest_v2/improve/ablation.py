@@ -19,7 +19,7 @@ SIGNALS = ["timbral", "rhythmic", "tonal", "lyrics", "va", "emotion", "mood"]
 
 # §11.2 mapping: signal → pillar upgrade
 SIGNAL_TO_PILLAR = {
-    "lyrics":   {"pillar": "B", "name": "ViDeBERTa/ViSoBERT", "action": "Replace PhoBERT embedding model"},
+    "lyrics":   {"pillar": "B", "name": "SimCSE (dangvantuan/vietnamese-embedding)", "action": "Replace PhoBERT embedding model"},
     "timbral":  {"pillar": "A", "name": "MERT/CLAP audio encoder", "action": "Replace Essentia timbral features"},
     "rhythmic": {"pillar": "A", "name": "MERT/CLAP audio encoder", "action": "Replace Essentia rhythmic features"},
     "tonal":    {"pillar": "A", "name": "MERT/CLAP audio encoder", "action": "Replace Essentia tonal features"},
