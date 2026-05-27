@@ -21,7 +21,7 @@ def _not_implemented(phase: str) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Phase 1: measure baseline property metrics for all systems."""
+    """Phase 1 + Phase 2: measure baseline property metrics, optionally accuracy against GT."""
     import os
     import sys
 
@@ -43,11 +43,162 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.output:
         config.output_dir = args.output
 
-    runner = BacktestRunner(config)
-    report = runner.run()
+    # CLI --ground-truth overrides config file
+    gt_name = args.ground_truth or config.ground_truth
+    if gt_name:
+        config.ground_truth = gt_name
 
-    # Print summary to stdout
-    _print_summary(report)
+    runner = BacktestRunner(config)
+
+    # If ground-truth is the primary goal and property metrics were already run,
+    # skip the expensive full property evaluation and load catalog directly.
+    existing_report_path = os.path.join(config.output_dir, 'report.json') if config.output_dir else None
+    skip_property = (
+        gt_name is not None
+        and existing_report_path is not None
+        and os.path.exists(existing_report_path)
+    )
+
+    if skip_property:
+        import json
+        print(f"[backtest_v2] Existing property report found at {existing_report_path} — skipping property metrics.")
+        with open(existing_report_path) as fh:
+            report_dict = json.load(fh)
+        # Still need catalog loaded for accuracy eval
+        from tools.backtest_v2.catalog import Catalog
+        print("[backtest_v2] Loading catalog...")
+        runner.catalog = Catalog.load()
+
+        class _MinimalReport:
+            def __init__(self, cfg, d):
+                self.config = cfg
+                self.systems = d.get('systems', {})
+                self.latency = d.get('latency', {})
+                self.meta = d.get('meta', {})
+            def to_dict(self):
+                return {'meta': self.meta, 'systems': self.systems, 'latency': self.latency}
+
+        report = _MinimalReport(config, report_dict)
+    else:
+        report = runner.run()
+        _print_summary(report)
+
+    # Phase 2: accuracy metrics if GT requested
+    if gt_name:
+        rc = cmd_run_accuracy(gt_name, runner, report, config)
+        if rc != 0:
+            return rc
+
+    return 0
+
+
+def cmd_run_accuracy(
+    gt_name: str,
+    runner,
+    property_report,
+    config,
+) -> int:
+    """Phase 2: load/crawl GT, evaluate accuracy, append to report JSON."""
+    import json
+    import os
+
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE,
+        build_editorial_gt,
+        build_query_gt_mapping,
+        load_editorial_gt,
+    )
+    from tools.backtest_v2.metrics.accuracy import evaluate_system_accuracy
+
+    if gt_name != "editorial_playlists_v1":
+        print(f"[backtest_v2] Unknown ground-truth name: {gt_name!r}. Only 'editorial_playlists_v1' supported.")
+        return 1
+
+    # Load existing GT or crawl
+    if os.path.exists(GT_FILE):
+        print(f"[backtest_v2] Loading existing GT: {GT_FILE}")
+        playlists = load_editorial_gt(GT_FILE)
+    else:
+        print("[backtest_v2] GT file not found — crawling now (needs network)...")
+        catalog = runner.catalog
+        playlists, _ = build_editorial_gt(catalog.df, save=True, verbose=True)
+
+    if not playlists:
+        print("[backtest_v2] STOP: 0 playlists passed filter. Cannot compute accuracy. DO NOT use quadrant as substitute.")
+        return 1
+
+    total_matched = sum(len(pl["matched"]) for pl in playlists)
+    print(f"\n[backtest_v2] GT summary: {len(playlists)} playlists, {total_matched} total track matches")
+
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[backtest_v2] GT mapping: {len(gt_mapping)} unique seed queries")
+
+    if len(gt_mapping) < 5:
+        print("[backtest_v2] STOP: fewer than 5 seed queries in GT. Insufficient data for meaningful NDCG.")
+        return 1
+
+    # Evaluate each system
+    print("\n[backtest_v2] Evaluating accuracy metrics (Group B)...")
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.baselines.random_b import RandomBaseline
+    from tools.backtest_v2.baselines.lyrics_only import LyricsOnlyBaseline
+
+    catalog = runner.catalog
+    systems_to_eval = {
+        "random": RandomBaseline(catalog, seed=config.seed),
+        "lyrics_only": LyricsOnlyBaseline(catalog),
+        "brightify_v7.2": BrightifyBaseline(catalog),
+    }
+
+    accuracy_results: dict = {}
+    for name, system in systems_to_eval.items():
+        print(f"[backtest_v2]   {name}...")
+        acc = evaluate_system_accuracy(
+            system,
+            gt_mapping,
+            top_k=20,
+            ground_truth_name=gt_name,
+        )
+        accuracy_results[name] = acc
+
+    # Print NDCG@10 table
+    print()
+    print("=" * 60)
+    print("  NDCG@10 (external, validity='external')")
+    print("=" * 60)
+    for name, metrics in accuracy_results.items():
+        entry = metrics.get("ndcg_at_10", {})
+        val = entry.get("value")
+        ci = entry.get("ci95", [None, None])
+        n = entry.get("n", 0)
+        print(f"  {name:<20} NDCG@10 = {val:.4f}  CI95=[{ci[0]:.4f}, {ci[1]:.4f}]  N={n}")
+    print()
+
+    # Merge accuracy into existing report JSON and save
+    if config.output_dir:
+        json_path = os.path.join(config.output_dir, "report.json")
+        if os.path.exists(json_path):
+            with open(json_path) as fh:
+                report_dict = json.load(fh)
+        else:
+            report_dict = property_report.to_dict()
+
+        for name, acc_metrics in accuracy_results.items():
+            report_dict.setdefault("systems", {}).setdefault(name, {}).update(acc_metrics)
+
+        report_dict.setdefault("meta", {})["ground_truth"] = gt_name
+        report_dict["meta"]["n_gt_playlists"] = len(playlists)
+        report_dict["meta"]["n_gt_queries"] = len(gt_mapping)
+
+        acc_path = os.path.join(config.output_dir, "accuracy_ext.json")
+        with open(acc_path, "w") as fh:
+            json.dump(accuracy_results, fh, indent=2)
+        print(f"[backtest_v2] Accuracy results written to {acc_path}")
+
+        with open(json_path, "w") as fh:
+            json.dump(report_dict, fh, indent=2)
+        print(f"[backtest_v2] Merged into {json_path}")
+
     return 0
 
 

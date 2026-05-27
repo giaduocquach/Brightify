@@ -25,9 +25,9 @@
 
 ## TIẾN ĐỘ TỔNG
 
-- [ ] **Phase 0** — Prerequisites (dọn legacy, refactor weights, skeleton)
-- [ ] **Phase 1** — Đo baseline v7.2 (property metrics) → `iter_0_baseline`
-- [ ] **Phase 2** — Ground truth ngoài (crawl) + accuracy metrics
+- [x] **Phase 0** — Prerequisites (dọn legacy, refactor weights, skeleton)
+- [x] **Phase 1** — Đo baseline v7.2 (property metrics) → `iter_0_baseline`
+- [x] **Phase 2** — Ground truth ngoài (crawl) + accuracy metrics
 - [ ] **Phase 3** — Ablation → xác định thứ tự pillar
 - [ ] **Phase 4** — Weight optimization → `iter_1_weight_opt`
 - [ ] **Phase 5** — Pillar upgrades (mỗi pillar 1 phiên, thứ tự do Phase 3)
@@ -112,6 +112,18 @@ python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1
 Dán NDCG@10 THẬT, gắn validity="external". Nếu crawl fail/ít data → DỪNG + báo,
 KHÔNG dùng quadrant làm relevance thay thế (tautology). Commit.
 ```
+
+**✅ DONE (2026-05-27):**
+- Crawl: **32 playlists** qua filter, **1902 track matches**, **1050 seed queries**
+- GT: `var/runtime/backtest/ground_truth/editorial_playlists_v1.json` (validity="external")
+
+| System | NDCG@10 | CI95 | N |
+|---|---|---|---|
+| random | 0.0509 | [0.0460, 0.0558] | 1050 |
+| lyrics_only | 0.0967 | [0.0893, 0.1040] | 1050 |
+| brightify_v7.2 | **0.0912** | [0.0845, 0.0980] | 1050 |
+
+**Nhận xét:** Brightify (0.0912) không beat lyrics_only (0.0967) — CIs overlap, delta không significant. Tín hiệu rõ: multimodal fusion chưa vượt lyrics đơn thuần → ablation Phase 3 cần xác nhận lyrics là signal quan trọng nhất.
 
 ---
 
