@@ -28,8 +28,8 @@
 - [x] **Phase 0** — Prerequisites (dọn legacy, refactor weights, skeleton)
 - [x] **Phase 1** — Đo baseline v7.2 (property metrics) → `iter_0_baseline`
 - [x] **Phase 2** — Ground truth ngoài (crawl) + accuracy metrics
-- [ ] **Phase 3** — Ablation → xác định thứ tự pillar
-- [ ] **Phase 4** — Weight optimization → `iter_1_weight_opt`
+- [x] **Phase 3** — Ablation → xác định thứ tự pillar
+- [x] **Phase 4** — Weight optimization → `iter_1_weight_opt`
 - [ ] **Phase 5** — Pillar upgrades (mỗi pillar 1 phiên, thứ tự do Phase 3)
 - [ ] **Phase 6** — Final Report
 
@@ -168,6 +168,19 @@ Compare iter_0 vs iter_1 bằng paired bootstrap. CHỈ cập nhật config.RECO
 nếu CI delta NDCG không chứa 0 VÀ dương. Nếu không cải thiện → giữ nguyên weights gốc,
 ghi rõ "đã gần optimal". Dán số THẬT cả 2 trường hợp. Lưu iter_1_weight_opt/. Commit.
 ```
+
+**✅ DONE (2026-05-27):**
+- Optimizer: scipy SLSQP (eps=0.05 vì NDCG rời rạc, 2-start, 30 query/eval), 127 calls, hội tụ.
+- Weights tối ưu (Σ=1): `[0.107, 0.140, 0.039, 0.307, 0.222, 0.151, 0.034]`
+  (lyrics +0.027, va +0.052, mood −0.066 so với baseline).
+- Split 80/20: optimize Δ=+0.00098, validate Δ=+0.00152 (cả 2 dương → không overfit).
+
+| | Baseline (v7.2) | Optimal | Δ NDCG@10 | CI95 (paired bootstrap, N=1050) |
+|---|---|---|---|---|
+| NDCG@10 (ext) | 0.09119 | 0.09238 | **+0.00119** | **[−0.00169, +0.00411]** |
+
+- **Verdict: CI chứa 0 → KHÔNG significant → `config.RECO_SONG_WEIGHTS` GIỮ NGUYÊN** ("đã gần optimal").
+- Lưu: `weight_search/optimal_weights.yaml`, `reports/iter_1_weight_opt/`.
 
 ---
 
