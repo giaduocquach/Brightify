@@ -1606,63 +1606,79 @@ class MusicRecommender:
 
     def _fast_rank(self, scores, top_k, diversity_penalty):
         """
-        MMR-lite ranking with artist diversity and mood variety.
+        Diversity-aware ranking. Dispatches to MMR, DPP, or greedy based on
+        config.DIVERSITY_METHOD (default "mmr").
 
-        Improvement over pure greedy selection:
-        - Penalises consecutive same-artist picks (Flexer et al. 2006)
-        - Mild redundancy check: if top-2 candidates share identical
-          fused_emotion AND same artist, skip the weaker one. This
-          produces more varied radio queues.
-        - Still O(k·C) with C = 3·top_k candidates — fast enough for
-          real-time (<1 ms for k=30).
+        MMR  — Carbonell & Goldstein 1998: λ·relevance − (1−λ)·max_sim_to_selected
+        DPP  — Chen et al. 2018 fast greedy MAP
+        greedy — original artist-penalty heuristic (kept for backward-compat)
         """
         n_candidates = min(top_k * 4, self.n_songs)
         top_indices = np.argsort(scores)[::-1][:n_candidates]
 
-        selected = []
-        selected_artists = {}
-        selected_moods = set()
+        # Filter by minimum threshold
+        valid = scores[top_indices] >= MIN_SIMILARITY_THRESHOLD
+        top_indices = top_indices[valid]
 
-        for idx in top_indices:
-            if len(selected) >= top_k:
-                break
-
-            score = scores[idx]
-            if score < MIN_SIMILARITY_THRESHOLD:
-                continue
-
-            # Artist diversity: escalating penalty per repeat
-            if self.artists is not None:
-                artist = self.artists[idx]
-                if artist:
-                    count = selected_artists.get(artist, 0)
-                    if count > 0:
-                        score *= (1 - diversity_penalty) ** count
-                        if score < MIN_SIMILARITY_THRESHOLD:
-                            continue
-
-            # Mild mood diversity: small bonus for introducing a new mood
-            mood = self._mood_labels[idx] if hasattr(self, '_mood_labels') else ''
-            if mood and mood not in selected_moods:
-                score *= 1.03  # +3% novelty bonus
-
-            selected.append((idx, score))
-
-            if self.artists is not None:
-                art = self.artists[idx]
-                if art:
-                    selected_artists[art] = selected_artists.get(art, 0) + 1
-            if mood:
-                selected_moods.add(mood)
-
-        if not selected:
+        if len(top_indices) == 0:
             return pd.DataFrame()
 
-        indices, final_scores = zip(*selected)
-        indices = list(indices)
+        # --- MMR / DPP path ---
+        if DIVERSITY_METHOD in ("mmr", "dpp") and self.embeddings_normalized is not None:
+            from core.diversity import mmr_rerank, dpp_greedy_map
+            candidates = top_indices.tolist()
+            if DIVERSITY_METHOD == "mmr":
+                chosen = mmr_rerank(
+                    candidates, scores, self.embeddings_normalized,
+                    top_k=top_k, lambda_=DIVERSITY_LAMBDA,
+                )
+            else:
+                chosen = dpp_greedy_map(
+                    candidates, scores, self.embeddings_normalized, top_k=top_k,
+                )
+            indices = chosen
+            final_scores_list = [float(scores[i]) for i in indices]
+
+        # --- Greedy path (original behaviour) ---
+        else:
+            selected = []
+            selected_artists = {}
+            selected_moods = set()
+
+            for idx in top_indices:
+                if len(selected) >= top_k:
+                    break
+                score = float(scores[idx])
+
+                if self.artists is not None:
+                    artist = self.artists[idx]
+                    if artist:
+                        count = selected_artists.get(artist, 0)
+                        if count > 0:
+                            score *= (1 - diversity_penalty) ** count
+                            if score < MIN_SIMILARITY_THRESHOLD:
+                                continue
+
+                mood = self._mood_labels[idx] if hasattr(self, '_mood_labels') else ''
+                if mood and mood not in selected_moods:
+                    score *= 1.03
+
+                selected.append((int(idx), score))
+
+                if self.artists is not None:
+                    art = self.artists[idx]
+                    if art:
+                        selected_artists[art] = selected_artists.get(art, 0) + 1
+                if mood:
+                    selected_moods.add(mood)
+
+            if not selected:
+                return pd.DataFrame()
+            indices, final_scores_list = zip(*selected)
+            indices = list(indices)
 
         results = self.df.iloc[indices].copy()
-        results['similarity_score'] = final_scores
+        results['similarity_score'] = list(final_scores_list)
         results['original_index'] = indices
 
         cols = ['track_name']

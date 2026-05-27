@@ -994,6 +994,252 @@ def _update_config_pillar_b() -> None:
         fh.write(new_src)
 
 
+def cmd_run_pillar_d(args: argparse.Namespace) -> int:
+    """Pillar D: compare greedy vs MMR diversity reranking.
+
+    Gates (all must pass):
+      - ILD_lyrics: mmr >= greedy * 1.20  (≥20% diversity uplift)
+      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.03
+    """
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE, build_query_gt_mapping, load_editorial_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.metrics.accuracy import ndcg_at_k
+    from tools.backtest_v2.metrics.property import ild_lyrics, ild_audio, ild_va, ild_color
+    from tools.backtest_v2.stats import paired_bootstrap
+    from tools.backtest_v2.stats import stratified_sample
+
+    # Load editorial GT
+    if not os.path.exists(GT_FILE):
+        print(f"[pillar_d] GT file not found: {GT_FILE}")
+        print("[pillar_d] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[pillar_d] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    print("[pillar_d] Loading catalog...")
+    catalog = Catalog.load()
+
+    sys_greedy = BrightifyBaseline(catalog)
+    sys_mmr    = BrightifyBaseline(catalog)
+
+    import core.recommendation_engine as _eng
+
+    def _recommend(system, seed_idx: int, top_k: int, method: str) -> list:
+        old = _eng.DIVERSITY_METHOD
+        _eng.DIVERSITY_METHOD = method
+        try:
+            return system.recommend(seed_idx, top_k=top_k)
+        finally:
+            _eng.DIVERSITY_METHOD = old
+
+    # --- Per-query NDCG@10 for paired bootstrap ---
+    print("\n[pillar_d] Computing per-query NDCG@10 (greedy vs MMR)...")
+    ndcg_greedy_pq: list = []
+    ndcg_mmr_pq: list    = []
+    for seed_idx, relevant in gt_mapping.items():
+        rel_set = set(relevant)
+        rg = _recommend(sys_greedy, seed_idx, 10, "greedy")
+        rm = _recommend(sys_mmr,    seed_idx, 10, "mmr")
+        ndcg_greedy_pq.append(ndcg_at_k(rg, rel_set, 10) if rg else 0.0)
+        ndcg_mmr_pq.append(   ndcg_at_k(rm, rel_set, 10) if rm else 0.0)
+
+    delta, ci_low, ci_high = paired_bootstrap(ndcg_greedy_pq, ndcg_mmr_pq, n_boot=10_000)
+    mean_greedy = float(np.mean(ndcg_greedy_pq))
+    mean_mmr    = float(np.mean(ndcg_mmr_pq))
+
+    print(f"\n[pillar_d] Paired bootstrap NDCG@10 (N={len(ndcg_greedy_pq)}, n_boots=10000):")
+    print(f"  greedy mean = {mean_greedy:.5f}")
+    print(f"  mmr    mean = {mean_mmr:.5f}")
+    print(f"  delta  = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+
+    # --- ILD comparison (sample 200 queries) ---
+    print("\n[pillar_d] Computing ILD metrics (sample 200 queries)...")
+    rng = np.random.default_rng(42)
+    sample_seeds = list(gt_mapping.keys())
+    if len(sample_seeds) > 200:
+        sample_seeds = [sample_seeds[i] for i in rng.choice(len(sample_seeds), 200, replace=False).tolist()]
+
+    ild_g: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
+    ild_m: dict = {"lyrics": [], "audio": [], "va": [], "color": []}
+    for s in sample_seeds:
+        rg = _recommend(sys_greedy, s, 10, "greedy")
+        rm = _recommend(sys_mmr,    s, 10, "mmr")
+        if rg:
+            ild_g["lyrics"].append(ild_lyrics(rg, catalog))
+            ild_g["audio"].append(ild_audio(rg, catalog))
+            ild_g["va"].append(ild_va(rg, catalog))
+            ild_g["color"].append(ild_color(rg, catalog))
+        if rm:
+            ild_m["lyrics"].append(ild_lyrics(rm, catalog))
+            ild_m["audio"].append(ild_audio(rm, catalog))
+            ild_m["va"].append(ild_va(rm, catalog))
+            ild_m["color"].append(ild_color(rm, catalog))
+
+    def _mean(lst): return float(np.mean(lst)) if lst else 0.0
+
+    ild_greedy_lyrics = _mean(ild_g["lyrics"])
+    ild_mmr_lyrics    = _mean(ild_m["lyrics"])
+    ild_greedy_audio  = _mean(ild_g["audio"])
+    ild_mmr_audio     = _mean(ild_m["audio"])
+    ild_greedy_va     = _mean(ild_g["va"])
+    ild_mmr_va        = _mean(ild_m["va"])
+    ild_greedy_color  = _mean(ild_g["color"])
+    ild_mmr_color     = _mean(ild_m["color"])
+
+    print(f"  ILD_lyrics  greedy={ild_greedy_lyrics:.5f}  mmr={ild_mmr_lyrics:.5f}  "
+          f"threshold={ild_greedy_lyrics * 1.20:.5f}")
+    print(f"  ILD_audio   greedy={ild_greedy_audio:.5f}  mmr={ild_mmr_audio:.5f}")
+    print(f"  ILD_va      greedy={ild_greedy_va:.5f}  mmr={ild_mmr_va:.5f}")
+    print(f"  ILD_color   greedy={ild_greedy_color:.5f}  mmr={ild_mmr_color:.5f}")
+
+    # --- Gate evaluation ---
+    gate_ild    = ild_mmr_lyrics >= ild_greedy_lyrics * 1.20
+    gate_ndcg   = ci_low > -0.03
+    gate_pass   = gate_ild and gate_ndcg
+
+    verdict = "PASS — keep DIVERSITY_METHOD=mmr" if gate_pass else "FAIL — revert to greedy"
+
+    print(f"\n[pillar_d] Gate results:")
+    print(f"  ILD_lyrics  {ild_mmr_lyrics:.5f} >= {ild_greedy_lyrics * 1.20:.5f} (+20%): "
+          f"{'PASS' if gate_ild else 'FAIL'}")
+    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.030: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"\n  Verdict: {verdict}")
+
+    # --- Build iter_3 report ---
+    output_dir = getattr(args, 'output', None) or "var/runtime/backtest/reports/iter_3_pillar_D"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Property metrics for both systems (sample queries)
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            queries = json.load(fh)["queries"]
+    else:
+        queries = stratified_sample(catalog.df, n=500, seed=42)
+
+    from tools.backtest_v2.core import _run_system
+    print(f"\n[pillar_d] Computing property metrics ({len(queries)} queries)...")
+
+    _eng.DIVERSITY_METHOD = "greedy"
+    prop_greedy = _run_system(sys_greedy, queries, catalog, top_k=10)
+    _eng.DIVERSITY_METHOD = "mmr"
+    prop_mmr    = _run_system(sys_mmr,    queries, catalog, top_k=10)
+    _eng.DIVERSITY_METHOD = "mmr"  # restore default
+
+    # Load iter_2 for previous baseline
+    iter2_path = "var/runtime/backtest/reports/iter_2_pillar_B/report.json"
+    iter2_report: dict = {}
+    if os.path.exists(iter2_path):
+        with open(iter2_path) as fh:
+            iter2_report = json.load(fh)
+
+    report_dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_3_pillar_D",
+            "n_catalog": catalog.n,
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "ground_truth": "editorial_playlists_v1",
+            "pillar_d": {
+                "method": "mmr",
+                "lambda": 0.7,
+                "gate_pass": gate_pass,
+                "verdict": verdict,
+                "bootstrap_ndcg": {
+                    "n_queries": len(ndcg_greedy_pq),
+                    "n_boots": 10_000,
+                    "mean_ndcg_greedy": mean_greedy,
+                    "mean_ndcg_mmr": mean_mmr,
+                    "delta": float(delta),
+                    "ci95": [float(ci_low), float(ci_high)],
+                },
+                "ild_comparison": {
+                    "ild_lyrics_greedy": ild_greedy_lyrics,
+                    "ild_lyrics_mmr":    ild_mmr_lyrics,
+                    "ild_audio_greedy":  ild_greedy_audio,
+                    "ild_audio_mmr":     ild_mmr_audio,
+                    "ild_va_greedy":     ild_greedy_va,
+                    "ild_va_mmr":        ild_mmr_va,
+                    "ild_color_greedy":  ild_greedy_color,
+                    "ild_color_mmr":     ild_mmr_color,
+                    "gate_pass":         gate_ild,
+                },
+            },
+        },
+        "systems": {
+            "brightify_greedy": prop_greedy,
+            "brightify_mmr":    prop_mmr,
+        },
+        "latency": iter2_report.get("latency", {}),
+    }
+
+    json_path = os.path.join(output_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    _FakeCfg = type("_FakeCfg", (), {
+        "output_dir": output_dir,
+        "iteration_name": "iter_3_pillar_D",
+    })
+
+    class _FakeRep:
+        meta    = report_dict["meta"]
+        systems = report_dict["systems"]
+        latency = report_dict.get("latency", {})
+        config  = _FakeCfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeRep(), os.path.join(output_dir, "report.md"))
+    print(f"\n[pillar_d] Reports saved to {output_dir}/")
+
+    if not gate_pass:
+        _update_config_diversity_method("greedy")
+        print("[pillar_d] Gate FAILED — config.DIVERSITY_METHOD reverted to 'greedy'.")
+    else:
+        print("[pillar_d] Gate PASSED — DIVERSITY_METHOD='mmr' remains default.")
+
+    return 0 if gate_pass else 1
+
+
+def _update_config_diversity_method(method: str) -> None:
+    """Revert DIVERSITY_METHOD default in config.py."""
+    import re
+    with open("config.py", encoding="utf-8") as fh:
+        src = fh.read()
+    new_src, n = re.subn(
+        r'(DIVERSITY_METHOD\s*=\s*os\.environ\.get\("DIVERSITY_METHOD",\s*)"[^"]*"(\))',
+        rf'\g<1>"{method}"\2',
+        src,
+    )
+    if n == 0:
+        print(f"[pillar_d] WARNING: could not update DIVERSITY_METHOD in config.py")
+        return
+    with open("config.py", "w", encoding="utf-8") as fh:
+        fh.write(new_src)
+    print(f"[pillar_d] config.py: DIVERSITY_METHOD default = '{method}'")
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     return _not_implemented("Phase 6 (final report)")
 
@@ -1047,6 +1293,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pb = sub.add_parser("run-pillar-b", help="Phase 5 Pillar B: ViDeBERTa/ViSoBERT vs PhoBERT")
     p_pb.add_argument("--output", help="override output directory (default: iter_2_pillar_B)")
     p_pb.set_defaults(func=cmd_run_pillar_b)
+
+    p_pd = sub.add_parser("run-pillar-d", help="Pillar D: greedy vs MMR diversity reranking")
+    p_pd.add_argument("--output", help="override output directory (default: iter_3_pillar_D)")
+    p_pd.set_defaults(func=cmd_run_pillar_d)
 
     p_rep = sub.add_parser("report", help="generate final report")
     p_rep.set_defaults(func=cmd_report)

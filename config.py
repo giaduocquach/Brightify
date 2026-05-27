@@ -137,6 +137,15 @@ DEFAULT_TOP_K = 10              # Number of recommendations
 DIVERSITY_PENALTY = 0.15        # Penalty for same artist (0-1)
 MIN_SIMILARITY_THRESHOLD = 0.3  # Minimum similarity to include
 
+# ============================================================================
+# Pillar D — Diversity & Serendipity (MMR / DPP)
+# ============================================================================
+# DIVERSITY_METHOD: "greedy" keeps original artist-penalty behaviour.
+# "mmr"  uses Maximal Marginal Relevance (Carbonell & Goldstein 1998).
+# "dpp"  uses Determinantal Point Process greedy MAP (Chen et al. 2018).
+DIVERSITY_METHOD = os.environ.get("DIVERSITY_METHOD", "mmr")
+DIVERSITY_LAMBDA = 0.7   # MMR λ: relevance weight (0=pure diversity, 1=pure relevance)
+
 # Multimodal Fusion Weights (Research-based - Zhang et al. 2024, Kim et al. 2024)
 # Color-based recommendation with lyrics integration:
 #   - Audio features: 25% (Spotify audio analysis)
