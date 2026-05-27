@@ -203,10 +203,11 @@ class Catalog:
     ) -> List[int]:
         """Return list of top_k recommended song original_indices for a color query.
 
-        Delegates to MusicRecommender.recommend_by_colors() which takes a color hex
-        string and routes through the color→V-A→emotion pipeline (Pillar C / E path).
+        Delegates to MusicRecommender.recommend_by_colors() which returns a DataFrame
+        with an original_index column — same contract as recommend_by_song().
+        Routes through the color→V-A→emotion pipeline (Pillar C / E path).
         """
         result = self.rec.recommend_by_colors(hex_color, top_k=top_k)
-        if not result or not result.get("songs"):
+        if result is None or (hasattr(result, 'empty') and result.empty):
             return []
-        return [s["song_index"] for s in result["songs"]]
+        return result['original_index'].tolist()
