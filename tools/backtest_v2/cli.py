@@ -263,7 +263,95 @@ def _print_summary(report) -> None:
 
 
 def cmd_ablation(args: argparse.Namespace) -> int:
-    return _not_implemented("Phase 3 (drop-one-signal ablation)")
+    """Phase 3: drop-one-signal ablation → signal_importance.json."""
+    import json
+    import os
+    import sys
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE,
+        build_editorial_gt,
+        build_query_gt_mapping,
+        load_editorial_gt,
+    )
+    from tools.backtest_v2.improve.ablation import run_ablation
+
+    print("[ablation] Loading catalog...")
+    catalog = Catalog.load()
+
+    # Load editorial GT (Phase 2 prerequisite)
+    if not os.path.exists(GT_FILE):
+        print(f"[ablation] GT file not found: {GT_FILE}")
+        print("[ablation] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[ablation] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    output_dir = getattr(args, "output", None) or "var/runtime/backtest/reports/iter_0_baseline/ablation"
+
+    result = run_ablation(
+        catalog=catalog,
+        ground_truth=gt_mapping,
+        output_dir=output_dir,
+    )
+
+    return 0
+
+
+def cmd_va_sanity(args: argparse.Namespace) -> int:
+    """Phase 3: build/evaluate VA sanity floor (engine-derived, labeled)."""
+    import os
+    import sys
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.va_sanity import (
+        VA_SANITY_FILE,
+        build_va_sanity_gt,
+        evaluate_va_sanity,
+        load_va_sanity_gt,
+    )
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.baselines.random_b import RandomBaseline
+
+    print("[va_sanity] Loading catalog...")
+    catalog = Catalog.load()
+
+    save_path = "var/runtime/backtest/ground_truth/va_sanity_v1.json"
+    if os.path.exists(save_path) and not getattr(args, "rebuild", False):
+        print(f"[va_sanity] Loading existing GT: {save_path}")
+        gt_mapping, meta = load_va_sanity_gt(save_path)
+    else:
+        print("[va_sanity] Building VA sanity GT...")
+        gt_mapping, meta = build_va_sanity_gt(catalog, save_path=save_path)
+
+    print(f"[va_sanity] {len(gt_mapping)} queries  validity=engine-derived")
+    print(f"[va_sanity] {meta['warning']}")
+
+    systems = {
+        "brightify_v7.2": BrightifyBaseline(catalog),
+        "random": RandomBaseline(catalog, seed=42),
+    }
+    print()
+    print("  System               NDCG@10(VA)  N    validity")
+    print("  " + "-" * 50)
+    for name, sys_ in systems.items():
+        r = evaluate_va_sanity(sys_, gt_mapping, top_k=10)
+        entry = r["ndcg_at_10_va_sanity"]
+        print(f"  {name:<20} {entry['value']:.4f}       {entry['n']}  {entry['validity']}")
+
+    print("\n  [NOTE] NDCG≈1.0 for engine = expected (tautology). NDCG≈0 = broken.")
+    return 0
 
 
 def cmd_optimize_weights(args: argparse.Namespace) -> int:
@@ -344,6 +432,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_abl = sub.add_parser("ablation", help="drop-one-signal ablation")
     p_abl.add_argument("--signals")
+    p_abl.add_argument("--output", help="override output directory for signal_importance.json")
     p_abl.set_defaults(func=cmd_ablation)
 
     p_opt = sub.add_parser("optimize-weights", help="search RECO_SONG_WEIGHTS")
@@ -363,6 +452,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_mt = sub.add_parser("check-mood-tags", help="run §7.3 discriminativeness gate")
     p_mt.add_argument("--csv", help="path to processed CSV (default: config.PROCESSED_FILE)")
     p_mt.set_defaults(func=cmd_check_mood_tags)
+
+    p_vas = sub.add_parser("va-sanity", help="build/evaluate VA sanity floor (engine-derived)")
+    p_vas.add_argument("--rebuild", action="store_true", help="force rebuild even if file exists")
+    p_vas.set_defaults(func=cmd_va_sanity)
 
     return parser
 
