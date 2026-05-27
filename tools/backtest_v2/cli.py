@@ -73,6 +73,7 @@ def _recommend_time_subset(flags: dict) -> dict:
 # run-full-system and color-path commands are single comparisons → 95% CI.
 _N_PILLAR_TESTS = 6
 BONFERRONI_CI_LEVEL = 1.0 - 0.05 / _N_PILLAR_TESTS  # ≈ 0.9917
+_CI_LABEL = f"CI{BONFERRONI_CI_LEVEL * 100:.1f}%"    # "CI99.2%" — used in pillar gate prints
 
 
 def _not_implemented(phase: str) -> int:
@@ -796,7 +797,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
       2. Run this command.
 
     Gates (all must pass):
-      - NDCG@10 ext: pillar_b CI₉₅ lower bound > -0.003 (not deteriorate significantly)
+      - NDCG@10 ext: pillar_b CI99.2% (Bonferroni) lower bound > -0.005 (not deteriorate significantly)
       - ILD_lyrics: pillar_b >= baseline * 0.95
       - latency p95: pillar_b <= baseline_p95 * 1.30 (embeddings pre-computed → should be equal)
     """
@@ -883,7 +884,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     print(f"\n[pillar_b] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
     print(f"  baseline (PhoBERT)  mean = {mean_base:.5f}")
     print(f"  pillar_b (SimCSE)     mean = {mean_pb:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     # --- ILD_lyrics comparison ---
     print("\n[pillar_b] Computing ILD_lyrics (sample 200 queries)...")
@@ -952,7 +953,7 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
         "FAIL — revert flag, keep PhoBERT"
     )
     print(f"\n[pillar_b] Gate results:")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD  {ild_pb_mean:.4f} >= {ild_base_mean*0.95:.4f}: {'PASS' if gate_ild else 'FAIL'}")
     print(f"  Lat  {pb_avg_ms:.1f}ms <= {base_avg_ms*1.30:.1f}ms: {'PASS' if gate_latency else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
@@ -1081,7 +1082,7 @@ def _revert_config_pillar_b() -> None:
         src = fh.read()
     new_src, n = re.subn(r'ENABLE_PILLAR_B\s*=\s*True', 'ENABLE_PILLAR_B = False', src)
     if n == 0:
-        print("[pillar_b] WARNING: could not find ENABLE_PILLAR_B in config.py")
+        # Already False — no-op, no warning needed.
         return
     with open("config.py", "w", encoding="utf-8") as fh:
         fh.write(new_src)
@@ -1093,7 +1094,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     Prerequisites:
         python -m tools.extract_mert_embeddings
     Gates (all must pass):
-        - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.003
+        - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.003
         - ILD_lyrics: mert >= baseline * 0.95  (no regression)
         - Coverage: mert >= baseline * 0.95
     """
@@ -1188,7 +1189,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     print(f"\n[pillar_a] Paired bootstrap NDCG@10 (N={len(ndcg_base_pq)}, n_boots=10000):")
     print(f"  baseline (7-signal) mean = {mean_base:.5f}")
     print(f"  pillar_a (8-signal) mean = {mean_mert:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     # --- ILD and Coverage comparison ---
     print("\n[pillar_a] Computing ILD + coverage (sample 200 queries)...")
@@ -1229,7 +1230,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     verdict = "PASS — set ENABLE_MERT=True" if gate_pass else "FAIL — keep ENABLE_MERT=False"
 
     print(f"\n[pillar_a] Gate results:")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.003: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD  {ild_mert:.5f} >= {ild_base*0.95:.5f}:  {'PASS' if gate_ild else 'FAIL'}")
     print(f"  Cov  {cov_mert:.4f} >= {cov_base*0.95:.4f}:   {'PASS' if gate_coverage else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
@@ -1357,7 +1358,7 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
 
     Gates (all must pass):
       - ILD_lyrics: mmr >= greedy * 1.20  (≥20% diversity uplift)
-      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.03
+      - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.03
     """
     import datetime
     import json
@@ -1446,7 +1447,7 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_greedy_pq)} queries / {len(_clusters_d)} playlists, n_boots=10000):")
     print(f"  greedy mean = {mean_greedy:.5f}")
     print(f"  mmr    mean = {mean_mmr:.5f}")
-    print(f"  delta  = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta  = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     def _mean(lst): return float(np.mean(lst)) if lst else 0.0
 
@@ -1475,7 +1476,7 @@ def cmd_run_pillar_d(args: argparse.Namespace) -> int:
     print(f"\n[pillar_d] Gate results:")
     print(f"  ILD_lyrics  {ild_mmr_lyrics:.5f} >= {ild_greedy_lyrics * 1.20:.5f} (+20%): "
           f"{'PASS' if gate_ild else 'FAIL'}")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.030: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.030: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
 
     # --- Build iter_3 report ---
@@ -1604,7 +1605,7 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     Also reports latency improvement from vectorized emotion_boost.
 
     Gates (all must pass):
-      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.005
       - ILD_lyrics: rrf >= baseline * 0.95  (no regression)
       - Coverage: rrf >= baseline * 0.95
     """
@@ -1694,7 +1695,7 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_base_pq)} queries / {len(_clusters_c)} playlists, n_boots=10000):")
     print(f"  baseline (no-RRF)  mean = {mean_base:.5f}")
     print(f"  pillar_c (RRF)     mean = {mean_rrf:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_rrf  = float(np.mean(ild_rrf_vals))  if ild_rrf_vals  else 0.0
@@ -1742,7 +1743,7 @@ def cmd_run_pillar_c(args: argparse.Namespace) -> int:
     )
 
     print(f"\n[pillar_c] Gate results:")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD  {ild_rrf:.5f} >= {ild_base*0.95:.5f}:  {'PASS' if gate_ild else 'FAIL'}")
     print(f"  Cov  {cov_rrf:.4f} >= {cov_base*0.95:.4f}:   {'PASS' if gate_coverage else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
@@ -1876,7 +1877,7 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     Loads two catalog instances with ENABLE_CLAP_EMOTION toggled.
 
     Gates (all must pass):
-      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.005
       - ILD_lyrics: clap >= lexicon * 0.95 (no diversity regression)
     """
     import datetime
@@ -1969,7 +1970,7 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_lex_pq)} queries / {len(_clusters_e)} playlists, n_boots=10000):")
     print(f"  lexicon mean = {mean_lex:.5f}")
     print(f"  clap    mean = {mean_clap:.5f}")
-    print(f"  delta   = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta   = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     ild_lex  = float(np.mean(ild_lex_vals))  if ild_lex_vals  else 0.0
     ild_clap = float(np.mean(ild_clap_vals)) if ild_clap_vals else 0.0
@@ -2001,7 +2002,7 @@ def cmd_run_pillar_e(args: argparse.Namespace) -> int:
     )
 
     print(f"\n[pillar_e] Gate results:")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD_lyrics {ild_clap:.5f} >= {ild_lex*0.95:.5f} (95% of lexicon): {'PASS' if gate_ild else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
 
@@ -2103,7 +2104,7 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
     """Pillar F: KG embeddings + VN context vs. no-KG baseline.
 
     Gates (all must pass):
-      - NDCG@10 ext: paired bootstrap CI₉₅ lower bound > -0.005
+      - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.005
       - ILD_lyrics: kg >= base * 0.95
     """
     import datetime
@@ -2190,7 +2191,7 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_base_pq)} queries / {len(_clusters_f)} playlists, n_boots=10000):")
     print(f"  base mean = {mean_base:.5f}")
     print(f"  kg   mean = {mean_kg:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     ild_base = float(np.mean(ild_base_vals)) if ild_base_vals else 0.0
     ild_kg   = float(np.mean(ild_kg_vals))   if ild_kg_vals   else 0.0
@@ -2205,7 +2206,7 @@ def cmd_run_pillar_f(args: argparse.Namespace) -> int:
               if gate_pass else "FAIL — disable KG or reduce kg_weight"
 
     print(f"\n[pillar_f] Gate results:")
-    print(f"  NDCG CI₉₅[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
+    print(f"  NDCG {_CI_LABEL}[{ci_low:+.4f}] > -0.005: {'PASS' if gate_ndcg else 'FAIL'}")
     print(f"  ILD_lyrics {ild_kg:.5f} >= {ild_base*0.95:.5f} (95%): {'PASS' if gate_ild else 'FAIL'}")
     print(f"\n  Verdict: {verdict}")
 
@@ -2442,7 +2443,7 @@ def cmd_run_full_system(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_base_pq)} queries / {len(_clusters)} playlists, n_boots=10000):")
     print(f"  v7.2       mean = {mean_base:.5f}")
     print(f"  production mean = {mean_prod:.5f}  ({pct:+.1f}%)")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
     print(f"  ILD_lyrics  v7.2={ild_base:.5f}  production={ild_prod:.5f}")
     significant = ci_low > 0
     print(f"  Net lift significant (CI95 lower > 0): {'YES' if significant else 'NO'}")
@@ -2714,7 +2715,7 @@ def cmd_run_pillar_c_color(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_base)} color queries, n_boots=10000):")
     print(f"  base (no-RRF)  mean = {mean_base:.5f}")
     print(f"  treat (RRF)    mean = {mean_rrf:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     significant = ci_low > 0
     verdict = (
@@ -2856,7 +2857,7 @@ def cmd_run_pillar_e_color(args: argparse.Namespace) -> int:
           f"(N={len(ndcg_lex)} color queries, n_boots=10000):")
     print(f"  lexicon     mean = {mean_lex:.5f}")
     print(f"  CLAP        mean = {mean_clap:.5f}")
-    print(f"  delta = {delta:+.5f}  CI95=[{ci_low:+.5f}, {ci_high:+.5f}]")
+    print(f"  delta = {delta:+.5f}  {_CI_LABEL}=[{ci_low:+.5f}, {ci_high:+.5f}]")
 
     significant = ci_low > 0
     verdict = (

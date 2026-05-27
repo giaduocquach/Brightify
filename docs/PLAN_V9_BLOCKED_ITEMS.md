@@ -110,29 +110,7 @@ A second structurally-different GT would either confirm Pillar F's gain is real 
 
 ---
 
-## Item 6 — Re-run 6 Pillar Reports with Bonferroni CI
-
-**Status:** Not blocked — runnable now, low priority  
-**Why needed:**  
-Reports iter_2..iter_7 store CI values computed with 95% confidence (old code).  
-The gate code now uses `BONFERRONI_CI_LEVEL ≈ 0.9917` (CI~99.17%).  
-No verdicts change (verified: all strong PASSes remain PASS, FAIL remains FAIL),  
-but stored `.json` reports don't match the current gate standard.
-
-**How to fix:**  
-```bash
-python -m tools.backtest_v2 run-pillar-b   # iter_2
-python -m tools.backtest_v2 run-pillar-d   # iter_3
-python -m tools.backtest_v2 run-pillar-a   # iter_4
-python -m tools.backtest_v2 run-pillar-c   # iter_5
-python -m tools.backtest_v2 run-pillar-e   # iter_6
-python -m tools.backtest_v2 run-pillar-f   # iter_7
-```
-Estimated time: ~45 minutes (each catalog load + bootstrap run).
-
----
-
-## Backtest Notes (v8.0 — updated)
+## Backtest Notes (v8.0 — updated 2026-05-28)
 
 - **Isolation issue (RESOLVED):** Earlier runs had a baseline contamination issue (e.g. iter_6 ran with KG still on). This was fixed by `Catalog.build_isolated(V72_BASELINE_FLAGS)` + `_pinned_recommend_flags`, committed 2026-05-28. All pillar re-runs done on 2026-05-28 use the correct isolation.
 
@@ -140,4 +118,4 @@ Estimated time: ~45 minutes (each catalog load + bootstrap run).
   - Pillar C color: Δ+0.056 CI95=[+0.025, +0.090] — **CONFIRMS**
   - Pillar E color: Δ+0.065 CI95=[+0.028, +0.109] — **CONFIRMS**
 
-- **Stored reports vs current gate CI level:** iter_2..iter_7 reports store 95% CI values (pre-Bonferroni). See Item 6 above to re-run with the current 99.17% CI standard.
+- **Bonferroni CI (DONE 2026-05-28):** All 6 pillar reports re-run with `BONFERRONI_CI_LEVEL ≈ 0.9917` (CI99.2%). No verdicts changed. Gate print labels now show `CI99.2%` instead of `CI95%`. All `_CI_LABEL` and gate-threshold fixes applied in `cli.py`.
