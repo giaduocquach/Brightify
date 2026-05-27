@@ -23,7 +23,8 @@ from core.image_analysis import get_image_analyzer
 from api import music as music_routes
 from api import recommend as recommend_routes
 from api import system as system_routes
-from api.rate_limit import RateLimitMiddleware
+from api import cache as cache_module
+from api.rate_limit import RateLimitMiddleware, set_redis as _rl_set_redis
 
 # Static files & media directories
 static_path = Path(__file__).parent / "static"
@@ -58,14 +59,39 @@ def init_image_analyzer():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Brightify v7.1 — Starting up...")
+    logger.info("Brightify v7.2 — Starting up...")
+
+    # ── Redis (optional — graceful fallback when unavailable) ──────────────
+    _redis_client = None
+    _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    try:
+        import redis.asyncio as _redis_asyncio
+        _redis_client = _redis_asyncio.from_url(_redis_url, decode_responses=True)
+        await _redis_client.ping()
+        cache_module.set_redis(_redis_client)
+        _rl_set_redis(_redis_client)
+        logger.info(f"Redis connected: {_redis_url}")
+    except Exception as _e:
+        logger.warning(
+            f"Redis unavailable ({_e.__class__.__name__}: {_e}) — "
+            "cache disabled, using in-memory rate limiter"
+        )
+        _redis_client = None
+
+    # ── Core modules ───────────────────────────────────────────────────────
     init_recommender()
     init_image_analyzer()
     music_routes.init(recommender, music_path, artist_images_path)
     recommend_routes.init(recommender, image_analyzer, init_image_analyzer)
     system_routes.init(recommender, image_analyzer)
     logger.info("All systems ready")
+
     yield
+
+    # ── Shutdown ───────────────────────────────────────────────────────────
+    if _redis_client is not None:
+        await _redis_client.aclose()
+        logger.info("Redis connection closed")
 
 
 app = FastAPI(

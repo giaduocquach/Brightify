@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import random
 
+from api.cache import cache_get, cache_set, make_key
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Music"])
@@ -203,27 +205,37 @@ async def browse_songs(
 @router.get("/songs/featured")
 async def featured_songs(count: int = Query(default=12, ge=1, le=50)):
     """Get featured/trending songs (highest energy + danceability)"""
-    df = _recommender.df.copy()
+    cache_key = make_key("browse:featured", count=count)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
 
+    df = _recommender.df.copy()
     if 'energy' in df.columns and 'danceability' in df.columns:
         df['_score'] = df['energy'] * 0.5 + df['danceability'] * 0.3 + df['valence'].fillna(0.5) * 0.2
         df = df.sort_values('_score', ascending=False)
-    
-    # Pick from top pool with some randomness
     pool = df.head(count * 3)
     selected = pool.sample(n=min(count, len(pool)))
-    
     songs = [_song_to_dict(row, idx) for idx, row in selected.iterrows()]
-    return {"success": True, "songs": songs}
+    result = {"success": True, "songs": songs}
+    await cache_set(cache_key, result, ttl=300)   # 5 min
+    return result
 
 
 @router.get("/songs/new-releases")
 async def new_releases(count: int = Query(default=12, ge=1, le=50)):
     """Get newest songs (last entries in dataset)"""
+    cache_key = make_key("browse:new_releases", count=count)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     df = _recommender.df
     recent = df.tail(count * 2).sample(n=min(count, len(df)))
     songs = [_song_to_dict(row, idx) for idx, row in recent.iterrows()]
-    return {"success": True, "songs": songs}
+    result = {"success": True, "songs": songs}
+    await cache_set(cache_key, result, ttl=300)   # 5 min
+    return result
 
 
 @router.get("/songs/by-mood/{mood}")
@@ -446,6 +458,11 @@ async def artist_songs(artist_name: str):
 @router.get("/genres")
 async def list_genres():
     """List available mood/genre categories with counts"""
+    cache_key = "brightify:browse:genres"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     df = _recommender.df
     
     genres = []
@@ -486,7 +503,9 @@ async def list_genres():
                     'type': 'emotion',
                 })
 
-    return {"success": True, "genres": genres}
+    result = {"success": True, "genres": genres}
+    await cache_set(cache_key, result, ttl=3600)   # 1 hour — genres are static
+    return result
 
 
 # ============================================================================

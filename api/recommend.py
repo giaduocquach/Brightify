@@ -13,6 +13,7 @@ from io import BytesIO
 
 import config
 from api.utils import dataframe_to_dict
+from api.cache import cache_get, cache_set, make_key
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +112,24 @@ _dataframe_to_dict = dataframe_to_dict
 @router.post("/color", response_model=RecommendationResponse)
 async def recommend_by_color(request: ColorRecommendationRequest):
     """Recommend songs by color(s) using CIEDE2000 perceptual color distance"""
+    cache_key = make_key(
+        "reco:color",
+        colors=sorted(request.colors),
+        top_k=request.top_k,
+        weights=request.weights,
+        diversity_penalty=request.diversity_penalty,
+    )
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         results = _recommender.recommend_by_colors(
             request.colors, top_k=request.top_k,
             weights=request.weights,
             diversity_penalty=request.diversity_penalty,
         )
-        return RecommendationResponse(
+        payload = RecommendationResponse(
             success=True,
             query={"colors": request.colors, "top_k": request.top_k,
                    "weights": request.weights or config.WEIGHTS_COLOR_QUERY,
@@ -125,6 +137,8 @@ async def recommend_by_color(request: ColorRecommendationRequest):
             results=_dataframe_to_dict(results),
             count=len(results),
         )
+        await cache_set(cache_key, payload.model_dump(), ttl=600)   # 10 min
+        return payload
     except Exception as e:
         logger.exception("Color recommendation failed")
         raise HTTPException(status_code=500, detail="Color recommendation failed")
@@ -133,18 +147,31 @@ async def recommend_by_color(request: ColorRecommendationRequest):
 @router.post("/lyrics", response_model=RecommendationResponse)
 async def search_by_lyrics(request: LyricsSearchRequest):
     """Search songs by Vietnamese lyrics keywords via PhoBERT"""
+    cache_key = make_key(
+        "reco:lyrics",
+        keywords=request.keywords.lower().strip(),
+        top_k=request.top_k,
+        weights=request.weights,
+        diversity_penalty=request.diversity_penalty,
+    )
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         results = _recommender.recommend_by_lyrics_keywords(
             request.keywords, top_k=request.top_k,
             weights=request.weights,
             diversity_penalty=request.diversity_penalty,
         )
-        return RecommendationResponse(
+        payload = RecommendationResponse(
             success=True,
             query={"keywords": request.keywords, "top_k": request.top_k},
             results=_dataframe_to_dict(results),
             count=len(results),
         )
+        await cache_set(cache_key, payload.model_dump(), ttl=600)   # 10 min
+        return payload
     except Exception as e:
         logger.exception("Lyrics search failed")
         raise HTTPException(status_code=500, detail="Lyrics search failed")

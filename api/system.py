@@ -34,11 +34,13 @@ def init(recommender, image_analyzer_ref):
 
 class HealthResponse(BaseModel):
     status: str
-    version: str = "7.1.0"
+    version: str = "7.2.0"
     recommender_loaded: bool = False
     song_count: int = 0
     has_embeddings: bool = False
     db_connected: bool = False
+    redis_connected: bool = False
+    mert_loaded: bool = False
     api_docs: str = "/docs"
 
 
@@ -52,14 +54,29 @@ async def health_check():
     song_count = len(_recommender.df) if recommender_ok else 0
     has_embeddings = (recommender_ok and _recommender.embeddings is not None
                       and len(_recommender.embeddings) > 0)
+    mert_loaded = recommender_ok and getattr(_recommender, "mert_matrix", None) is not None
 
+    # Async DB probe (preferred); sync fallback if asyncpg not installed
     db_ok = False
     try:
-        from db.engine import SessionLocal
+        from db.engine import check_async_db, SessionLocal
         from sqlalchemy import text
-        with SessionLocal() as session:
-            session.execute(text("SELECT 1"))
-            db_ok = True
+        if check_async_db.__module__:   # asyncpg path
+            db_ok = await check_async_db()
+        if not db_ok:
+            with SessionLocal() as session:
+                session.execute(text("SELECT 1"))
+                db_ok = True
+    except Exception:
+        pass
+
+    # Redis probe
+    redis_ok = False
+    try:
+        from api.cache import _redis
+        if _redis is not None:
+            await _redis.ping()
+            redis_ok = True
     except Exception:
         pass
 
@@ -70,6 +87,8 @@ async def health_check():
         song_count=song_count,
         has_embeddings=has_embeddings,
         db_connected=db_ok,
+        redis_connected=redis_ok,
+        mert_loaded=mert_loaded,
     )
 
 
