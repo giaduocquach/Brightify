@@ -423,7 +423,8 @@ def generate_embeddings(df, output_embeddings, output_metadata,
     enable_pillar_b=True: routes to ViDeBERTa (standard) / ViSoBERT (social).
     Models are loaded sequentially to keep peak RAM low.
     """
-    mode = "Pillar B (ViDeBERTa/ViSoBERT)" if enable_pillar_b else "PhoBERT"
+    pb_encoder = getattr(app_config, 'PILLAR_B_ENCODER', 'simcse')
+    mode = f"Pillar B ({app_config.LYRICS_MODEL_MAP.get(pb_encoder, pb_encoder)})" if enable_pillar_b else "PhoBERT"
     print(f"\n{'='*60}")
     print(f"[7/7] Generating embeddings — {mode}")
     print(f"{'='*60}")
@@ -431,7 +432,7 @@ def generate_embeddings(df, output_embeddings, output_metadata,
     has_lyrics_mask = df.get('has_lyrics', df['plain_lyrics'].notna() & (df['plain_lyrics'].str.strip() != ''))
     idx_with = df.index[has_lyrics_mask].tolist()
     idx_without = df.index[~has_lyrics_mask].tolist()
-    enc_label = "Pillar B router" if enable_pillar_b else "PhoBERT"
+    enc_label = f"Pillar B ({pb_encoder})" if enable_pillar_b else "PhoBERT"
     print(f"   Tracks with lyrics: {len(idx_with):,} → {enc_label}")
     print(f"   Tracks without lyrics: {len(idx_without):,} → audio-feature fallback")
 
@@ -491,61 +492,46 @@ def generate_embeddings(df, output_embeddings, output_metadata,
         del model, tokenizer
 
     else:
-        # --- Pillar B: ViDeBERTa (standard) + ViSoBERT (social) routing ---
+        # --- Pillar B: SimCSE fine-tuned Vietnamese sentence encoder ---
+        # dangvantuan/vietnamese-embedding: PhoBERT + 4-stage contrastive training
+        # (SimCSE → MNR → SBERT → Augmented SBERT), STS Spearman 88.20.
+        # Uses PhoBERT BPE tokenizer → needs ViTokenizer pre-segmentation.
         os.makedirs(hf_cache_dir, exist_ok=True)
         os.environ.setdefault("HF_HOME", hf_cache_dir)
 
-        from core.lyrics_router import get_encoder_name, coverage_stats
+        model_id = app_config.LYRICS_MODEL_MAP.get(pb_encoder, app_config.LYRICS_MODEL_MAP["simcse"])
 
-        # Route on raw lyrics_cleaned (before encoder-specific re-cleaning)
-        # so that teen indicators like 'ko', 'hihi', '<3' are still present.
-        raw_texts = df.loc[idx_with, lyrics_col].fillna('').tolist()
-        encoder_per = [get_encoder_name(t, base_encoder="videberta") for t in raw_texts]
-
-        # ViDeBERTa/ViSoBERT use SentencePiece — no ViTokenizer pre-segmentation
-        lyrics_texts = [_clean(t, segment_vi=False) for t in raw_texts]
-        videberta_local = [i for i, enc in enumerate(encoder_per) if enc == "videberta"]
-        visobert_local  = [i for i, enc in enumerate(encoder_per) if enc == "visobert"]
-
-        stats = coverage_stats(lyrics_texts)
-        print(f"\n   Routing: {stats['standard']:,} standard → ViDeBERTa ({stats['standard_pct']}%)"
-              f"  |  {stats['social']:,} social → ViSoBERT ({stats['social_pct']}%)")
+        # SimCSE/Vietnamese-embedding: ViTokenizer required (PhoBERT tokenizer)
+        lyrics_texts = [
+            _clean(t, segment_vi=True)
+            for t in df.loc[idx_with, lyrics_col].fillna('').tolist()
+        ]
 
         from transformers import AutoModel, AutoTokenizer
+        print(f"\n   Loading {pb_encoder}: {model_id}  ({len(lyrics_texts):,} tracks)...")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=hf_cache_dir)
+            model = AutoModel.from_pretrained(model_id, cache_dir=hf_cache_dir)
+            model.eval()
+            model.to(device)
+            print(f"   ✅ {pb_encoder} ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
+        except Exception as e:
+            print(f"   ❌ Could not load {pb_encoder} ({model_id}): {e}")
+            return
 
-        for enc_name, local_indices in [
-            ("videberta", videberta_local),
-            ("visobert",  visobert_local),
-        ]:
-            if not local_indices:
-                continue
-            model_id = app_config.LYRICS_MODEL_MAP[enc_name]
-            print(f"\n   Loading {enc_name}: {model_id}  ({len(local_indices):,} tracks)...")
+        print(f"\n   Encoding {len(lyrics_texts):,} tracks with {pb_encoder}...")
+        for b_start in tqdm(range(0, len(lyrics_texts), BATCH_SIZE), desc=f"   {pb_encoder}"):
+            batch = [t or "không có lời" for t in lyrics_texts[b_start:b_start + BATCH_SIZE]]
             try:
-                tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=hf_cache_dir)
-                model = AutoModel.from_pretrained(model_id, cache_dir=hf_cache_dir)
-                model.eval()
-                model.to(device)
-                print(f"   ✅ {enc_name} ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
+                embs = _encode_batch_mean_pool(tokenizer, model, batch, device, MAX_SEQUENCE_LENGTH)
+                for j, emb in enumerate(embs):
+                    all_embeddings[idx_with[b_start + j]] = emb
             except Exception as e:
-                print(f"   ❌ Could not load {enc_name}: {e}")
-                continue
+                print(f"\n   ⚠️ Error in batch {b_start}: {e}")
 
-            batch_texts = [lyrics_texts[li] or "không có lời" for li in local_indices]
-            print(f"   Encoding {len(batch_texts):,} tracks with {enc_name}...")
-            for b_start in tqdm(range(0, len(batch_texts), BATCH_SIZE), desc=f"   {enc_name}"):
-                batch = batch_texts[b_start:b_start + BATCH_SIZE]
-                try:
-                    embs = _encode_batch_mean_pool(tokenizer, model, batch, device, MAX_SEQUENCE_LENGTH)
-                    for j, emb in enumerate(embs):
-                        orig_idx = idx_with[local_indices[b_start + j]]
-                        all_embeddings[orig_idx] = emb
-                except Exception as e:
-                    print(f"\n   ⚠️ Error in batch {b_start}: {e}")
-
-            del model, tokenizer
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
+        del model, tokenizer
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
     # --- Fallback embeddings for no-lyrics tracks ---
     # Option A: Weighted average of 10 most similar tracks (by audio features)
@@ -612,19 +598,19 @@ def generate_embeddings(df, output_embeddings, output_metadata,
     print(f"   Shape: {all_embeddings.shape}")
     print(f"   PhoBERT: {len(idx_with):,} / Fallback: {len(idx_without):,}")
     
-    encoder_model = (
-        f"ViDeBERTa({app_config.LYRICS_MODEL_MAP['videberta']}) + "
-        f"ViSoBERT({app_config.LYRICS_MODEL_MAP['visobert']})"
-        if enable_pillar_b else PHOBERT_MODEL
-    )
+    if enable_pillar_b:
+        encoder_model = app_config.LYRICS_MODEL_MAP.get(pb_encoder, pb_encoder)
+    else:
+        encoder_model = PHOBERT_MODEL
     print(f"   Encoder: {encoder_model}")
     metadata = {
         'created_at': datetime.now().isoformat(),
         'model': encoder_model,
         'pillar_b': enable_pillar_b,
+        'pillar_b_encoder': pb_encoder if enable_pillar_b else None,
         'num_songs': len(df),
         'embedding_dim': EMBEDDING_DIM,
-        'phobert_count': len(idx_with),
+        'encoded_count': len(idx_with),
         'fallback_count': len(idx_without),
         'track_ids': df['track_id'].tolist() if 'track_id' in df.columns else [],
         'track_names': df['track_name'].tolist() if 'track_name' in df.columns else []

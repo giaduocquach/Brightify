@@ -192,9 +192,11 @@ COLOR_PALETTE = 'husl'
 # The backtest reads EMBEDDINGS_FILE_PILLAR_B when this is True.
 ENABLE_PILLAR_B = False
 
-LYRICS_ENCODER = os.environ.get("LYRICS_ENCODER", "phobert")  # phobert | videberta | visobert
+LYRICS_ENCODER = os.environ.get("LYRICS_ENCODER", "phobert")  # phobert | simcse | videberta | visobert
+PILLAR_B_ENCODER = os.environ.get("PILLAR_B_ENCODER", "simcse")  # simcse | videberta
 LYRICS_MODEL_MAP = {
     "phobert":   "vinai/phobert-base-v2",
+    "simcse":    "dangvantuan/vietnamese-embedding",   # PhoBERT + 4-stage SimCSE, STS Spearman 88.20
     "videberta": "Fsoft-AIC/videberta-base",
     "visobert":  "uitnlp/visobert",
 }

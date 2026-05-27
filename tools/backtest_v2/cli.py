@@ -835,14 +835,21 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     print(f"  ILD_lyrics baseline = {ild_base_mean:.5f}")
     print(f"  ILD_lyrics pillar_b = {ild_pb_mean:.5f}  (threshold = {ild_base_mean * 0.95:.5f})")
 
-    # --- Latency p95 ---
-    print("\n[pillar_b] Measuring latency (50 calls each)...")
-    lat_seeds = list(gt_mapping.keys())[:50]
+    # --- Latency (warmed, 200 calls each) ---
+    print("\n[pillar_b] Measuring latency (200 calls each, 20-call warmup)...")
+    all_seeds = list(gt_mapping.keys())
+    lat_seeds = (all_seeds * 10)[:200]  # ensure 200 seeds, repeating if needed
+    warmup_seeds = lat_seeds[:20]
+
+    # Warmup both systems to fill CPU cache
+    for s in warmup_seeds:
+        sys_base.recommend(s, top_k=10)
+        sys_pb.recommend(s, top_k=10)
 
     t0 = time.perf_counter()
     for s in lat_seeds:
         sys_base.recommend(s, top_k=10)
-    base_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000  # ms avg ≈ p95 proxy
+    base_p95 = (time.perf_counter() - t0) / len(lat_seeds) * 1000
 
     t0 = time.perf_counter()
     for s in lat_seeds:
