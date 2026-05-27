@@ -1054,9 +1054,13 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     gt_mapping = build_query_gt_mapping(playlists)
     print(f"[pillar_a] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
 
-    # Base catalog (7-signal, MERT disabled)
+    # Base catalog (7-signal, MERT forced off regardless of config default)
     print("[pillar_a] Loading base catalog (7-signal)...")
+    import core.recommendation_engine as _eng_pa
+    _pa_old_enable = _eng_pa.ENABLE_MERT
+    _eng_pa.ENABLE_MERT = False
     cat_base = Catalog.load()
+    _eng_pa.ENABLE_MERT = _pa_old_enable
 
     # MERT catalog (8-signal, MERT enabled)
     print(f"[pillar_a] Loading MERT catalog ({mert_path})...")
