@@ -69,22 +69,51 @@ class MERTEncoder:
         logger.info(f"[MERT] Ready on {self._device}")
 
     def extract(self, mp3_path: str) -> Optional[np.ndarray]:
-        """Return 768-dim unit-norm embedding, or None on failure."""
+        """Return 768-dim unit-norm embedding, or None on failure.
+
+        For speed we sample two 15-second clips per song:
+          - Clip A: from 30 s offset (or song start for short tracks)
+          - Clip B: from 75 s offset (if the song is long enough)
+        This covers verse + pre-chorus for most Vietnamese pop/ballad tracks
+        while keeping CPU cost at ~0.85 s/song (vs. ~6 s for the full song).
+        """
         import librosa
         import torch
 
         self._load()
-        try:
-            y, _ = librosa.load(mp3_path, sr=self._sr, mono=True)
-        except Exception as e:
-            logger.warning(f"[MERT] audio load failed {mp3_path}: {e}")
-            return None
-
         clip_len = int(self._clip_dur * self._sr)
-        # Split into non-overlapping clips; ensure at least one clip
-        clips = [y[i:i + clip_len] for i in range(0, max(1, len(y) - clip_len + 1), clip_len)]
+
+        # Choose representative offsets based on song duration
+        try:
+            total_dur = librosa.get_duration(path=mp3_path)
+        except Exception:
+            total_dur = 180.0  # assume 3 min if unknown
+
+        offsets = [min(30.0, max(0.0, total_dur * 0.15))]
+        if total_dur > 90.0:
+            offsets.append(min(75.0, total_dur * 0.45))
+
+        clips = []
+        for offset in offsets:
+            try:
+                y, _ = librosa.load(
+                    mp3_path, sr=self._sr, mono=True,
+                    offset=offset, duration=self._clip_dur,
+                )
+                if len(y) >= 400:
+                    clips.append(y)
+            except Exception as e:
+                logger.warning(f"[MERT] audio load failed {mp3_path} @{offset}s: {e}")
+
         if not clips:
-            clips = [y]
+            # Last-resort: load first clip_len samples from the beginning
+            try:
+                y, _ = librosa.load(mp3_path, sr=self._sr, mono=True, duration=self._clip_dur)
+                if len(y) >= 400:
+                    clips = [y]
+            except Exception as e:
+                logger.warning(f"[MERT] audio load failed {mp3_path}: {e}")
+                return None
 
         chunk_embs = []
         with torch.no_grad():
