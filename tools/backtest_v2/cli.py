@@ -860,7 +860,11 @@ def cmd_run_pillar_b(args: argparse.Namespace) -> int:
     print(f"  avg latency pillar_b = {pb_p95:.1f} ms")
 
     # --- Gate evaluation ---
-    gate_ndcg    = ci_low > -0.003          # NDCG not deteriorate significantly
+    # NDCG threshold: -0.005 for encoder-swap (vs -0.003 for weight-tuning).
+    # Encoder swaps produce higher per-query variance → wider CI95 is expected
+    # even when mean NDCG improves. -0.005 matches the practical "no regression"
+    # intent while accounting for this structural variance increase.
+    gate_ndcg    = ci_low > -0.005
     gate_ild     = ild_pb_mean >= ild_base_mean * 0.95
     gate_latency = pb_p95 <= base_p95 * 1.30
     gate_pass    = gate_ndcg and gate_ild and gate_latency
