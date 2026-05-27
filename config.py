@@ -209,7 +209,7 @@ COLOR_PALETTE = 'husl'
 # ============================================================================
 # Pillar A — MERT Audio Embedding (Li et al. 2023, arXiv 2306.00107)
 # ============================================================================
-ENABLE_MERT = os.environ.get("ENABLE_MERT", "False") == "True"
+ENABLE_MERT = os.environ.get("ENABLE_MERT", "True") == "True"
 MERT_MODEL = "m-a-p/MERT-v1-95M"
 MERT_EMBEDDINGS_FILE = "data/mert_embeddings.npy"
 MERT_EMBEDDINGS_META_FILE = "data/mert_metadata.json"

@@ -1228,19 +1228,13 @@ def _update_config_enable_mert(enable: bool) -> None:
     with open("config.py", encoding="utf-8") as fh:
         src = fh.read()
     new_src, n = re.subn(
-        r'(ENABLE_MERT\s*=\s*os\.environ\.get\("ENABLE_MERT",\s*")[^"]*(")\s*\)\s*==\s*"True")',
-        lambda m: m.group(0),   # pattern is env-driven, just document
-        src,
-    )
-    # Simpler: also allow a plain ENABLE_MERT = False / True line
-    new_src2, n2 = re.subn(
         r'ENABLE_MERT\s*=\s*os\.environ\.get\("ENABLE_MERT",\s*"(?:True|False)"\)\s*==\s*"True"',
         f'ENABLE_MERT = os.environ.get("ENABLE_MERT", "{value}") == "True"',
         src,
     )
-    if n2 > 0:
+    if n > 0:
         with open("config.py", "w", encoding="utf-8") as fh:
-            fh.write(new_src2)
+            fh.write(new_src)
         print(f"[pillar_a] config.py: ENABLE_MERT default = {value}")
     else:
         print(f"[pillar_a] WARNING: could not update ENABLE_MERT default in config.py")
