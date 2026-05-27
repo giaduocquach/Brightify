@@ -2,15 +2,11 @@
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
 import hmac
-import numpy as np
-import pandas as pd
-import time as _time
 
 import config
-from api.utils import dataframe_to_dict
+from api.utils import sanitize_for_json
 
 # Admin access via API key — supports Docker secrets via config._read_secret_or_env
 _ADMIN_KEY = config.BRIGHTIFY_ADMIN_KEY
@@ -28,7 +24,6 @@ router = APIRouter(tags=["System"])
 
 _recommender = None
 _image_analyzer = None
-_evaluator = None
 
 
 def init(recommender, image_analyzer_ref):
@@ -45,20 +40,6 @@ class HealthResponse(BaseModel):
     has_embeddings: bool = False
     db_connected: bool = False
     api_docs: str = "/docs"
-
-
-class BacktestRequest(BaseModel):
-    top_k: int = Field(default=10, ge=5, le=50)
-    metrics: Optional[List[str]] = None
-
-
-class WeightTestRequest(BaseModel):
-    weights: List[float] = Field(..., min_length=4, max_length=4)
-    colors: List[str]
-    top_k: int = Field(default=10, ge=1, le=50)
-
-
-_dataframe_to_dict = dataframe_to_dict
 
 
 # ============================================================================
@@ -153,97 +134,9 @@ async def image_service_status():
 # ============================================================================
 # Backtest endpoints
 # ============================================================================
-
-def _get_evaluator():
-    global _evaluator
-    if _evaluator is None:
-        from tools.backtest import RecommendationEvaluator
-        _evaluator = RecommendationEvaluator(_recommender)
-    return _evaluator
-
-
-@router.post("/api/backtest/run")
-async def run_backtest(request: BacktestRequest, req: Request = None):
-    require_admin(req)
-    try:
-        from tools.backtest import sanitize_for_json
-        evaluator = _get_evaluator()
-        top_k = request.top_k
-        requested = request.metrics
-
-        report = {
-            'timestamp': pd.Timestamp.now().isoformat(),
-            'dataset_size': evaluator.n_songs,
-            'top_k': top_k,
-            'metrics': {},
-        }
-
-        metric_map = {
-            'precision': ('precision_at_k', lambda: evaluator.precision_at_k_by_quadrant(top_k=top_k)),
-            'ndcg': ('ndcg', lambda: evaluator.ndcg_at_k(top_k=top_k)),
-            'coherence': ('emotional_coherence', lambda: evaluator.emotional_coherence(top_k=top_k)),
-            'diversity': ('intra_list_diversity', lambda: evaluator.intra_list_diversity(top_k=top_k)),
-            'coverage': ('catalog_coverage', lambda: evaluator.catalog_coverage(top_k=top_k)),
-            'alignment': ('color_emotion_alignment', lambda: evaluator.color_emotion_alignment()),
-            'consistency': ('similar_song_consistency', lambda: evaluator.similar_song_consistency()),
-            'weights': ('weight_grid_search', lambda: evaluator.weight_grid_search(top_k=top_k)),
-            'mood_accuracy': ('mood_keyword_accuracy', lambda: evaluator.mood_keyword_accuracy(top_k=top_k)),
-            'timing': ('response_time', lambda: evaluator.response_time_benchmark()),
-        }
-
-        start = _time.time()
-        if requested:
-            for m in requested:
-                if m in metric_map:
-                    key, fn = metric_map[m]
-                    report['metrics'][key] = fn()
-        else:
-            for m, (key, fn) in metric_map.items():
-                report['metrics'][key] = fn()
-
-        report['evaluation_time_seconds'] = round(_time.time() - start, 2)
-        report['overall_score'] = evaluator._compute_overall_score(report['metrics'])
-
-        return JSONResponse(content={"success": True, "report": sanitize_for_json(report)})
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Backtest execution failed")
-
-
-@router.post("/api/backtest/test-weights")
-async def test_custom_weights(request: WeightTestRequest, req: Request = None):
-    require_admin(req)
-    try:
-        evaluator = _get_evaluator()
-        colors = ['#' + c if not c.startswith('#') else c for c in request.colors]
-
-        custom_recs = evaluator._recommend_with_custom_weights(colors, request.weights, top_k=request.top_k)
-        default_recs = _recommender.recommend_by_colors(colors, top_k=request.top_k)
-
-        def recs_summary(recs):
-            if len(recs) == 0:
-                return {'count': 0, 'songs': [], 'avg_score': 0}
-            songs = _dataframe_to_dict(recs)
-            avg = np.mean([s.get('similarity_score', 0) for s in songs])
-            return {'count': len(songs), 'songs': songs, 'avg_score': round(float(avg), 4)}
-
-        custom_names = set(custom_recs['track_name'].tolist()) if len(custom_recs) > 0 else set()
-        default_names = set(default_recs['track_name'].tolist()) if len(default_recs) > 0 else set()
-        overlap = len(custom_names & default_names)
-        total = len(custom_names | default_names) or 1
-
-        from tools.backtest import sanitize_for_json
-        return JSONResponse(content=sanitize_for_json({
-            "success": True,
-            "custom_weights": request.weights,
-            "default_weights": [0.25, 0.35, 0.20, 0.20],
-            "custom_results": recs_summary(custom_recs),
-            "default_results": recs_summary(default_recs),
-            "overlap": {"count": overlap, "jaccard_similarity": round(overlap / total, 4)},
-        }))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Weight test failed")
+# Legacy backtest (tools/backtest.py) decommissioned — see §5 of
+# docs/PLAN_BACKTEST_METRICS.md. Run/test-weights routes will be re-wired to
+# tools.backtest_v2 in Phase 3. dataset-stats is kept below.
 
 
 @router.get("/api/backtest/dataset-stats")
@@ -277,7 +170,6 @@ async def get_dataset_stats(request: Request):
         if _recommender.embeddings is not None:
             stats['embedding_shape'] = list(_recommender.embeddings.shape)
 
-        from tools.backtest import sanitize_for_json
         return JSONResponse(content=sanitize_for_json({"success": True, "stats": stats}))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Dataset stats failed")

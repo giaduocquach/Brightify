@@ -89,6 +89,15 @@ WEIGHTS_MOOD_QUERY = [0.50, 0.30, 0.20]   # User selects mood
 WEIGHTS_SONG_QUERY = [0.40, 0.40, 0.20]   # Similar song search
 WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search
 
+# recommend_by_song 7-signal fusion weights (Laurier et al. 2009 adaptive fusion).
+# Kept in config so ablation can zero out a signal and the optimizer can search.
+# Signal order (with_lyrics): timbral, rhythmic, tonal, lyrics, va, emotion, mood
+# Signal order (audio_only):  timbral, rhythmic, tonal, va, emotion, mood (no lyrics)
+RECO_SONG_WEIGHTS = {
+    "with_lyrics": [0.12, 0.10, 0.08, 0.28, 0.17, 0.15, 0.10],
+    "audio_only":  [0.20, 0.15, 0.10, 0.25, 0.18, 0.12],
+}
+
 # ============================================================================
 # Russell's Circumplex Model - Mood Quadrants
 # ============================================================================

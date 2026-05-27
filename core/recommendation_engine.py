@@ -516,26 +516,30 @@ class MusicRecommender:
             mood_match = (self._mood_labels == query_mood).astype(float)
 
         # === Adaptive fusion (Laurier et al. 2009) ===
+        # Weights live in config.RECO_SONG_WEIGHTS; `weights` overrides them
+        # (used by ablation to zero a signal and by the weight optimizer).
         if has_lyrics:
             # Full multimodal: lyrics carry strongest mood signal
+            w = weights if weights is not None else RECO_SONG_WEIGHTS["with_lyrics"]
             final_scores = (
-                0.12 * timbral_sim +
-                0.10 * rhythmic_sim +
-                0.08 * tonal_sim +
-                0.28 * lyrics_sim +
-                0.17 * va_sim +
-                0.15 * emotion_sim +
-                0.10 * mood_match
+                w[0] * timbral_sim +
+                w[1] * rhythmic_sim +
+                w[2] * tonal_sim +
+                w[3] * lyrics_sim +
+                w[4] * va_sim +
+                w[5] * emotion_sim +
+                w[6] * mood_match
             )
         else:
-            # Audio-only fallback
+            # Audio-only fallback (no lyrics signal)
+            w = weights if weights is not None else RECO_SONG_WEIGHTS["audio_only"]
             final_scores = (
-                0.20 * timbral_sim +
-                0.15 * rhythmic_sim +
-                0.10 * tonal_sim +
-                0.25 * va_sim +
-                0.18 * emotion_sim +
-                0.12 * mood_match
+                w[0] * timbral_sim +
+                w[1] * rhythmic_sim +
+                w[2] * tonal_sim +
+                w[3] * va_sim +
+                w[4] * emotion_sim +
+                w[5] * mood_match
             )
 
         # Exclude reference song
