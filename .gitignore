@@ -128,11 +128,11 @@ tmp/
 .docker-volumes/
 
 # =============================================================================
-# Claude Code — local-only state
+# Claude Code & local-only project files
 # =============================================================================
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
-.claude/*.lock
+.claude/
+CLAUDE.md
+.env.dev
 
 # =============================================================================
 # Misc
