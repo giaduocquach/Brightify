@@ -355,7 +355,335 @@ def cmd_va_sanity(args: argparse.Namespace) -> int:
 
 
 def cmd_optimize_weights(args: argparse.Namespace) -> int:
-    return _not_implemented("Phase 4 (weight optimization)")
+    """Phase 4: SLSQP weight optimization → optimal_weights.yaml + iter_1_weight_opt report."""
+    import datetime
+    import json
+    import os
+    import sys
+
+    import numpy as np
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    from tools.backtest_v2.ground_truth.editorial import (
+        GT_FILE,
+        build_query_gt_mapping,
+        load_editorial_gt,
+    )
+    from tools.backtest_v2.improve.weight_opt import optimize_weights
+
+    # --- Catalog ---
+    print("[optimize] Loading catalog…")
+    catalog = Catalog.load()
+
+    # --- Baseline ILD from iter_0 ---
+    iter0_path = "var/runtime/backtest/reports/iter_0_baseline/report.json"
+    baseline_ild = 0.07834  # fallback from signal_importance.json meta
+    iter0_report: dict = {}
+    if os.path.exists(iter0_path):
+        with open(iter0_path) as fh:
+            iter0_report = json.load(fh)
+        ild_entry = (
+            iter0_report.get("systems", {})
+            .get("brightify_v7.2", {})
+            .get("ild_lyrics", {})
+        )
+        if isinstance(ild_entry, dict) and ild_entry.get("value") is not None:
+            baseline_ild = float(ild_entry["value"])
+    print(f"[optimize] Baseline ILD_lyrics = {baseline_ild:.6f}")
+    print(f"[optimize] ILD constraint floor = {baseline_ild * 0.95:.6f}")
+
+    # --- Editorial GT ---
+    if not os.path.exists(GT_FILE):
+        print(f"[optimize] GT file not found: {GT_FILE}")
+        print("[optimize] Run: python -m tools.backtest_v2 run --ground-truth editorial_playlists_v1")
+        return 1
+    playlists = load_editorial_gt(GT_FILE)
+    gt_mapping = build_query_gt_mapping(playlists)
+    print(f"[optimize] GT: {len(playlists)} playlists, {len(gt_mapping)} seed queries")
+
+    # --- Run optimizer ---
+    max_opt_queries = int(getattr(args, "max_opt_queries", None) or 30)
+    result = optimize_weights(
+        catalog=catalog,
+        playlists=playlists,
+        baseline_ild=baseline_ild,
+        top_k=10,
+        max_opt_queries=max_opt_queries,
+        verbose=True,
+    )
+
+    # --- Save optimal_weights.yaml ---
+    weight_search_dir = "var/runtime/backtest/weight_search"
+    os.makedirs(weight_search_dir, exist_ok=True)
+    yaml_path = os.path.join(weight_search_dir, "optimal_weights.yaml")
+    _save_optimal_weights_yaml(result, baseline_ild, yaml_path)
+    print(f"\n[optimize] Saved: {yaml_path}")
+
+    # --- Print summary table ---
+    _print_opt_summary(result)
+
+    # --- Build iter_1 report ---
+    iter1_dir = "var/runtime/backtest/reports/iter_1_weight_opt"
+    os.makedirs(iter1_dir, exist_ok=True)
+    _build_iter1_report(
+        catalog=catalog,
+        result=result,
+        iter0_report=iter0_report,
+        gt_mapping=gt_mapping,
+        gt_name="editorial_playlists_v1",
+        iter1_dir=iter1_dir,
+    )
+
+    # --- Update config.RECO_SONG_WEIGHTS if improvement confirmed ---
+    if result.update_config:
+        _update_config_weights(result.optimal_weights)
+        print(f"\n[optimize] config.RECO_SONG_WEIGHTS['with_lyrics'] updated to new optimal weights.")
+    else:
+        print(f"\n[optimize] config.RECO_SONG_WEIGHTS unchanged (weights already near-optimal).")
+
+    return 0
+
+
+def _save_optimal_weights_yaml(result, baseline_ild: float, path: str) -> None:
+    try:
+        import yaml
+    except ImportError:
+        import json, os
+        path_json = path.replace(".yaml", ".json")
+        with open(path_json, "w") as fh:
+            json.dump({
+                "description": "Optimal weights from SLSQP Phase 4 optimization",
+                "date": str(__import__("datetime").date.today()),
+                "objective": "maximize NDCG@10 (external GT, 80% optimize split)",
+                "constraint": f"ILD_lyrics >= {baseline_ild:.6f} * 0.95 = {baseline_ild*0.95:.6f}",
+                "signals": result.signals,
+                "baseline_weights": [round(x, 6) for x in result.baseline_weights],
+                "optimal_weights":  [round(x, 6) for x in result.optimal_weights],
+                "splits": {
+                    "optimize": result.opt_split,
+                    "validate": result.val_split,
+                },
+                "bootstrap_full_gt": result.bootstrap,
+                "optimizer": result.optimizer,
+                "verdict": result.verdict,
+                "update_config": result.update_config,
+            }, fh, indent=2)
+        print(f"[optimize] (yaml not available, saved as {path_json})")
+        return
+
+    import datetime
+    data = {
+        "description": "Optimal weights from SLSQP Phase 4 optimization",
+        "date": str(datetime.date.today()),
+        "objective": "maximize NDCG@10 (external GT, 80% optimize split)",
+        "constraint": f"ILD_lyrics >= {baseline_ild:.6f} * 0.95 = {baseline_ild*0.95:.6f}",
+        "signals": result.signals,
+        "baseline_weights": [round(x, 6) for x in result.baseline_weights],
+        "optimal_weights":  [round(x, 6) for x in result.optimal_weights],
+        "splits": {
+            "optimize": result.opt_split,
+            "validate": result.val_split,
+        },
+        "bootstrap_full_gt": result.bootstrap,
+        "optimizer": result.optimizer,
+        "verdict": result.verdict,
+        "update_config": result.update_config,
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.dump(data, fh, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def _print_opt_summary(result) -> None:
+    import numpy as np
+    w_b = result.baseline_weights
+    w_o = result.optimal_weights
+    bst = result.bootstrap
+
+    print()
+    print("=" * 68)
+    print("  PHASE 4 — WEIGHT OPTIMIZATION RESULT")
+    print("=" * 68)
+    sigs = result.signals
+    print(f"  {'Signal':<12} {'Baseline':>12} {'Optimal':>12} {'Delta':>10}")
+    print("  " + "-" * 50)
+    for i, s in enumerate(sigs):
+        delta = w_o[i] - w_b[i]
+        print(f"  {s:<12} {w_b[i]:>12.4f} {w_o[i]:>12.4f} {delta:>+10.4f}")
+    print()
+    print(f"  Optimize split ({result.opt_split['n_playlists']} playlists, "
+          f"{result.opt_split['n_queries']} queries):")
+    print(f"    Baseline  NDCG@10 = {result.opt_split['ndcg_at_10_baseline']:.5f}")
+    print(f"    Optimal   NDCG@10 = {result.opt_split['ndcg_at_10_optimal']:.5f}  "
+          f"Δ={result.opt_split['delta']:+.5f}")
+    print()
+    print(f"  Validate split ({result.val_split['n_playlists']} playlists, "
+          f"{result.val_split['n_queries']} queries):")
+    print(f"    Baseline  NDCG@10 = {result.val_split['ndcg_at_10_baseline']:.5f}")
+    print(f"    Optimal   NDCG@10 = {result.val_split['ndcg_at_10_optimal']:.5f}  "
+          f"Δ={result.val_split['delta']:+.5f}")
+    print()
+    print(f"  Full GT paired bootstrap (N={bst['n_queries']}, n_boots={bst['n_boots']}):")
+    print(f"    Baseline  mean NDCG@10 = {bst['mean_ndcg_at_10_baseline']:.5f}")
+    print(f"    Optimal   mean NDCG@10 = {bst['mean_ndcg_at_10_optimal']:.5f}")
+    print(f"    Δ NDCG@10 = {bst['delta']:+.5f}  "
+          f"CI95=[{bst['ci95'][0]:+.5f}, {bst['ci95'][1]:+.5f}]")
+    print()
+    status = "✅ IMPROVEMENT" if result.update_config else "❌ NO IMPROVEMENT"
+    print(f"  {status}: {result.verdict}")
+    print("=" * 68)
+
+
+def _build_iter1_report(
+    catalog,
+    result,
+    iter0_report: dict,
+    gt_mapping: dict,
+    gt_name: str,
+    iter1_dir: str,
+) -> None:
+    """Build iter_1_weight_opt report by re-evaluating brightify with new weights."""
+    import datetime
+    import json
+    import os
+
+    from tools.backtest_v2.baselines.brightify import BrightifyBaseline
+    from tools.backtest_v2.core import _run_system, _metric_entry
+    from tools.backtest_v2.metrics.accuracy import evaluate_system_accuracy
+    from tools.backtest_v2.stats import stratified_sample
+
+    w_new = result.optimal_weights
+
+    # Load saved test-set queries (same as iter_0)
+    ts_path = "var/runtime/backtest/test_sets/test_set_v1.json"
+    if os.path.exists(ts_path):
+        with open(ts_path) as fh:
+            ts = json.load(fh)
+        queries = ts["queries"]
+    else:
+        print("[iter1] test_set_v1.json not found — re-sampling (seed=42)")
+        queries = stratified_sample(catalog.df, n=500, seed=42)
+
+    print(f"\n[iter1] Re-evaluating brightify with new weights ({len(queries)} property queries)…")
+    sys_new = BrightifyBaseline(catalog, weights=w_new)
+    new_prop = _run_system(sys_new, queries, catalog, top_k=10)
+
+    print(f"[iter1] Re-evaluating accuracy (GT: {len(gt_mapping)} queries)…")
+    new_acc = evaluate_system_accuracy(
+        sys_new, gt_mapping, top_k=20, ground_truth_name=gt_name,
+    )
+    new_prop.update(new_acc)
+
+    # Start from iter_0 report; replace brightify_v7.2 with new eval
+    report_dict: dict = {
+        "meta": {
+            "date": str(datetime.date.today()),
+            "iteration": "iter_1_weight_opt",
+            "n_catalog": iter0_report.get("meta", {}).get("n_catalog"),
+            "n_queries": len(queries),
+            "top_k": 10,
+            "seed": 42,
+            "quadrant_breakdown": iter0_report.get("meta", {}).get("quadrant_breakdown"),
+            "ground_truth": gt_name,
+            "weight_optimization": {
+                "baseline_weights": result.baseline_weights,
+                "optimal_weights": result.optimal_weights,
+                "signals": result.signals,
+                "update_applied": result.update_config,
+                "verdict": result.verdict,
+                "bootstrap": result.bootstrap,
+            },
+        },
+        "systems": {},
+        "latency": iter0_report.get("latency", {}),
+    }
+
+    # Copy non-brightify systems from iter_0
+    for sname, sdata in iter0_report.get("systems", {}).items():
+        if sname != "brightify_v7.2":
+            report_dict["systems"][sname] = sdata
+
+    # New brightify with optimized weights
+    report_dict["systems"]["brightify_v7.2"] = new_prop
+
+    # Write JSON
+    json_path = os.path.join(iter1_dir, "report.json")
+    with open(json_path, "w") as fh:
+        json.dump(report_dict, fh, indent=2)
+
+    # Write Markdown
+    from tools.backtest_v2.reporters.markdown import write_markdown
+
+    class _FakeReport:
+        def __init__(self, d):
+            self.meta = d["meta"]
+            self.systems = d["systems"]
+            self.latency = d.get("latency", {})
+
+            import dataclasses
+
+            @dataclasses.dataclass
+            class _Cfg:
+                output_dir: str = iter1_dir
+                iteration_name: str = "iter_1_weight_opt"
+
+            self.config = _Cfg()
+
+        def to_dict(self):
+            return {"meta": self.meta, "systems": self.systems, "latency": self.latency}
+
+    write_markdown(_FakeReport(report_dict), os.path.join(iter1_dir, "report.md"))
+
+    print(f"[iter1] Reports saved to {iter1_dir}/")
+    _print_iter1_summary(new_prop, iter0_report.get("systems", {}).get("brightify_v7.2", {}))
+
+
+def _print_iter1_summary(new_metrics: dict, old_metrics: dict) -> None:
+    KEY_METRICS = [
+        ("ndcg_at_10",      "NDCG@10 (ext)  "),
+        ("ild_lyrics",      "ILD_lyrics     "),
+        ("mood_coherence",  "MoodCoherence  "),
+        ("coverage",        "Coverage       "),
+        ("artist_gini",     "Artist Gini    "),
+    ]
+    print()
+    print(f"  {'Metric':<20} {'iter_0':>12} {'iter_1':>12} {'Delta':>10}")
+    print("  " + "-" * 58)
+    for key, label in KEY_METRICS:
+        old_v = old_metrics.get(key, {}).get("value")
+        new_v = new_metrics.get(key, {}).get("value")
+        if old_v is None or new_v is None:
+            print(f"  {label:<20} {'—':>12} {'—':>12} {'—':>10}")
+        else:
+            delta = new_v - old_v
+            print(f"  {label:<20} {old_v:>12.5f} {new_v:>12.5f} {delta:>+10.5f}")
+
+
+def _update_config_weights(new_weights) -> None:
+    """Overwrite config.RECO_SONG_WEIGHTS['with_lyrics'] in config.py."""
+    import re
+
+    config_path = "config.py"
+    with open(config_path, encoding="utf-8") as fh:
+        src = fh.read()
+
+    # Format new weights as Python list with 6 dp
+    formatted = "[" + ", ".join(f"{w:.6f}" for w in new_weights) + "]"
+
+    # Replace the "with_lyrics" line inside RECO_SONG_WEIGHTS dict
+    pattern = r'("with_lyrics"\s*:\s*)\[.*?\]'
+    replacement = r'\g<1>' + formatted
+    new_src, n = re.subn(pattern, replacement, src)
+    if n == 0:
+        print("[optimize] WARNING: could not find 'with_lyrics' pattern in config.py — not updated")
+        return
+
+    with open(config_path, "w", encoding="utf-8") as fh:
+        fh.write(new_src)
+    print(f"[optimize] config.py: RECO_SONG_WEIGHTS['with_lyrics'] = {formatted}")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -439,6 +767,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_opt.add_argument("--ground-truth")
     p_opt.add_argument("--method")
     p_opt.add_argument("--constraint")
+    p_opt.add_argument("--max-opt-queries", type=int, default=30,
+                       dest="max_opt_queries",
+                       help="max queries used inside SLSQP loop (default: 200)")
     p_opt.set_defaults(func=cmd_optimize_weights)
 
     p_cmp = sub.add_parser("compare", help="compare two iterations")
