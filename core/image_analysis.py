@@ -23,6 +23,7 @@ import numpy as np
 import colorsys
 from typing import Dict, List, Tuple, Optional
 from io import BytesIO
+from loguru import logger
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -267,23 +268,21 @@ class ImageAnalyzer:
         if self.device == "cpu" and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             self.device = "mps"
         
-        print(f"🖼️  Initializing Image Analyzer (device: {self.device})...")
-        
+        logger.info(f"Initializing Image Analyzer (device: {self.device})...")
+
         # Load CLIP model
         self.clip_model = CLIPModel.from_pretrained(clip_model_name).to(self.device)
         self.clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
         self.clip_model.eval()
-        
+
         # Pre-compute all text embeddings
         self._precompute_emotion_embeddings()
         self._precompute_scene_embeddings()
         self._precompute_content_embeddings()
         self._precompute_expression_embeddings()
         self._precompute_lighting_embeddings()
-        
-        print("   ✅ CLIP model loaded")
-        print("   ✅ All CLIP text embeddings pre-computed")
-        print("🖼️  Image Analyzer ready!\n")
+
+        logger.info("Image Analyzer ready (CLIP loaded, text embeddings pre-computed)")
     
     def _extract_text_features(self, texts):
         """Extract CLIP text features, handling different transformers versions."""

@@ -2,12 +2,14 @@
 Brightify — AI-Powered Vietnamese Music Streaming Platform
 """
 
-import logging
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
+
+import logging_config  # noqa: F401 — sets up loguru + stdlib intercept
+from loguru import logger
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,8 +24,6 @@ from api import music as music_routes
 from api import recommend as recommend_routes
 from api import system as system_routes
 from api.rate_limit import RateLimitMiddleware
-
-logger = logging.getLogger(__name__)
 
 # Static files & media directories
 static_path = Path(__file__).parent / "static"
@@ -58,7 +58,7 @@ def init_image_analyzer():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Brightify v7.0 — Starting up...")
+    logger.info("Brightify v7.1 — Starting up...")
     init_recommender()
     init_image_analyzer()
     music_routes.init(recommender, music_path, artist_images_path)
@@ -121,7 +121,5 @@ async def internal_error_handler(request: Request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-
-    logging.basicConfig(level=logging.INFO)
 
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True, log_level="warning")

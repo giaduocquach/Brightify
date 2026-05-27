@@ -5,6 +5,7 @@ init: ## Create var/ structure + secrets on first setup
 	@mkdir -p var/runtime/backtest/{ground_truth,test_sets,baselines,reports,ci_artifacts}
 	@mkdir -p var/volumes/{postgres_data,redis_data,hf_cache}
 	@mkdir -p var/secrets var/backups/{db,snapshots,models} var/logs/{app,nginx,postgres}
+	@mkdir -p logs/app logs/nginx  # default LOGS_PATH=./logs used by docker-compose
 	@chmod 700 var/secrets
 	@if [ ! -f var/secrets/db_password.txt ]; then \
 		openssl rand -hex 32 > var/secrets/db_password.txt; \

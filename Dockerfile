@@ -20,14 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY requirements.txt .
-
+# requirements-app.txt: web server only (no essentia/librosa/yt-dlp pipeline tools)
 # CPU-only PyTorch saves ~2.3 GB vs full CUDA build
-# BuildKit cache mount keeps pip cache between builds without adding to image size
+COPY requirements-app.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --user --no-warn-script-location \
       --extra-index-url https://download.pytorch.org/whl/cpu \
-      -r requirements.txt
+      -r requirements-app.txt
 
 # =============================================================================
 # Stage 2: Runtime — lean image, no build tools

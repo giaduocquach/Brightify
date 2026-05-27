@@ -1,5 +1,6 @@
-# Brightify - Vietnamese AI Music Recommendation System
-# Version: 7.1
+# Brightify Web Server — runtime dependencies only (no pipeline tools)
+# Used in Dockerfile for the app image.
+# Full pipeline deps (essentia, librosa, yt-dlp, ...) stay in requirements.txt.
 
 # Core Data Science
 pandas>=2.1.0
@@ -40,14 +41,3 @@ SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.0
 alembic>=1.13.0
 pgvector>=0.4.0
-
-# Tools (data collection & download)
-tqdm>=4.66.0
-requests>=2.31.0
-ytmusicapi>=1.3.0
-yt-dlp>=2024.1.0
-mutagen>=1.47.0
-
-# Audio Feature Extraction
-essentia-tensorflow>=2.1b6.dev1034
-librosa>=0.10.1

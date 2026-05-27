@@ -5,7 +5,10 @@
 services:
   db:
     ports:
-      - "5433:5432"  # Port 5432 may be taken by local postgres; use 5433 on host
+      - "127.0.0.1:5432:5432"  # Docker DB on port 5432 (local postgres stopped)
+    networks:
+      backend: {}
+      frontend: {}  # also on frontend so host port binding works (internal-only nets block host ports on macOS)
     command:
       - postgres
       - -c
@@ -21,7 +24,12 @@ services:
       --host 0.0.0.0
       --port 8000
       --reload
-      --reload-dir /app
+      --reload-dir /app/api
+      --reload-dir /app/core
+      --reload-dir /app/db
+      --reload-dir /app/config.py
+      --reload-dir /app/app.py
+      --reload-dir /app/logging_config.py
       --log-level debug
     environment:
       DEBUG: "true"
@@ -29,6 +37,8 @@ services:
     volumes:
       # Hot-reload: bind-mount source code into container
       - .:/app
+      # Re-declare logs mount AFTER .:/app so it isn't shadowed by the parent mount
+      - ${LOGS_PATH:-./logs}/app:/app/logs
       # Override read-only dataset mounts with read-write in dev
       - ${MUSIC_FILES_PATH:-./music_files}:/app/music_files
       - ${ALBUM_ART_PATH:-./album_art}:/app/album_art

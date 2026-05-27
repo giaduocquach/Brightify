@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
+from loguru import logger
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -38,15 +39,14 @@ class MusicRecommender:
 
         self.verbose = verbose
 
-        if self.verbose:
-            print("🎵 Initializing Advanced Music Recommender v6.0 (Multimodal + Lyrics)...")
+        logger.info("Initializing Music Recommender v6.0 (Multimodal + Lyrics)...")
 
         # Load modules
         self.color_mapper = get_color_mapper()
         self.emotion_lexicon, self.emotion_classifier, self.emotion_fusion = get_emotion_analyzer()
 
         if self.verbose:
-            print("   ✅ Loaded emotion analysis system")
+            logger.debug("Loaded emotion analysis system")
 
         # Load data
         if not os.path.exists(data_path):
@@ -56,14 +56,14 @@ class MusicRecommender:
         self.n_songs = len(self.df)
 
         if self.verbose:
-            print(f"   ✅ Loaded {self.n_songs:,} songs")
+            logger.debug(f"Loaded {self.n_songs:,} songs")
 
         # Remove Spotify URLs — we use local audio files now
         for col in ['track_url', 'preview_url']:
             if col in self.df.columns:
                 self.df.drop(columns=[col], inplace=True)
         if self.verbose:
-            print(f"   ✅ Using local audio (Spotify URLs removed)")
+            logger.debug("Using local audio (Spotify URLs removed)")
 
         # Load embeddings
         if os.path.exists(embeddings_path):
@@ -71,9 +71,10 @@ class MusicRecommender:
 
             # Validate embeddings size matches dataset
             if self.embeddings.shape[0] != self.n_songs:
-                if self.verbose:
-                    print(f"   ⚠️  Embeddings size mismatch: {self.embeddings.shape[0]} vs {self.n_songs}")
-                    print(f"   ⚠️  Disabling lyrics embeddings, using audio + color only")
+                logger.warning(
+                    f"Embeddings size mismatch ({self.embeddings.shape[0]} vs {self.n_songs})"
+                    " — disabling lyrics embeddings, using audio + color only"
+                )
                 self.embeddings = None
                 self.embeddings_normalized = None
             else:
@@ -82,7 +83,7 @@ class MusicRecommender:
                 norms[norms == 0] = 1
                 self.embeddings_normalized = self.embeddings / norms
                 if self.verbose:
-                    print(f"   ✅ Loaded embeddings: {self.embeddings.shape}")
+                    logger.debug(f"Loaded embeddings: {self.embeddings.shape}")
         else:
             self.embeddings = None
             self.embeddings_normalized = None
@@ -96,7 +97,7 @@ class MusicRecommender:
             self.colors = self.df['color_hex'].values
             self._precompute_all_features()
             if self.verbose:
-                print(f"   ✅ Pre-computed color & emotion features")
+                logger.debug("Pre-computed color & emotion features")
         else:
             self.colors = None
 
@@ -109,12 +110,11 @@ class MusicRecommender:
         if self.artist_col:
             self.artists = self.df[self.artist_col].values
             if self.verbose:
-                print(f"   ✅ Artist diversity enabled")
+                logger.debug("Artist diversity enabled")
         else:
             self.artists = None
 
-        if self.verbose:
-            print("✅ Recommender ready!\n")
+        logger.info(f"Recommender ready — {self.n_songs:,} songs loaded")
 
     def _normalize_audio_features(self):
         """Normalize audio features to [0, 1]"""
@@ -259,9 +259,8 @@ class MusicRecommender:
 
         if self.verbose:
             emotion_dist = self.df['fused_emotion'].value_counts()
-            print(f"   📊 Emotion distribution:")
-            for emotion, count in emotion_dist.head(5).items():
-                print(f"      {emotion}: {count} ({count/self.n_songs*100:.1f}%)")
+            top5 = ", ".join(f"{e}:{c}" for e, c in emotion_dist.head(5).items())
+            logger.debug(f"Emotion distribution (top 5): {top5}")
 
     def recommend_by_colors(self,
                            color_hexes,
@@ -273,7 +272,7 @@ class MusicRecommender:
             color_hexes = [color_hexes]
 
         if self.verbose:
-            print(f"🎨 Recommending by colors: {color_hexes}")
+            logger.debug(f"Recommending by colors: {color_hexes}")
 
         # Extract query features
         query_va = []
