@@ -580,18 +580,10 @@ class MusicRecommender:
         # Exclude reference song
         final_scores[song_idx] = -1
 
-        # RRF candidate reduction (Cormack et al. 2009) — Pillar C
-        candidates = None
-        if ENABLE_RRF:
-            _rrf_sigs = [va_sim]
-            if has_lyrics:
-                _rrf_sigs.append(lyrics_sim)
-            if use_mert:
-                _rrf_sigs.append(mert_sim)
-            if len(_rrf_sigs) >= 2:
-                candidates = self._rrf_candidates(_rrf_sigs)
-
-        return self._fast_rank(final_scores, top_k, diversity_penalty, restrict_to=candidates)
+        # No RRF for recommend_by_song: the 7/8-signal weighted fusion is already
+        # the right ranking function here.  RRF pre-filtering hurts recall because
+        # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
+        return self._fast_rank(final_scores, top_k, diversity_penalty)
 
     def recommend_by_mood(self,
                          mood,
