@@ -8,6 +8,7 @@ numpy>=1.26.0,<2.0.0
 
 # Machine Learning
 scikit-learn>=1.4.0
+scipy>=1.11          # explicit pin — backtest_v2/improve/weight_opt.py uses scipy.optimize directly
 
 # Color Processing
 colormath>=3.0.0
