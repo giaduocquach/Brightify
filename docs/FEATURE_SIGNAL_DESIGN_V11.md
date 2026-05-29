@@ -114,6 +114,27 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 
 ---
 
+## 3.5. BẢNG ĐÁNH GIÁ — đã phù hợp/chuẩn xác chưa, dựa cơ sở nào, xác thực chưa
+
+**Chú thích trạng thái xác thực:**
+🟢 *Đã đo/kiểm chứng trong chính dự án này* · 🟡 *Đúng theo bằng chứng công bố nhưng CHƯA đo trên dữ liệu VN* · 🔵 *Đề xuất, chưa triển khai*
+
+| Feature | Yếu tố gợi ý (theo V11) | MERT | Cơ sở nghiên cứu (đã công bố) | Xác thực | Đánh giá |
+|---|---|---|---|---|---|
+| **Similar songs** | MERT (chính) + timbral/rhythmic/tonal + lyrics(PhoBERT) + V-A + emotion + mood + KG | ✅ | MERT ICLR2024; CLAP-RecSys 2409.09026; Berenzweig 2004 | 🟢 MERT (Pillar A PASS) · 🟡 nghi dư thừa feature thủ công | **Tốt nhưng CHƯA tối ưu:** MERT đã đo có lợi; *bộ thủ công có thể dư thừa* (saturation) — phải E1 mới biết. Hiện "đủ tốt", chưa chắc "gọn nhất". |
+| **Audio Radio** | MERT thuần | ✅ | MERT ICLR2024 (SOTA acoustic) | 🟢 test chức năng (cosine .93–.94) | **Chuẩn về thiết kế.** Đúng modality. Chưa có đánh giá *chất lượng cảm nhận* (thiếu GT sound-alike) — nhưng đúng nguyên lý. |
+| **KG content** (F6) | MERT 0.5 + mood + instrument + (audio 0.1?) | ✅ | 2409.09026; Hybrid-GNN UMUAI 2024 | 🟢 pillar-f-xartist (same-artist 89.6%→7.2%) · 🟡 audio 0.1 chưa ablation | **Đã sửa bias thành công (đo rồi).** Còn thành phần audio 0.1 nghi thừa — E2. |
+| **Color → music** | màu→V-A (CIEDE2000/Jonauskaite) + V-A + emotion + RRF | ❌ | Jonauskaite 2020; V-A bridge 2009.05103; CIE 2001 | 🟢 RRF color-path SIG (Δ+0.056) · 🟡 toàn path | **Cầu nối V-A đúng & một phần đã đo.** Không-dùng-MERT là quyết định đúng (đỡ nhiễu). Valence có lyrics ✓. |
+| **Image → music** | CLIP→emotion/V-A + V-A + emotion | ❌ | 2009.05103; CLIP (Radford 2021) | 🟡 đúng hướng, chưa đo riêng | **Đúng theo bằng chứng** (cùng cầu nối V-A như color). Chưa backtest riêng (GT ảnh khó). |
+| **Context** | context→V-A đích + thuộc tính audio diễn giải (energy/instr/speech/tempo) | ⚠️ thấp | Context review MDPI 2021; Skowronek 2006; North&Hargreaves 1996 | 🟡 đã wire (F1), chưa đo hiệu quả | **Tín hiệu đúng** (dùng thuộc tính điều khiển-được, không MERT). Chưa đo định lượng (khó GT ngữ cảnh). |
+| **Emotion Journey** *(gác)* | V-A waypoints + emotion + smoothness + lyrics-zone (+MERT-smoothness?) | 🔵 thử | Iso-principle (Altshuler/Davis-Thaut); Saari 2016 | 🔵 chưa đo / đang gác | **Thiết kế hợp lý nhưng CHƯA kiểm chứng** — đang gác để nghiên cứu sâu. MERT-smoothness là giả thuyết. |
+| **Lyrics/Vibe search** (F3) | PhoBERT semantic + keyword + emotion | ❌ | valence-lyrics 2302.13321; PhoBERT (Nguyen 2020) | 🟢 test chức năng 3 kiểu query · 🟡 chưa đo nDCG | **Đúng modality, hoạt động.** Chưa có nDCG định lượng (cần GT chủ đề-lời, như ghi chú reranker). |
+
+### Kết luận đánh giá (trung thực)
+- **Về THIẾT KẾ:** ✅ **đã phù hợp nhất theo bằng chứng công bố hiện có** — mỗi feature khớp tín hiệu với *câu hỏi* của nó (chất âm→MERT; cảm xúc→V-A; chủ đề→text; ngữ cảnh→context-map), và đã tránh "dồn hết". Valence-từ-lyrics đã đúng trong code.
+- **Về EMPIRICAL "chuẩn xác nhất":** ⚠️ **một phần** — những mục lõi đã đo trong dự án (MERT/Pillar A, KG/pillar-f-xartist, RRF color-path) là 🟢; phần còn lại 🟡/🔵 **đúng hướng nhưng chưa đo trên data VN**. Để khẳng định "chuẩn xác nhất" theo nghĩa định lượng, cần hoàn tất **E1–E6** (§5) — đặc biệt E1 (saturation) và dựng GT cho color/image/search.
+- **Tóm lại:** thiết kế *evidence-based, không over-engineer*; nhưng "tối ưu đã được chứng minh bằng số" mới đạt ở các mục 🟢. Đừng coi 🟡/🔵 là đã tối ưu — chúng là *giả thuyết có cơ sở chờ đo*.
+
 ## 4. MERT — TỔNG KẾT "DÙNG / KHÔNG DÙNG"
 
 **✅ Nên dùng MERT (câu hỏi về chất âm):**
