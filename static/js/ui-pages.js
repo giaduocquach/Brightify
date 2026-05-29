@@ -75,12 +75,7 @@ const pages = {
                 <div class="section-header">
                     <div><div class="section-title">🎭 Đổi tâm trạng</div><div class="section-subtitle">Chọn nơi muốn đến — AI dẫn bạn tới đó qua từng bài, bắt đầu từ bài đang nghe (Iso Principle)</div></div>
                 </div>
-                <div class="journey-presets-grid">
-                    <button class="journey-preset" onclick="openMoodPreview('lift')">🌅 Vực dậy</button>
-                    <button class="journey-preset" onclick="openMoodPreview('calm')">🧘 Hạ lo âu</button>
-                    <button class="journey-preset" onclick="openMoodPreview('sleep')">🌙 Ru ngủ</button>
-                    <button class="journey-preset" onclick="openMoodPreview('focus')">🎯 Tập trung</button>
-                </div>
+                ${moodPresetButtonsHTML()}
             </div>
 
             <div class="carousel-container">
@@ -452,12 +447,7 @@ const pages = {
 
                     <!-- F2.1 — need-presets lead: 1 chạm → xem trước cung → bắt đầu -->
                     <div class="journey-presets" style="margin-bottom:6px">
-                        <div class="journey-presets-grid">
-                            <button class="journey-preset" onclick="openMoodPreview('lift')">🌅 Vực dậy</button>
-                            <button class="journey-preset" onclick="openMoodPreview('calm')">🧘 Hạ lo âu</button>
-                            <button class="journey-preset" onclick="openMoodPreview('sleep')">🌙 Ru ngủ</button>
-                            <button class="journey-preset" onclick="openMoodPreview('focus')">🎯 Tập trung</button>
-                        </div>
+                        ${moodPresetButtonsHTML()}
                     </div>
 
                     <details class="journey-advanced">

@@ -222,12 +222,34 @@ function _drawJourneyVisualization(waypoints, songs, info) {
 // a PREVIEW (arc + first songs + duration) before committing — "see the mood
 // before you press play" — instead of playing blind.
 // ══════════════════════════════════════════════════════════════════════════
+// F2.6 — grounded in Saarikallio's Music in Mood Regulation (MMR, 7 strategies).
+// Two families: SHIFT (iso-principle A→B — change the mood) and STAY/EXPRESS
+// (dwell at a mood — being comforted / venting / maintaining, NOT forced to "fix"
+// the feeling). Stay presets are journeys with start == end == target (reuse F2.7
+// dwell), so they settle and remain at that mood.
 const MOOD_SHIFTS = {
-    lift:  { label: '🌅 Vực dậy',   end: [0.85, 0.65], start: [0.25, 0.35], desc: 'Nâng tâm trạng dần lên vui tươi' },
-    calm:  { label: '🧘 Hạ lo âu',  end: [0.62, 0.20], start: [0.40, 0.82], desc: 'Đưa từ căng thẳng về bình yên' },
-    sleep: { label: '🌙 Ru ngủ',    end: [0.48, 0.10], start: [0.50, 0.48], desc: 'Hạ năng lượng để dễ ngủ' },
-    focus: { label: '🎯 Tập trung', end: [0.60, 0.42], start: [0.50, 0.62], desc: 'Ổn định để tập trung' },
+    // ── Đổi tâm trạng (shift, iso A→B) ──
+    lift:  { type: 'shift', label: '🌅 Vực dậy',   end: [0.85, 0.65], start: [0.25, 0.35], desc: 'Nâng tâm trạng dần lên vui tươi' },
+    calm:  { type: 'shift', label: '🧘 Hạ lo âu',  end: [0.62, 0.20], start: [0.40, 0.82], desc: 'Đưa từ căng thẳng về bình yên' },
+    sleep: { type: 'shift', label: '🌙 Ru ngủ',    end: [0.48, 0.10], start: [0.50, 0.48], desc: 'Hạ năng lượng để dễ ngủ' },
+    focus: { type: 'shift', label: '🎯 Tập trung', end: [0.60, 0.42], start: [0.50, 0.62], desc: 'Ổn định để tập trung' },
+    // ── Ở lại · biểu đạt (stay/express, dwell tại một vùng cảm xúc) ──
+    solace:    { type: 'stay', label: '💧 Buồn cùng mình', target: [0.25, 0.30], desc: 'Ở lại nỗi buồn — nhạc đồng cảm, an ủi (solace)' },
+    discharge: { type: 'stay', label: '🔥 Xả',            target: [0.32, 0.82], desc: 'Sống cùng cơn giận/căng thẳng qua nhạc mạnh (discharge)' },
+    vibe:      { type: 'stay', label: '✨ Giữ vibe vui',   target: [0.80, 0.55], desc: 'Giữ dòng nhạc tươi vui đang có (entertainment)' },
 };
+
+// Grouped preset buttons (reused by Home card + AI Lab tab) — keeps them in sync.
+function moodPresetButtonsHTML() {
+    const grp = (type) => Object.entries(MOOD_SHIFTS).filter(([, m]) => m.type === type)
+        .map(([k, m]) => `<button class="journey-preset" onclick="openMoodPreview('${k}')" title="${esc(m.desc)}">${m.label}</button>`).join('');
+    return `
+        <div style="font-size:.72rem;color:var(--text-secondary);margin:0 0 5px">Đổi tâm trạng</div>
+        <div class="journey-presets-grid">${grp('shift')}</div>
+        <div style="font-size:.72rem;color:var(--text-secondary);margin:11px 0 5px">Ở lại · biểu đạt cảm xúc</div>
+        <div class="journey-presets-grid">${grp('stay')}</div>
+    `;
+}
 
 let _preparedJourney = null;
 
@@ -236,17 +258,26 @@ const JOURNEY_DEFAULT_STEPS = 8;   // ~28′ — within the endpoint's 6–15 ra
 async function openMoodPreview(key) {
     const m = MOOD_SHIFTS[key];
     if (!m) return;
-    const cur = window.player?.getCurrentSong?.() || null;
-    const startTrackId = cur?.track_id || null;
-    // With a now-playing song the backend resolves the start V-A from it;
-    // otherwise seed with the preset's default start.
-    const req = {
-        sv: startTrackId ? null : m.start[0],
-        sa: startTrackId ? null : m.start[1],
-        startTrackId, end: m.end,
-        label: m.label, desc: m.desc,
-        fromName: (startTrackId && cur) ? cur.track_name : null,
-    };
+    let req;
+    if (m.type === 'stay') {
+        // STAY: settle at the target mood and remain there (start == end == target).
+        // Ignore the now-playing song — the point is to BE at this mood, not move.
+        req = {
+            sv: m.target[0], sa: m.target[1], startTrackId: null, end: m.target,
+            label: m.label, desc: m.desc, fromName: null, mode: 'stay',
+        };
+    } else {
+        // SHIFT: start auto-detected from the now-playing song (else preset default).
+        const cur = window.player?.getCurrentSong?.() || null;
+        const startTrackId = cur?.track_id || null;
+        req = {
+            sv: startTrackId ? null : m.start[0],
+            sa: startTrackId ? null : m.start[1],
+            startTrackId, end: m.end,
+            label: m.label, desc: m.desc,
+            fromName: (startTrackId && cur) ? cur.track_name : null, mode: 'shift',
+        };
+    }
     _genPreview(req, JOURNEY_DEFAULT_STEPS, true);   // dwell ON by default
 }
 
@@ -257,7 +288,8 @@ async function _genPreview(req, steps, dwell) {
         const data = await API.getEmotionJourney(req.sv, req.sa, req.end[0], req.end[1], steps, { startTrackId: req.startTrackId });
         if (!data.success || !data.songs?.length) { app.toast('Không tạo được hành trình', 'error'); closeJourneyPreview(); return; }
         _preparedJourney = { sv: req.sv, sa: req.sa, startTrackId: req.startTrackId, end: req.end,
-                             label: req.label, desc: req.desc, fromName: req.fromName, data, steps, dwell };
+                             label: req.label, desc: req.desc, fromName: req.fromName,
+                             mode: req.mode || 'shift', data, steps, dwell };
         _renderJourneyPreview();
     } catch (e) {
         app.toast(e.message || 'Lỗi tạo hành trình', 'error');
@@ -298,6 +330,10 @@ function _renderJourneyPreview() {
     const curMood = songs[0]?.fused_emotion || '—';
     const destMood = songs[N - 1]?.fused_emotion || '—';
     const estMin = Math.round(N * 3.5);
+    const isStay = pj.mode === 'stay';
+    const moodLine = isStay
+        ? `ở lại tâm trạng: ${esc(destMood)}`
+        : `${pj.fromName ? `Từ “${esc(pj.fromName)}” · ` : ''}đang: ${esc(curMood)} → hướng tới: ${esc(destMood)}`;
     const first = songs.slice(0, 3).map((s, i) => `
         <div style="display:flex;align-items:center;gap:8px;padding:4px 0">
             <span style="width:18px;color:var(--text-secondary);font-size:.78rem">${i + 1}</span>
@@ -311,7 +347,7 @@ function _renderJourneyPreview() {
         <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:12px">${esc(pj.desc || '')}</div>
         <canvas id="journey-preview-canvas" width="380" height="96" style="width:100%;height:96px;margin-bottom:10px"></canvas>
         <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:10px">
-            ${pj.fromName ? `Từ “${esc(pj.fromName)}” · ` : ''}đang: ${esc(curMood)} → hướng tới: ${esc(destMood)} · ${N} bài · ~${estMin}′${pj.dwell ? ' (+ ở lại)' : ''}
+            ${moodLine} · ${N} bài · ~${estMin}′${pj.dwell ? ' (+ ở lại)' : ''}
         </div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
             ${lenChip(6, 'Ngắn ~6')}${lenChip(8, 'Vừa ~8')}${lenChip(12, 'Dài ~12')}
@@ -343,6 +379,7 @@ function playPreparedJourney() {
         info: pj.data.journey_info,
         ids: new Set(pj.data.songs.map(s => s.track_id)),
         dwell: !!pj.dwell,          // F2.7 — keep playing at the destination mood
+        mode: pj.mode || 'shift',   // F2.6 — 'shift' (A→B) vs 'stay' (dwell at a mood)
         transitionLen: pj.data.songs.length,
     };
     closeJourneyPreview();
@@ -393,11 +430,13 @@ function showMoodMenu() {
     popup.className = 'speed-picker-popup';
     popup.style.left = `${rect.left + rect.width / 2}px`;
     popup.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+    const items = (type) => Object.entries(MOOD_SHIFTS).filter(([, m]) => m.type === type)
+        .map(([k, m]) => `<div class="speed-picker-item" data-mood="${k}" title="${esc(m.desc)}">${m.label}</div>`).join('');
     popup.innerHTML = `
         <div class="speed-picker-title">Đổi tâm trạng</div>
-        ${Object.entries(MOOD_SHIFTS).map(([k, m]) => `
-            <div class="speed-picker-item" data-mood="${k}" title="${esc(m.desc)}">${m.label}</div>
-        `).join('')}
+        ${items('shift')}
+        <div class="speed-picker-title" style="margin-top:6px">Ở lại · biểu đạt</div>
+        ${items('stay')}
     `;
     document.body.appendChild(popup);
 
@@ -434,8 +473,14 @@ function renderJourneyStrip() {
     const arrived = idx === -1;   // F2.7 — past the transition, now dwelling at destination
     const destMood = j.songs[N - 1]?.fused_emotion || '';
     const curMood = arrived ? destMood : (j.songs[idx]?.fused_emotion || '');
-    const titleLine = arrived ? `${esc(j.label)} · 🎯 Đã tới đích` : `${esc(j.label)} · Bước ${idx + 1}/${N}`;
-    const subLine = arrived ? `đang giữ tâm trạng: ${esc(destMood || '—')}` : `đang: ${esc(curMood || '—')} → hướng tới: ${esc(destMood || '—')}`;
+    let titleLine, subLine;
+    if (j.mode === 'stay') {   // F2.6 — dwell-at-a-mood, no A→B transition
+        titleLine = `${esc(j.label)} · đang ở lại`;
+        subLine = `tâm trạng: ${esc(curMood || destMood || '—')}`;
+    } else {
+        titleLine = arrived ? `${esc(j.label)} · 🎯 Đã tới đích` : `${esc(j.label)} · Bước ${idx + 1}/${N}`;
+        subLine = arrived ? `đang giữ tâm trạng: ${esc(destMood || '—')}` : `đang: ${esc(curMood || '—')} → hướng tới: ${esc(destMood || '—')}`;
+    }
 
     // Anchor just above the player bar regardless of its height.
     const bar = document.getElementById('player-bar');
@@ -496,5 +541,6 @@ window.playPreparedJourney = playPreparedJourney;
 window.setPreviewLength = setPreviewLength;
 window.togglePreviewDwell = togglePreviewDwell;
 window.extendJourneyDwell = extendJourneyDwell;
+window.moodPresetButtonsHTML = moodPresetButtonsHTML;
 window.showMoodMenu = showMoodMenu;
 
