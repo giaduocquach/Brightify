@@ -110,19 +110,20 @@ async getRandomSongs(count = 10) {
     },
 
     // ── Emotion Journey ─────────────────────────────────────────────────
-    async getEmotionJourney(startValence, startArousal, endValence, endArousal, steps = 10) {
+    async getEmotionJourney(startValence, startArousal, endValence, endArousal, steps = 10, opts = {}) {
         return this._post('/api/recommend/emotion-journey', {
             start_valence: startValence,
             start_arousal: startArousal,
             end_valence: endValence,
             end_arousal: endArousal,
             steps,
+            start_track_id: opts.startTrackId ?? null,
         });
     },
 
     // ── Smart Context Engine ────────────────────────────────────────────
     async getContextMix({ hour, dayOfWeek, activity, season, weather,
-                          userHistory, userLiked, count } = {}) {
+                          userHistory, userLiked, count, lat, lon } = {}) {
         return this._post('/api/recommend/context-mix', {
             hour: hour ?? null,
             day_of_week: dayOfWeek ?? null,
@@ -132,6 +133,8 @@ async getRandomSongs(count = 10) {
             user_history: userHistory || null,
             user_liked: userLiked || null,
             count: count || 15,
+            lat: lat ?? null,
+            lon: lon ?? null,
         });
     },
 
