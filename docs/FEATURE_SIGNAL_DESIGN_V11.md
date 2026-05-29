@@ -135,6 +135,61 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 - **Về EMPIRICAL "chuẩn xác nhất":** ⚠️ **một phần** — những mục lõi đã đo trong dự án (MERT/Pillar A, KG/pillar-f-xartist, RRF color-path) là 🟢; phần còn lại 🟡/🔵 **đúng hướng nhưng chưa đo trên data VN**. Để khẳng định "chuẩn xác nhất" theo nghĩa định lượng, cần hoàn tất **E1–E6** (§5) — đặc biệt E1 (saturation) và dựng GT cho color/image/search.
 - **Tóm lại:** thiết kế *evidence-based, không over-engineer*; nhưng "tối ưu đã được chứng minh bằng số" mới đạt ở các mục 🟢. Đừng coi 🟡/🔵 là đã tối ưu — chúng là *giả thuyết có cơ sở chờ đo*.
 
+## 3.6. AUDIT SÂU THEO TỪNG FEATURE — thừa / thiếu (nghiên cứu đa nguồn, 2026-05-30)
+
+> Kết quả 4 nhánh nghiên cứu song song. Mỗi tín hiệu: **GIỮ / THỪA / YẾU-CƠ-SỞ / THIẾU**. Độ tin: **(M)** mạnh-xác thực · **(v)** vừa · **(w)** yếu/suy luận.
+
+### 🎵 Similar Song — đang **THỪA cảm xúc (đếm 3 lần)** + thủ công trùng MERT
+- **THỪA — tonal (key/mode)** (M): MERT pretrain có *CQT "musical teacher"* riêng cho cao độ/điệu thức, SOTA key/pitch → tự làm key/mode là **trùng** (mạnh nhất nên cắt). [MERT ICLR2024](https://arxiv.org/html/2306.00107v4)
+- **THỪA — timbral, rhythmic** (M): deep embedding "đã làm lu mờ feature thủ công" cho similarity. [arXiv 2601.19109], [MARBLE NeurIPS2023](https://arxiv.org/html/2306.10548)
+- **THỪA — V-A *đứng riêng* + mood-quadrant** (M): cảm xúc đang bị mã hoá **3 lần** (V-A + emotion-vector + mood-quadrant). Feature tương quan/dư thừa **làm giảm** fusion. → giữ **1** (emotion-vector 13-cat), bỏ V-A-riêng + mood-quadrant. [Oxford Bioinformatics 2011](https://academic.oup.com/bioinformatics/article/27/14/1986/194387)
+- **GIỮ — lyrics(PhoBERT)** (M): modality khác, fusion lyrics+audio > từng cái. [arXiv 2110.01001](https://arxiv.org/pdf/2110.01001)
+- **GIỮ — MERT (anchor, trọng số lớn nhất)** (M).
+- **GIỮ-THẬN-TRỌNG — KG** (w): xây *từ* MERT+audio+mood → **một phần vòng lặp** (re-inject), là lớp graph-smoothing, không phải modality độc lập.
+- **THIẾU — tương đồng giọng/nhạc cụ (stem)** (v): catalog VN thiên giọng → tín hiệu vocal-vs-accompaniment đáng thêm. [arXiv 2404.06682], [arXiv 2503.17281]
+- ⚠️ **Cảnh báo phương pháp (M):** lợi ích fusion trong literature đến từ **học trọng số**; **tổng đều tay (equal-weight) là chế độ dư-thừa-hại-nhất**. → nếu giữ nhiều tín hiệu thì **học/tune trọng số**, đừng cộng đều. [DFS-WR ScienceDirect 2023]
+- *Lưu ý:* feature thủ công **không phải luôn vô dụng** — nếu là *embedding học chuyên* cho pitch/timbre + fusion học, có thể lợi ([arXiv 2309.08751]); nhưng các *scalar rẻ* (energy/tempo/loudness) hiện dùng thì lập luận dư thừa vẫn đúng.
+
+### 🎨 Color → music — **CIEDE2000-tới-1-màu yếu cơ sở**
+- **GIỮ (M) — color→V-A (Jonauskaite/Palmer):** liên kết màu↔nhạc **qua CẢM XÚC**, không qua màu thô. Palmer PNAS 2013: tương quan cảm xúc nhạc↔màu **0.89–0.99**. [PNAS 2013](https://www.pnas.org/doi/10.1073/pnas.1212562110), [i-Perception 2018](https://journals.sagepub.com/doi/10.1177/2041669518808535)
+- **YẾU-CƠ-SỞ (v) — CIEDE2000 tới 1 màu đại diện:** không nghiên cứu nào ủng hộ match nhạc bằng *khoảng cách màu thô tới 1 hex*; literature đi qua cảm xúc; 1 hex vứt bỏ cấu trúc đa-màu (hue×chroma×lightness). → hạ thành tie-break yếu hoặc bỏ; dùng **đa-màu→V-A**.
+- **GIỮ — RRF** (đã đo SIG color-path); **VN context shift** = heuristic nhỏ.
+- **MERT:** không phải cầu nối — chỉ thuộc **thượng nguồn** (ước lượng V-A của bài chính xác hơn).
+
+### 📷 Image → music — **thiếu 2 kênh có bằng chứng**
+- **GIỮ (M) — V-A là cầu nối** (ACM MM2020 [2009.05103], Multisensory Research 2022).
+- **GIỮ-nhưng-nhiễu (v) — CLIP→emotion:** chỉ hơi trên ngẫu nhiên với ảnh trừu tượng → coi V-A từ CLIP là *mềm*. [arXiv 2405.06319]
+- **THỪA (v) — image-dominant-color→V-A:** trùng ước lượng cảm xúc CLIP đã cho → gộp 1.
+- **THIẾU (v) — embedding học emotion-aligned** (Won ICASSP2024 [2308.12610]) **+ semantic scene tags** (MMVA [2501.01094]) → nâng cấp có bằng chứng.
+
+### 🌤️ Context — **thiếu session/sequence; weather marginal**
+- **GIỮ (M) — time→arousal:** nhịp ngày-đêm về *cường độ/arousal* rất vững (Park 2019 *Nature HB* 765M plays; Heshmat 2021). *Nhưng biên độ nhỏ* → trọng số khiêm tốn, **arousal > valence**. [Nature HB 2019](https://www.nature.com/articles/s41562-018-0508-z), [RSOS 2021](https://royalsocietypublishing.org/doi/10.1098/rsos.210885)
+- **GIỮ + SỬA (M) — activity:** đúng, nhưng phải khớp qua **thuộc tính diễn giải (tempo/energy/instrumentalness)**, không chỉ V-A (workout=BPM theo nhịp chân; North&Hargreaves 1998). V-A under-determine activity.
+- **GIẢM cho VN (M) — season:** hiệu ứng tỉ lệ với biên độ ngày-dài → **yếu ở vĩ độ thấp** (VN).
+- **MARGINAL — cân nhắc BỎ (M) — weather:** chỉ ~**6% variance**, chỉ top-chart, một nghiên cứu thấy weather **làm hại** hiệu quả → cap nhỏ/arousal-only, **ứng viên ablate đầu tiên**. [RSOS 2023](https://royalsocietypublishing.org/doi/10.1098/rsos.221443)
+- **HEURISTIC — VN holiday:** editorial override, không phải V-A fitted.
+- **THIẾU — session/sequence + repeat/skip** (M, **đòn cao nhất**): scorer hiện *pointwise*; literature đã chuyển sang *sequential/session* (Deezer RecSys'24 [2408.16578]). **+ day-of-week**.
+- **MERT: KHÔNG** đưa vào lớp luật (giết explainability); activity-fit dùng thuộc tính diễn giải. [Audio Prototypical Net 2508.00194]
+
+### ✨ Lyrics/Vibe Search — **thiếu emotion; centroid thừa**
+- **GIỮ (M) — semantic(PhoBERT) + keyword:** keyword **KHÔNG dư thừa** — dense bỏ lỡ exact-term/tên riêng; đặc biệt quan trọng cho **tiếng Việt có dấu**. Hybrid > từng cái.
+- **THỪA (w) — centroid-γ:** không cơ sở độc lập; là bản làm-mượt của semantic → bỏ/gộp trừ khi A/B cho lợi.
+- **THIẾU (M cho valence) — emotion/V-A cho query *vibe*:** valence bắt tốt từ *lời/text* hơn audio; query "đêm mưa buồn" là biểu đạt cảm xúc → thêm term V-A/emotion (gate khi nhận diện query mood). [Hu & Downie], [arXiv 2302.13321](https://arxiv.org/abs/2302.13321)
+
+### 🎯 Emotion Journey *(gác)* — **sửa trích dẫn + nâng smoothness**
+- **GIỮ (M/v) — iso-principle:** RCT n=107 có ý nghĩa (η²≈0.17, *caveat:* có ở nữ, không ở nam). [PMC8656869](https://pmc.ncbi.nlm.nih.gov/articles/PMC8656869/)
+- **GIỮ (M) — V-A Bézier waypoint.**
+- ⚠️ **SỬA TRÍCH DẪN (w):** **"Saari 2016 ~10–15%/bước" KHÔNG xác minh được** — Saari là về *gán nhãn mood* (ACT), không phải tốc-độ-bước. → đổi nhãn thành **heuristic**, gỡ trích dẫn Saari (đang nằm ở hint UI journey + plan V10).
+- **THỪA (w) — emotion-profile interpolation:** trùng V-A trừ khi mang nuance categorical.
+- **GIỮ — lyrics-zone** (bổ valence), **no-repeat/artist diversity.**
+- **NÂNG CẤP (v) — smoothness:** đổi cosine audio-feature → **cosine MERT** cho liền mạch tri giác (giữ key/LUFS cho ràng buộc cứng).
+
+### 🔑 4 phát hiện xuyên suốt
+1. **Dư thừa rõ nhất cần cắt:** mood-quadrant + V-A-riêng (similar) · CIEDE2000-1-màu (color) · centroid-γ (search) · image-color-V-A · emotion-interpolation (journey).
+2. **Thiếu giá trị cao nhất:** session/sequence (context) · emotion/V-A term (vibe search) · semantic-tags + learned-embedding (image) · vocal/instrument (similar).
+3. **Equal-weight sum hại nhất với dư thừa** → chuyển sang **học/tune trọng số fusion**.
+4. **Sửa trích dẫn Saari** (chưa xác thực).
+
 ## 4. MERT — TỔNG KẾT "DÙNG / KHÔNG DÙNG"
 
 **✅ Nên dùng MERT (câu hỏi về chất âm):**
@@ -152,12 +207,23 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 
 > Mọi thay đổi trọng số mặc định phải qua harness backtest (Bonferroni/CI) trước khi bật.
 
-1. **E1 — Ablation saturation ở `recommend_by_song`** *(M)*: đo NDCG khi giảm/bỏ timbral/rhythmic/tonal, tăng MERT. *Mục tiêu:* xác nhận (hay bác bỏ) saturation (1.2) trên catalog VN → đơn giản hoá nếu được. **Cao nhất** (đụng feature dùng nhiều nhất + kiểm tra trực tiếp triết lý).
-2. **E2 — Ablation `audio 0.1` trong KG** *(S)*: bỏ thành phần audio, giữ MERT+mood+instrument; đo chất lượng + %same-artist.
-3. **E3 — Kiểm chứng nguồn valence** *(S-M)*: xác nhận song V-A đang fuse lyrics cho valence (1.4); nếu chưa, sửa — ảnh hưởng *mọi* feature cảm xúc.
-4. **E4 — Color/Image re-rank bằng MERT (tùy chọn)** *(M)*: thử MERT re-rank top-N *sau* khớp V-A; chỉ giữ nếu color-path backtest lợi rõ. Mặc định OFF.
-5. **E5 — (khi mở lại Journey) MERT cho smoothness** *(M)*: thay/booster smoothness; đo cảm nhận chuyển tiếp.
-6. **E6 — Context: KHÔNG thêm MERT** trừ khi có giả thuyết + backtest; ưu tiên hoàn thiện thuộc tính activity-fit diễn giải.
+**Nhóm A — Cắt dư thừa (rủi ro thấp, củng cố triết lý; đo bằng backtest):**
+1. **E1 — `recommend_by_song`: cắt dư thừa + học trọng số** *(M, CAO NHẤT)*: (a) **gộp cảm xúc về 1** (bỏ V-A-riêng + mood-quadrant, giữ emotion-vector); (b) **bỏ tonal trước** (case mạnh nhất), rồi timbral/rhythmic, tăng MERT; (c) **học/tune trọng số fusion** thay tổng đều. Đo NDCG — kỳ vọng *không giảm* mà gọn + nhanh hơn.
+2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
+3. **E7 — Color bỏ/hạ CIEDE2000-1-màu** *(M)*: chuyển sang **đa-màu→V-A** (saturation→arousal, lightness→valence); đo color-path.
+4. **E8 — Vibe search: bỏ centroid-γ** *(S)* + **thêm term emotion/V-A** cho query mood (gate); đo (cần GT chủ đề-lời).
+
+**Nhóm B — Thêm tín hiệu THIẾU có bằng chứng (giá trị cao):**
+5. **E9 — Context: session/sequence + repeat/skip + day-of-week** *(L, giá trị cao nhất mảng context)*: chuyển scorer pointwise → có ngữ cảnh phiên (Deezer RecSys'24). Hạ weather (ứng viên ablate) + giảm season cho VN.
+6. **E10 — Image: thêm semantic scene tags** *(M)* (+ về sau learned emotion-aligned embedding Won 2024); gộp color-V-A trùng.
+7. **E11 — Similar: tín hiệu vocal/instrument (stem)** *(M-L)*: cho catalog VN thiên giọng.
+
+**Nhóm C — Đảm bảo nền + journey (khi mở lại):**
+8. **E3 — Xác minh nguồn valence**: đã kiểm code (`val=0.6·audio+0.4·lyrics` ✓); coi như đạt, theo dõi.
+9. **E5 — Journey: smoothness MERT** *(M)* + bỏ emotion-interpolation nếu trùng + **sửa trích dẫn Saari** (heuristic, không cited) ở hint UI + plan V10.
+10. **E6 — Context KHÔNG thêm MERT** (giữ thuộc tính diễn giải cho explainability).
+
+> Ưu tiên: **E1** (kiểm chứng triết lý "đừng dồn hết" + tăng tốc reco chính) → **E9** (đòn context giá trị cao nhất) → E7/E2/E8 (cắt dư thừa nhẹ) → E10/E11/E5 (thêm/ nâng cấp).
 
 ---
 
@@ -190,6 +256,24 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 - Mitigating Redundancy in Deep Recommender Systems (KDD 2025): https://dl.acm.org/doi/10.1145/3690624.3709275
 - Maximum Impact with Fewer Features: Efficient Feature Selection for Cold-Start Recommenders (arXiv 2508.06455): https://arxiv.org/pdf/2508.06455
 - Multimodal GNN with Dynamic De-redundancy and Modality-Guided De-noisy (arXiv 2411.01561): https://arxiv.org/pdf/2411.01561
+
+**Bổ sung audit sâu 2026-05-30 (theo từng feature)**
+- Palmer et al. — *Music–color associations mediated by emotion* (PNAS 2013): https://www.pnas.org/doi/10.1073/pnas.1212562110
+- Whiteford et al. — *Color, Music, and Emotion: Bach to the Blues* (i-Perception 2018): https://journals.sagepub.com/doi/10.1177/2041669518808535
+- Park et al. — *Global music streaming reveals diurnal & seasonal patterns of affective preference* (Nature Human Behaviour 2019): https://www.nature.com/articles/s41562-018-0508-z
+- Heshmat et al. — *Diurnal fluctuations in musical preference* (RSOS 2021): https://royalsocietypublishing.org/doi/10.1098/rsos.210885
+- Baltzersen et al. — *"Here comes the sun": weather & music* (RSOS 2023, weather marginal): https://royalsocietypublishing.org/doi/10.1098/rsos.221443
+- North, Hargreaves & Heath — *Musical Tempo in a Gymnasium* (1998, activity↔tempo): https://journals.sagepub.com/doi/10.1177/0305735698261007
+- Park & Hennequin (Deezer) — *Transformers Meet ACT-R: Repeat-Aware Sequential Listening Sessions* (RecSys'24): https://arxiv.org/abs/2408.16578
+- Won et al. — *Emotion-Aligned Contrastive Learning Between Images and Music* (ICASSP 2024): https://arxiv.org/abs/2308.12610
+- Choi et al. — *MMVA: V-A + musical-caption semantics for image↔music* (2025): https://arxiv.org/pdf/2501.01094
+- Hu & Downie — *When Lyrics Outperform Audio for Music Mood Classification*: https://www.semanticscholar.org/paper/ab4e037b3edd362dbbde86f0c6a054dba572c90a
+- *Comparative analysis of redundant/correlated features degrading fusion* (Oxford Bioinformatics 2011): https://academic.oup.com/bioinformatics/article/27/14/1986/194387
+- MARBLE benchmark (NeurIPS 2023, deep emb > handcrafted MIR): https://arxiv.org/html/2306.10548
+- *Disentangled / separated instrument-similarity representations*: https://arxiv.org/html/2404.06682 · https://arxiv.org/html/2503.17281
+- *Audio Prototypical Network for Controllable Music Recommendation* (interpretable layer over embeddings): https://arxiv.org/html/2508.00194
+- Iso-principle RCT (PMC8656869): https://pmc.ncbi.nlm.nih.gov/articles/PMC8656869/
+- ⚠️ *Saari "10–15%/bước"* — **không xác minh được nguồn**; Saari (JYU thesis) là về gán nhãn mood, không phải tốc-độ-bước → coi là heuristic: https://jyx.jyu.fi/bitstream/handle/123456789/45096/978-951-39-6074-2.pdf
 
 ---
 
