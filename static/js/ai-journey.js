@@ -231,6 +231,8 @@ const MOOD_SHIFTS = {
 
 let _preparedJourney = null;
 
+const JOURNEY_DEFAULT_STEPS = 8;   // ~28′ — within the endpoint's 6–15 range
+
 async function openMoodPreview(key) {
     const m = MOOD_SHIFTS[key];
     if (!m) return;
@@ -238,19 +240,37 @@ async function openMoodPreview(key) {
     const startTrackId = cur?.track_id || null;
     // With a now-playing song the backend resolves the start V-A from it;
     // otherwise seed with the preset's default start.
-    const sv = startTrackId ? null : m.start[0];
-    const sa = startTrackId ? null : m.start[1];
+    const req = {
+        sv: startTrackId ? null : m.start[0],
+        sa: startTrackId ? null : m.start[1],
+        startTrackId, end: m.end,
+        label: m.label, desc: m.desc,
+        fromName: (startTrackId && cur) ? cur.track_name : null,
+    };
+    _genPreview(req, JOURNEY_DEFAULT_STEPS, true);   // dwell ON by default
+}
 
-    _showJourneyPreviewSheet(`<div class="loading-inline"><div class="loader"></div>${esc(m.label)} — đang dựng hành trình…</div>`);
+// Generate (or regenerate) the preview for a request at a given transition length.
+async function _genPreview(req, steps, dwell) {
+    _showJourneyPreviewSheet(`<div class="loading-inline"><div class="loader"></div>${esc(req.label)} — đang dựng hành trình…</div>`);
     try {
-        const data = await API.getEmotionJourney(sv, sa, m.end[0], m.end[1], 8, { startTrackId });
+        const data = await API.getEmotionJourney(req.sv, req.sa, req.end[0], req.end[1], steps, { startTrackId: req.startTrackId });
         if (!data.success || !data.songs?.length) { app.toast('Không tạo được hành trình', 'error'); closeJourneyPreview(); return; }
-        _preparedJourney = { label: m.label, desc: m.desc, data, fromName: (startTrackId && cur) ? cur.track_name : null };
+        _preparedJourney = { sv: req.sv, sa: req.sa, startTrackId: req.startTrackId, end: req.end,
+                             label: req.label, desc: req.desc, fromName: req.fromName, data, steps, dwell };
         _renderJourneyPreview();
     } catch (e) {
         app.toast(e.message || 'Lỗi tạo hành trình', 'error');
         closeJourneyPreview();
     }
+}
+
+// F2.7 — change transition length (regenerates) / toggle dwell-at-destination.
+function setPreviewLength(steps) {
+    if (_preparedJourney) _genPreview(_preparedJourney, steps, _preparedJourney.dwell);
+}
+function togglePreviewDwell(on) {
+    if (_preparedJourney) _preparedJourney.dwell = !!on;
 }
 
 function _showJourneyPreviewSheet(innerHtml) {
@@ -283,13 +303,22 @@ function _renderJourneyPreview() {
             <span style="width:18px;color:var(--text-secondary);font-size:.78rem">${i + 1}</span>
             <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.85rem">${esc(s.track_name)} <span style="color:var(--text-secondary)">· ${esc(s.artist)}</span></span>
         </div>`).join('');
+    // F2.7 — length chips (transition length) + dwell toggle
+    const lenChip = (steps, label) =>
+        `<button onclick="setPreviewLength(${steps})" style="flex:1;padding:5px 0;border-radius:8px;font-size:.78rem;cursor:pointer;border:1px solid var(--border);background:${pj.steps === steps ? 'var(--accent,#a78bfa)' : 'transparent'};color:${pj.steps === steps ? '#fff' : 'var(--text-secondary)'}">${label}</button>`;
     _showJourneyPreviewSheet(`
         <div style="font-size:1.05rem;font-weight:700;margin-bottom:2px">${esc(pj.label)}</div>
         <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:12px">${esc(pj.desc || '')}</div>
         <canvas id="journey-preview-canvas" width="380" height="96" style="width:100%;height:96px;margin-bottom:10px"></canvas>
         <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:10px">
-            ${pj.fromName ? `Từ “${esc(pj.fromName)}” · ` : ''}đang: ${esc(curMood)} → hướng tới: ${esc(destMood)} · ${N} bài · ~${estMin} phút
+            ${pj.fromName ? `Từ “${esc(pj.fromName)}” · ` : ''}đang: ${esc(curMood)} → hướng tới: ${esc(destMood)} · ${N} bài · ~${estMin}′${pj.dwell ? ' (+ ở lại)' : ''}
         </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+            ${lenChip(6, 'Ngắn ~6')}${lenChip(8, 'Vừa ~8')}${lenChip(12, 'Dài ~12')}
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-secondary);margin-bottom:12px;cursor:pointer">
+            <input type="checkbox" ${pj.dwell ? 'checked' : ''} onchange="togglePreviewDwell(this.checked)"> 🔁 Tới đích rồi ở lại tâm trạng đó (nghe tiếp không dừng)
+        </label>
         <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:14px">${first}${N > 3 ? `<div style="font-size:.78rem;color:var(--text-secondary);padding-top:4px">…và ${N - 3} bài nữa</div>` : ''}</div>
         <div style="display:flex;gap:8px">
             <button class="btn btn-primary btn-glow" style="flex:1" onclick="playPreparedJourney()">
@@ -313,13 +342,44 @@ function playPreparedJourney() {
         waypoints: pj.data.waypoints,
         info: pj.data.journey_info,
         ids: new Set(pj.data.songs.map(s => s.track_id)),
+        dwell: !!pj.dwell,          // F2.7 — keep playing at the destination mood
+        transitionLen: pj.data.songs.length,
     };
     closeJourneyPreview();
     _checkAudioBatch(songs).then(() => {
         player.loadQueue(songs, 0, 'emotion-journey');
         renderJourneyStrip();
+        // Pre-append the first dwell batch in the background so the queue is
+        // already longer by the time the transition ends (no gap, no abrupt stop).
+        if (window._activeJourney?.dwell) extendJourneyDwell();
     });
-    app.toast(`${pj.label}: bắt đầu hành trình ${songs.length} bài`, 'success');
+    app.toast(`${pj.label}: ${songs.length} bài${pj.dwell ? ' + ở lại tâm trạng đích' : ''}`, 'success');
+}
+
+// F2.7 — "arrive then dwell": append songs clustered at the destination V-A so the
+// journey doesn't stop abruptly. A journey with start == end yields songs near that
+// point. Re-callable (top-up) → effectively endless until the user changes queue.
+let _dwellLoading = false;
+async function extendJourneyDwell() {
+    const j = window._activeJourney;
+    if (!j || !j.dwell || _dwellLoading) return;
+    const end = j.info?.end;
+    if (!end) return;
+    _dwellLoading = true;
+    try {
+        const data = await API.getEmotionJourney(end.valence, end.arousal, end.valence, end.arousal, 8);
+        if (data.success && data.songs?.length) {
+            const have = new Set((window.player?.queue || []).map(s => s.track_id));
+            const fresh = data.songs.filter(s => s.track_id && !have.has(s.track_id));
+            if (fresh.length) {
+                const songs = fresh.map(s => _normalizeSong(s));
+                await _checkAudioBatch(songs);
+                songs.forEach(s => j.ids.add(s.track_id));   // keep the strip active through dwell
+                window.player.queue.push(...songs);
+                window.player._updateQueuePanel?.();
+            }
+        }
+    } catch (e) { /* dwell is best-effort */ } finally { _dwellLoading = false; }
 }
 
 // Player "đổi mood" button → popover of mood-shift destinations.
@@ -371,8 +431,11 @@ function renderJourneyStrip() {
 
     const idx = j.songs.findIndex(s => s.track_id === cur.track_id);
     const N = j.songs.length;
-    const curMood = j.songs[idx]?.fused_emotion || '';
+    const arrived = idx === -1;   // F2.7 — past the transition, now dwelling at destination
     const destMood = j.songs[N - 1]?.fused_emotion || '';
+    const curMood = arrived ? destMood : (j.songs[idx]?.fused_emotion || '');
+    const titleLine = arrived ? `${esc(j.label)} · 🎯 Đã tới đích` : `${esc(j.label)} · Bước ${idx + 1}/${N}`;
+    const subLine = arrived ? `đang giữ tâm trạng: ${esc(destMood || '—')}` : `đang: ${esc(curMood || '—')} → hướng tới: ${esc(destMood || '—')}`;
 
     // Anchor just above the player bar regardless of its height.
     const bar = document.getElementById('player-bar');
@@ -381,13 +444,13 @@ function renderJourneyStrip() {
     strip.innerHTML = `
         <canvas id="journey-mini-canvas" width="200" height="42" style="flex-shrink:0"></canvas>
         <div style="min-width:0;flex:1">
-            <div style="font-size:.82rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(j.label)} · Bước ${idx + 1}/${N}</div>
-            <div style="font-size:.72rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">đang: ${esc(curMood || '—')} → hướng tới: ${esc(destMood || '—')}</div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${titleLine}</div>
+            <div style="font-size:.72rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subLine}</div>
         </div>
         <button onclick="exitJourneyMode()" title="Thoát chế độ hành trình" style="flex-shrink:0;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.15rem;line-height:1;padding:2px 4px">×</button>
     `;
     strip.style.display = 'flex';
-    _drawJourneyMiniArc(document.getElementById('journey-mini-canvas'), j, idx);
+    _drawJourneyMiniArc(document.getElementById('journey-mini-canvas'), j, arrived ? N - 1 : idx);
 }
 
 function _drawJourneyMiniArc(canvas, j, curIdx) {
@@ -430,5 +493,8 @@ window.exitJourneyMode = exitJourneyMode;
 window.openMoodPreview = openMoodPreview;
 window.closeJourneyPreview = closeJourneyPreview;
 window.playPreparedJourney = playPreparedJourney;
+window.setPreviewLength = setPreviewLength;
+window.togglePreviewDwell = togglePreviewDwell;
+window.extendJourneyDwell = extendJourneyDwell;
 window.showMoodMenu = showMoodMenu;
 

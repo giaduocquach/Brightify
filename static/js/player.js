@@ -822,6 +822,13 @@ class MusicPlayer {
             this.next();
         } else if (this.radioMode) {
             this._startRadio();
+        } else if (this._playSource === 'emotion-journey' && window._activeJourney?.dwell && window.extendJourneyDwell) {
+            // F2.7 — arrived at destination: top up with more songs at the target
+            // mood so the journey keeps playing instead of stopping abruptly.
+            window.extendJourneyDwell().then(() => {
+                if (this.currentIndex < this.queue.length - 1) this.next();
+                else { this.isPlaying = false; this._updatePlayBtn(false); }
+            });
         } else {
             this.isPlaying = false;
             this._updatePlayBtn(false);

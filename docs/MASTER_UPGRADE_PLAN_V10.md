@@ -97,7 +97,8 @@
 **Tiến độ:**
 - ✅ **F2.2 (2026-05-29)** — "Journey Mode" trong Player: dải `#journey-strip` nổi trên player bar khi đang phát hành trình (`player._playSource==='emotion-journey'`), mini-arc canvas (arousal=trục dọc/năng lượng, hue theo tiến trình) + chấm "bạn đang ở đây" bước k/N + nhãn "đang → hướng tới" + nút thoát. `window._activeJourney` giữ raw journey songs; hook trong `player._updateUI`; tự ẩn khi đổi queue/stop.
 - ✅ **F2.1 (2026-05-29)** — Sheet **xem-trước-cung** + dẫn bằng human-preset: `openMoodPreview(key)` (Home card · nút Player · AI Lab) sinh journey rồi mở overlay preview (mini-arc + start→dest mood + 3 bài đầu + ~thời lượng) → "Bắt đầu hành trình" (`playPreparedJourney` → loadQueue + Journey Mode). Thay luồng phát-mù cũ. **AI Lab journey tab:** 4 need-preset dẫn đầu, toàn bộ picker V-A/quick-mood/preset gập vào `<details>` "⚙️ Tùy chỉnh nâng cao" → hết "quá khó".
-- *Còn lại: F2.3 (re-steer) · F2.4 (preset bản-sắc-Việt) · F2.5 (đổi mood nhanh 5 phút).*
+- ✅ **F2.7 (2026-05-29)** — Độ dài thích ứng + "tới đích rồi ở lại": preview cho chọn **Ngắn ~6 / Vừa ~8 / Dài ~12** (regenerate qua `_genPreview`, trong khoảng endpoint 6–15) + toggle **🔁 "Tới đích rồi ở lại"**. Dwell = gọi journey `start==end` tại V-A đích (`extendJourneyDwell`) → pre-append nền lúc bắt đầu + top-up khi hết queue (nhánh mới trong `player._onTrackEnd`, mô phỏng radio) → nghe không dừng. Strip hiện "🎯 Đã tới đích · đang giữ \<mood>" ở pha dwell. *Lưu ý:* dwell cụm quanh đích nhưng hơi lệch (engine blend đa tín hiệu, không V-A-thuần) — siết sau bằng endpoint V-A-nearest nếu cần.
+- *Còn lại: F2.6 (taxonomy 7 chiến lược) · F2.3 (re-steer) · F2.4 (preset bản-sắc-Việt) · F2.5 (đổi mood nhanh 5 phút).*
 
 **Lộ trình thực hiện (đề xuất, Phase 3):**
 - **F2.1** *(M)*: Sheet xem-trước-cung khi chọn đích (Home + AI Lab); dẫn bằng human-preset; V-A picker → "Nâng cao" gập. → *giải quyết "AI Lab quá khó" + "phát mù".*
@@ -227,7 +228,7 @@
 - **Vì sao:** sau khi gợi ý đáng tin (Phase 1), đưa chúng ra chỗ dễ chạm để phát huy. **→ PHASE 2 HOÀN TẤT** (F1 ✅ + F2 ✅ + F5 ✅).
 
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
-12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode (arc+bước) · ✅ **F2.1** preview + human-preset + V-A→nâng cao. Còn: **F2.7** độ dài thích ứng + "tới đích rồi ở lại" (bỏ fix 8 bài) *(M, ưu tiên — user yêu cầu)* · **F2.6** taxonomy 7-chiến-lược MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment) *(M)* · **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
+12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode (arc+bước) · ✅ **F2.1** preview + human-preset + V-A→nâng cao · ✅ **F2.7** độ dài thích ứng + "tới đích rồi ở lại" (bỏ fix 8 bài). Còn: **F2.6** taxonomy 7-chiến-lược MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment) *(M)* · **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
 13. **F3**: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (3 matcher trộn-xếp, xem §3/F3-CƠ-CHẾ; phải thêm lyrics-line matcher + sửa bug `/songs/search` không search lyrics). Xong thì gỡ tab "Tìm theo cảm xúc". *(M)*
 14. **F7**: MERT vào KG (đã ở #4), Audio Radio, bổ sung context/journey. *(M-L)*
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
