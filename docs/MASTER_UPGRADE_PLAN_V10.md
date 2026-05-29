@@ -57,7 +57,7 @@
 | **Context Mix** | AI Lab tab 5 | 🏠 **Home — shelf động "Ngay bây giờ"** (auto theo giờ/mood/lễ) | P1, P6. Đây là "playlist hợp ngữ cảnh" = tiêu chí #1 của user Việt (64.3%). |
 | **Emotion Journey** | AI Lab tab 4 | 🏠 **Home — thẻ "Tâm trạng"** + 🎵 nút trong Player ("đổi mood") + chế độ Wellness | P3, P7. Khác biệt thương hiệu mạnh nhất. |
 | **Search hợp nhất** (gộp Lyrics search) | AI Lab tab 2 | 🔝 **Thanh search toàn cục**: tên · câu lyrics · mô tả vibe → **khớp-nhất-trước, liên-quan-dưới** | P4. Gì cũng tìm ra; biến search thành cửa AI chính. |
-| **Similar / Radio** | Context menu | 🎵 **Player + thẻ bài** với 2 lựa chọn rõ: *"Giống về nhạc"* vs *"Cùng nghệ sĩ"* | Sửa KG bias (mục 6.3) cần lựa chọn rõ ràng. |
+| ~~**Similar / Radio**~~ | Context menu | ❌ BỎ (2026-05-29) | F6 đã làm reco thuần "giống về nhạc"; không có logic "cùng nghệ sĩ" để tách (xem nghệ sĩ = điều hướng qua trang artist). |
 | **Color + Image** | AI Lab tab 1,3 | 🧪 **Gộp 1 mục "Bắt vibe từ ảnh/màu"** trong khu "Khám phá" (giữ làm hook, không phải cửa chính) | P6. Là novelty/wow, không phải daily-use. |
 | ~~**Discovery Dial** (MMR/DPP)~~ | (ẩn ngầm) | ❌ BỎ (2026-05-29) | Loại theo yêu cầu user. MMR vẫn chạy ngầm, λ cố định. |
 | ~~**"Vì sao bài này"**~~ | (không có) | ❌ BỎ (2026-05-29) | Loại theo yêu cầu user. |
@@ -155,10 +155,8 @@
 5. **Nối F2:** nếu query là *mô tả mood chuyển dịch* ("buồn… rồi nguôi ngoai") → thêm gợi ý "tạo **hành trình cảm xúc** từ mô tả này".
 > Backend chủ yếu **tái dùng** (name search + `/recommend/lyrics`); việc mới = **thêm lyrics-line matcher** (trgm/substring) + lớp `searchUnified` trộn-xếp + UI 2 nhóm kết quả. Khi F3 ship → **gỡ tab "✨ Tìm theo cảm xúc"** khỏi AI Lab (hiện GIỮ tạm tới lúc đó).
 
-### F4. Similar songs / Radio → minh bạch & sửa bias
-- **[AI]** Phụ thuộc **F6 (KG rebuild)** + **bỏ +0.05 artist bonus**. Tách hai ý định: *similarity theo nhạc* (MERT + audio + V-A, KG nội dung) vs *theo nghệ sĩ* (artist graph — chỉ khi user chủ động chọn).
-- **[UX]** Trên thẻ bài & Player: **hai nút rõ ràng** — "🎵 Giống về nhạc" và "👤 Cùng nghệ sĩ". Radio mode dùng "giống về nhạc" mặc định.
-- **[Effort]** M (sau khi có F6).
+### F4. ❌ BỎ HẲN (2026-05-29, quyết định user)
+- **Lý do:** sau F6, `recommend_by_song` đã **thuần "giống về nhạc"** (KG content MERT+mood+instrument+audio, bỏ bonus artist). **KHÔNG còn — và không nên có — thuật toán gợi ý "cùng nghệ sĩ"** nào (đó chính là bias mà F6 đã sửa tận gốc). Việc xem nhạc của một nghệ sĩ đã có sẵn qua **điều hướng** (trang artist / `/artists/{name}/songs`), không phải một "ý định gợi ý" cần nút riêng. → Ý tưởng "hai nút Giống-về-nhạc vs Cùng-nghệ-sĩ" là **thừa & mâu thuẫn triết lý F6**. Bỏ.
 
 ### F5. Color + Image → gộp "Bắt vibe từ ảnh/màu" (hook) — ✅ ĐÃ LÀM (2026-05-29)
 - **[AI]** Giữ nguyên (CIEDE2000 + CLIP đã tốt). Tùy chọn (chưa làm): dùng MERT xếp hạng tinh hơn sau khi map màu→V-A — để Phase 3/F7.
@@ -167,7 +165,7 @@
 
 ### F6. KG — XÂY LẠI theo nội dung nhạc (xem mục 6.3 chi tiết)
 - **[AI]** Thay đồ thị thuần-artist bằng **đồ thị tương đồng nhạc** (kNN trên MERT + mood_tags + instrument_tags), giữ artist/album là **một** loại cạnh trọng số thấp chỉ cho cold-start. **Bỏ +0.05 bonus cứng.**
-- **[UX]** Vô hình (backend) — nhưng kết quả thấy rõ ở F4.
+- **[UX]** Vô hình (backend) — nhưng kết quả thấy rõ ở chất lượng "giống về nhạc" của similar-song/radio.
 - **[Effort]** L.
 
 ### F7. MERT — mở rộng ứng dụng (xem mục 6.2)
@@ -219,8 +217,8 @@
 4. **F6** ✅: Xây lại KG content-based + bỏ +0.05 artist bonus + artist-cap → đã đo backtest (mục 6.3.1). *(L)*
 5. **F9** ❌ BỎ (2026-05-29, theo quyết định user — "không cần thiết"): lớp "Vì sao bài này" đã từng implement (helper `_top_reasons`, wired vào `recommend_by_song`/`recommend_by_colors`, serialize `_song_to_dict`, chip FE) nhưng đã **revert toàn bộ**. Engine/api/FE trở lại trạng thái không explainability.
 6. **F8** ❌ BỎ (2026-05-29, theo quyết định user — "không cần thiết"): Discovery Dial. Phần plumbing `diversity=` đã thêm dở (param API + `_diversity_to_lambda` + λ override trong `_fast_rank`) cũng đã **revert toàn bộ**.
-7. **F4** *(tùy chọn)*: Tách "Giống về nhạc" vs "Cùng nghệ sĩ" trên UI — bổ trợ cho F6. *(M)*
-- **Vì sao:** nhóm này đánh trúng pain echo-chamber + hộp đen và sửa bug KG, **đều hoạt động ở mức per-request, KHÔNG cần lớp cá nhân hóa**. *(F8, F9 đã loại theo yêu cầu user — Phase 1 còn F6 ✅ + F4 tùy chọn.)*
+7. ~~**F4**~~ ❌ BỎ — sau F6, reco đã thuần "giống về nhạc"; không có logic "cùng nghệ sĩ" để tách (xem nghệ sĩ = điều hướng). Mâu thuẫn triết lý F6.
+- **Vì sao:** nhóm này đánh trúng pain echo-chamber + hộp đen và sửa bug KG, **đều hoạt động ở mức per-request, KHÔNG cần lớp cá nhân hóa**. *(F4, F8, F9 đã loại theo yêu cầu user — Phase 1 chỉ còn F6 ✅.)*
 - **❌ F10 (dislike/feedback có học) GỠ KHỎI Phase 1:** giả định một lớp cá nhân hóa/người dùng mà hệ thống *chưa có* (hiện chỉ có liked/history ở localStorage, không có hồ sơ server/mô hình cá nhân hóa). Cá nhân hóa là **một quyết định kiến trúc riêng** (tài khoản? client-only? hồ sơ server?) → tách thành initiative riêng, không thuộc Phase 1. (Ban đầu thêm F10 từ pain point thị trường, không phải yêu cầu thực tế.)
 
 ### 🟡 PHASE 2 — Đặt đúng chỗ (giảm ma sát, tăng chạm)
@@ -274,7 +272,7 @@ MERT (768-dim, đã có file 16M, là *biểu diễn nội dung nhạc thật*) 
 - **Cách A (nhanh, khuyến nghị MVP):** Bỏ artist-KG. Xây **kNN graph trên hợp nhất nội dung**: `MERT (chất âm) ⊕ mood_tags ⊕ instrument_tags ⊕ audio features` → mỗi bài nối k láng giềng *giống về nhạc*. Embedding = node2vec/SVD trên graph này, hoặc đơn giản dùng trực tiếp kNN-sim. **Không** chứa tín hiệu tác giả.
 - **Cách B (đầy đủ, paper-grounded):** **Đồ thị dị thể (heterogeneous)**: cạnh "music-similarity" (MERT/mood, trọng số cao) + cạnh "artist/album" (trọng số *thấp*, chỉ để cold-start), nhúng bằng GNN/metapath (HAN-style; theo Hybrid GNN Springer 2024 & arXiv 2409.09026). 
 - **Bỏ `+0.05 * kg_sim` thuần-tác-giả** trong `recommend_by_song`; thay bằng tín hiệu KG-nội-dung (hoặc gộp vào trọng số fusion qua config, có thể ablation).
-- **Xử lý same-artist bias còn lại** (PhoBERT 48%, MERT 56%, mood): thêm **artist-diversity cap** trong `_fast_rank` cho similar-song (giới hạn N bài/nghệ sĩ trừ khi user chọn "Cùng nghệ sĩ").
+- **Xử lý same-artist bias còn lại** (PhoBERT 48%, MERT 56%, mood): artist-diversity cap tùy chọn trong `_fast_rank` (mặc định TẮT — sửa nguyên nhân, không chặn triệu chứng; không có khái niệm "chọn cùng nghệ sĩ" vì F4 đã bỏ).
 - **Đo:** backtest NDCG + một metric mới *"% same-artist trong top-K"* (mục tiêu giảm mạnh mà không hại relevance).
 - **Dữ liệu cần:** đã đủ (MERT, mood_tags, instrument_tags). Không cần co-listening.
 
@@ -344,4 +342,4 @@ MERT (768-dim, đã có file 16M, là *biểu diễn nội dung nhạc thật*) 
 
 ---
 
-*Plan này dựa trên ground-truth codebase (truy vết file:line) + nghiên cứu công khai đã kiểm chứng. Các đổi-AI (KG, MERT, reranker) cần đo bằng backtest harness sẵn có trước khi bật mặc định. Roadmap có thể song song hóa trong từng phase, nhưng nên giữ thứ tự phase vì có phụ thuộc (Phase 0 mở khóa phần còn lại; F4/F9 phụ thuộc F6).*
+*Plan này dựa trên ground-truth codebase (truy vết file:line) + nghiên cứu công khai đã kiểm chứng. Các đổi-AI (KG, MERT, reranker) cần đo bằng backtest harness sẵn có trước khi bật mặc định. Roadmap có thể song song hóa trong từng phase, nhưng nên giữ thứ tự phase vì có phụ thuộc (Phase 0 mở khóa phần còn lại).*
