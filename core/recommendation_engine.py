@@ -661,6 +661,37 @@ class MusicRecommender:
         return self._fast_rank(final_scores, top_k, diversity_penalty,
                                max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
 
+    def recommend_by_audio(self, song_id_or_name, top_k=DEFAULT_TOP_K):
+        """F7 — "Audio Radio": nearest neighbours by ACOUSTIC content alone.
+
+        Pure k-NN on MERT embeddings (Li et al. 2023) — timbre/production/sound —
+        independent of artist, lyrics, mood or metadata. This is the "tính nhạc"
+        signal in isolation, complementary to recommend_by_song's 7/8-signal
+        fusion. MERT rows are L2-normalised, so dot product == cosine similarity.
+        Returns a DataFrame (with original_index / similarity_score) or empty if
+        MERT is unavailable.
+        """
+        if self.mert_matrix is None:
+            return pd.DataFrame()
+
+        if isinstance(song_id_or_name, (int, np.integer)):
+            song_idx = int(song_id_or_name)
+        else:
+            mask = self.df['track_name'].str.contains(song_id_or_name, case=False, na=False)
+            if mask.sum() == 0:
+                return pd.DataFrame()
+            song_idx = int(mask.idxmax())
+        if not (0 <= song_idx < self.n_songs):
+            return pd.DataFrame()
+
+        sims = self.mert_matrix @ self.mert_matrix[song_idx]   # cosine (normalised)
+        sims[song_idx] = -1.0                                  # exclude the seed
+        top = np.argsort(sims)[::-1][:max(1, top_k)]
+        result = self.df.iloc[top].copy()
+        result['original_index'] = top
+        result['similarity_score'] = sims[top]
+        return result
+
     def recommend_by_image(self,
                           image_analysis: dict,
                           top_k=DEFAULT_TOP_K,

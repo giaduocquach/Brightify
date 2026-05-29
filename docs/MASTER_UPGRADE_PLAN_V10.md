@@ -171,8 +171,9 @@
 - **[Effort]** L.
 
 ### F7. MERT — mở rộng ứng dụng (xem mục 6.2)
-- **[AI]** Hiện chỉ dùng ở `recommend_by_song`. Mở sang: (a) KG content rebuild, (b) "Audio Radio" thuần chất âm, (c) bổ sung tín hiệu cho context/journey/color, (d) phát hiện duplicate/cover.
-- **[Effort]** M-L theo từng nhánh.
+- **[AI]** Hiện chỉ dùng ở `recommend_by_song`. Mở sang: (a) KG content rebuild ✅ (F6), (b) **"Audio Radio" thuần chất âm ✅ (2026-05-29)**, (c) bổ sung tín hiệu context/journey/color (chưa), (d) phát hiện duplicate/cover (chưa).
+- **[Đã làm — nhánh (b) Audio Radio]:** `recommend_by_audio(song)` = **k-NN thuần MERT** (cosine trên embedding đã L2-norm) → bài *giống âm sắc* bất kể tác giả/lyrics/mood. Endpoint `GET /api/song/{id}/audio-radio`; FE: mục context-menu **"🎧 Radio chất âm"** → `_startAudioRadio` nạp queue [seed + sound-alikes]. Đo: top-8 cosine 0.93–0.94, loại seed. *An toàn — chế độ opt-in mới, KHÔNG đổi trọng số reco mặc định nên không cần backtest gating.* Bổ trợ cho "Phát bài tương tự" (đa-tín-hiệu): radio chất âm là *thuần production/timbre*.
+- **[Effort]** M-L theo từng nhánh — (b) XONG; (c)/(d) còn lại (cần backtest nếu đổi default).
 
 ### F8. Discovery Dial (MMR/DPP) — ❌ BỎ (2026-05-29, quyết định user)
 - ~~map slider "Quen thuộc ⟷ Bất ngờ" → `DIVERSITY_LAMBDA`~~. Đã loại khỏi roadmap; plumbing dở đã revert. MMR vẫn chạy ngầm với `DIVERSITY_LAMBDA` cố định trong config.
@@ -232,7 +233,7 @@
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
 12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode · ✅ **F2.1** preview + human-preset + V-A→nâng cao · ✅ **F2.7** độ dài thích ứng + "tới đích rồi ở lại" · ✅ **F2.6** taxonomy MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment). Còn: **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
 13. **F3** ✅ LÕI: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (endpoint `/songs/search/unified` 3 matcher; đã sửa bug `/songs/search` không search lyrics). *Follow-up:* trang kết quả đầy đủ (Enter→play-all) rồi gỡ tab "Tìm theo cảm xúc".
-14. **F7**: MERT vào KG (đã ở #4), Audio Radio, bổ sung context/journey. *(M-L)*
+14. **F7** ✅ phần chính: MERT vào KG (F6) + **Audio Radio thuần MERT (2026-05-29)** — context-menu "🎧 Radio chất âm". Còn (c) bổ sung tín hiệu context/journey/color + (d) cover/dup-detection *(cần backtest nếu đổi default)*.
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
 
 ### 🟣 PHASE 4 — Khác biệt hóa & giữ chân

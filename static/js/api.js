@@ -39,6 +39,11 @@ async getRandomSongs(count = 10) {
         return this._get(`/api/song/${songId}`);
     },
 
+    // F7 — Audio Radio: pure-MERT sound-alikes
+    async getAudioRadio(songId, count = 20) {
+        return this._get(`/api/song/${songId}/audio-radio?count=${count}`);
+    },
+
     async getSimilarSongs(songId, count = 10) {
         return this._get(`/api/song/${songId}/similar?count=${count}`);
     },
