@@ -30,6 +30,11 @@ async getRandomSongs(count = 10) {
         return this._get(`/api/songs/search?q=${encodeURIComponent(query)}&limit=${limit}`);
     },
 
+    // F3 — layered unified search: { matches, related }
+    async searchUnified(query, matchLimit = 6, relatedLimit = 5) {
+        return this._get(`/api/songs/search/unified?q=${encodeURIComponent(query)}&match_limit=${matchLimit}&related_limit=${relatedLimit}`);
+    },
+
     async getSongDetails(songId) {
         return this._get(`/api/song/${songId}`);
     },

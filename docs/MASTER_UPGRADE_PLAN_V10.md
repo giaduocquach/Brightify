@@ -132,7 +132,9 @@
 - **Spotify Daylist UX** (Raw.Studio; UX Magazine): (1) **cover/màu gói tâm trạng TRƯỚC khi bấm play** → arc-preview của ta nên có *ảnh bìa động + dải màu* theo cung cảm xúc (canvas hue-gradient sẵn có tái dùng làm cover). (2) **Title + mô tả nổi bật** cho biết "vì sao/đang ở đâu" → đặt **tên journey thân thuộc, đổi theo ngữ cảnh** ("3am chữa lành", "Sáng cà phê tỉnh dần") thay nhãn V-A. (3) **Palette đổi dần theo tiến trình** → trong Journey Mode, màu player **chuyển dần** theo bước (thấy mình "đang đi"). (4) Nút hành động không-ma-sát + feedback.
 - **Tổng hợp → ưu tiên F2.2 (Journey Mode thấy-được-cung) + F2.1 (preview có cover/màu/tên)** là 2 đòn wow chính; thêm **F2.5** *(S)*: bản "đổi mood nhanh 5 phút". Nguồn liệt kê ở §8.
 
-### F3. Search HỢP NHẤT — "gì cũng tìm ra: tên · lyrics · vibe" (thanh search toàn cục)
+### F3. Search HỢP NHẤT — "gì cũng tìm ra: tên · lyrics · vibe" (thanh search toàn cục) — ✅ LÕI ĐÃ LÀM (2026-05-29)
+**Đã làm:** endpoint `/api/songs/search/unified` chạy 3 matcher → trả `{matches, related}`: (1) name/artist/album substring, (2) **lyrics-line substring** trên `plain_lyrics` (sửa bug `/songs/search` không search lời), (3) semantic `recommend_by_lyrics_keywords` cho "liên quan/cùng vibe" (đã trừ matches). FE: dropdown search toàn cục đổi sang `searchUnified` → render **2 nhóm "🎯 Khớp nhất" + "🔗 Liên quan · cùng vibe"** (match theo lời gắn tag "· lời"); placeholder mời cả 3 kiểu. Đo end-to-end: tên/câu-lyrics/mô-tả-vibe đều ra đúng, khớp-nhất nổi đầu. **Còn lại (follow-up):** Enter → *trang kết quả đầy đủ* (play-all) để thật sự thay tab "✨ Tìm theo cảm xúc" (dropdown 5–6 mục chưa thay được trải nghiệm "vibe → cả playlist"); **giữ tab lyrics tới lúc đó.**
+
 > **Cập nhật yêu cầu user (2026-05-29):** KHÔNG còn là "route sang 1 chế độ". Mục tiêu: **gõ gì cũng ra kết quả đúng**, và **kết quả khớp nhất luôn nằm trên cùng, bên dưới là bài tương đồng/liên quan**. Tức search hợp nhất 3 nguồn, xếp lớp — không bắt user chọn "tìm theo tên" hay "theo vibe".
 - **[AI]** Một ô search chạy **song song 3 matcher** rồi **trộn + xếp lớp**:
   1. **Tên/metadata** (track_name, artist, album) — khớp chính xác/substring.
@@ -229,7 +231,7 @@
 
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
 12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode · ✅ **F2.1** preview + human-preset + V-A→nâng cao · ✅ **F2.7** độ dài thích ứng + "tới đích rồi ở lại" · ✅ **F2.6** taxonomy MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment). Còn: **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
-13. **F3**: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (3 matcher trộn-xếp, xem §3/F3-CƠ-CHẾ; phải thêm lyrics-line matcher + sửa bug `/songs/search` không search lyrics). Xong thì gỡ tab "Tìm theo cảm xúc". *(M)*
+13. **F3** ✅ LÕI: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (endpoint `/songs/search/unified` 3 matcher; đã sửa bug `/songs/search` không search lyrics). *Follow-up:* trang kết quả đầy đủ (Enter→play-all) rồi gỡ tab "Tìm theo cảm xúc".
 14. **F7**: MERT vào KG (đã ở #4), Audio Radio, bổ sung context/journey. *(M-L)*
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
 
