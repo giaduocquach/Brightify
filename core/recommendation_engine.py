@@ -638,10 +638,13 @@ class MusicRecommender:
             )
             final_scores = base + (w[6] * mert_sim if use_mert and len(w) > 6 else 0)
 
-        # Pillar F — KG artist-graph proximity (lightweight cold-start signal)
-        if self.kg_matrix is not None:
+        # Pillar F — KG content-similarity proximity (musical-neighbourhood signal).
+        # KG v2 is content-based (MERT+mood+instrument+audio), NOT artist identity,
+        # so it no longer biases toward same-artist songs. Weight is configurable
+        # (replaces the old hardcoded +0.05 artist bonus); 0 disables the term.
+        if self.kg_matrix is not None and KG_SIM_WEIGHT:
             kg_sim = self.kg_matrix @ self.kg_matrix[song_idx]
-            final_scores += 0.05 * kg_sim
+            final_scores += KG_SIM_WEIGHT * kg_sim
 
         # Exclude reference song
         final_scores[song_idx] = -1
@@ -649,7 +652,14 @@ class MusicRecommender:
         # No RRF for recommend_by_song: the 7/8-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because
         # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
-        return self._fast_rank(final_scores, top_k, diversity_penalty)
+        # No imposed artist cap by default (MAX_PER_ARTIST_SIMILAR=0): the
+        # content-based KG + artist-agnostic fusion mean same-artist songs only
+        # surface when genuinely the most musically similar (e.g. a stylistically
+        # consistent artist) — which is correct, not a bug. Musical diversity is
+        # handled by MMR (de-dups near-identical results by sound, not by artist).
+        # max_per_artist stays an optional operator override only.
+        return self._fast_rank(final_scores, top_k, diversity_penalty,
+                               max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
 
     def recommend_by_image(self,
                           image_analysis: dict,
@@ -878,6 +888,23 @@ class MusicRecommender:
     # ========================================================================
     # Emotion Journey — Iso-Principle-based adaptive playlist
     # ========================================================================
+
+    def get_song_va(self, track_id):
+        """Resolve a track_id (or int index) to its (valence, arousal) tuple.
+
+        Used by F2 to auto-detect a journey's start point from the now-playing
+        song, so the user only picks the destination. Returns None if unknown.
+        """
+        idx = None
+        if isinstance(track_id, (int, np.integer)):
+            idx = int(track_id)
+        elif track_id is not None and 'track_id' in self.df.columns:
+            matches = self.df.index[self.df['track_id'] == str(track_id)].tolist()
+            if matches:
+                idx = int(matches[0])
+        if idx is None or not (0 <= idx < self.n_songs):
+            return None
+        return float(self.song_va[idx][0]), float(self.song_va[idx][1])
 
     def generate_emotion_journey(self, start_valence, start_arousal,
                                  end_valence, end_arousal,
@@ -1163,7 +1190,7 @@ class MusicRecommender:
     def smart_context_recommend(self, hour=None, day_of_week=None,
                                  activity=None, season=None, weather=None,
                                  user_history=None, user_liked=None,
-                                 count=15):
+                                 count=15, lat=None, lon=None):
         """
         Generate context-aware recommendations combining circadian rhythm,
         user taste profile, activity context, and seasonal mood.
@@ -1254,6 +1281,33 @@ class MusicRecommender:
             wm = weather_modifiers[weather]
             target_valence += wm.get('valence_shift', 0)
             target_arousal += wm.get('arousal_shift', 0)
+
+        # ── 3b. VN holiday + live weather (Pillar F / vn_context) ────
+        # Wires the Vietnamese holiday calendar (Tết, Trung Thu, Quốc Khánh…)
+        # and the live OpenWeatherMap shift into the target — local signals the
+        # circadian/season/activity model above does NOT cover. Time-of-day is
+        # skipped (use_time=False) because circadian already models the hour.
+        # Live weather is fetched only when no manual weather string was passed,
+        # to avoid double-counting. Whole block degrades silently on any error.
+        vn_label = None
+        vn_is_holiday = False
+        if ENABLE_VN_CONTEXT:
+            try:
+                from core.vn_context import get_context_shift
+                vc = get_context_shift(
+                    use_time=False,
+                    use_holiday=True,
+                    use_weather=(weather is None),
+                    lat=lat,
+                    lon=lon,
+                )
+                target_valence += vc["valence_shift"]
+                target_arousal += vc["arousal_shift"]
+                if vc["label"] and vc["label"] != "Bình thường":
+                    vn_label = vc["label"]
+                vn_is_holiday = vc["is_holiday"]
+            except Exception:
+                pass
 
         target_arousal = max(0.05, min(0.95, target_arousal))
         target_valence = max(0.05, min(0.95, target_valence))
@@ -1403,6 +1457,8 @@ class MusicRecommender:
             'activity': activity,
             'season': season,
             'weather': weather,
+            'vn_context_label': vn_label,   # e.g. "Tết Nguyên Đán · Thời tiết: nắng"
+            'is_holiday': vn_is_holiday,
             'target_valence': round(target_valence, 3),
             'target_arousal': round(target_arousal, 3),
             'has_user_profile': user_va_center is not None,
@@ -1446,7 +1502,30 @@ class MusicRecommender:
         fused = reciprocal_rank_fusion(rank_lists, k=RRF_K, weights=weights, top_n=n)
         return np.array(fused, dtype=np.int64)
 
-    def _fast_rank(self, scores, top_k, diversity_penalty, restrict_to=None):
+    def _cap_per_artist(self, indices, max_per_artist, top_k):
+        """Keep at most `max_per_artist` songs per artist, preserving the input
+        order, until `top_k` are collected. Works regardless of DIVERSITY_METHOD.
+        Backfills from the surplus if the cap leaves the list short."""
+        if self.artists is None or not max_per_artist:
+            return list(indices)[:top_k]
+        out, counts, seen = [], {}, set()
+        for idx in indices:
+            artist = self.artists[idx]
+            if artist and counts.get(artist, 0) >= max_per_artist:
+                continue
+            out.append(idx); seen.add(idx)
+            if artist:
+                counts[artist] = counts.get(artist, 0) + 1
+            if len(out) >= top_k:
+                return out
+        for idx in indices:  # backfill if cap left us short
+            if idx not in seen:
+                out.append(idx)
+                if len(out) >= top_k:
+                    break
+        return out
+
+    def _fast_rank(self, scores, top_k, diversity_penalty, restrict_to=None, max_per_artist=None):
         """
         Diversity-aware ranking. Dispatches to MMR, DPP, or greedy based on
         config.DIVERSITY_METHOD (default "mmr").
@@ -1458,6 +1537,10 @@ class MusicRecommender:
         restrict_to: optional array of candidate indices from RRF (Pillar C).
             When supplied, only those indices are considered; argsort runs on
             the restricted subset — O(|restrict_to|) instead of O(n_songs).
+        max_per_artist: optional hard cap on songs per artist in the result.
+            Applied in BOTH the MMR/DPP and greedy paths (MMR/DPP diversify by
+            embedding distance, not artist, so the cap is what actually limits
+            same-artist domination in recommend_by_song).
         """
         if restrict_to is not None and len(restrict_to) > 0:
             cand_arr = np.asarray(restrict_to, dtype=np.int64)
@@ -1480,15 +1563,19 @@ class MusicRecommender:
         if DIVERSITY_METHOD in ("mmr", "dpp") and self.embeddings_normalized is not None:
             from core.diversity import mmr_rerank, dpp_greedy_map
             candidates = top_indices.tolist()
+            # Over-fetch when an artist cap is set, so trimming still yields top_k.
+            fetch_k = top_k if not max_per_artist else min(top_k * 3, len(candidates))
             if DIVERSITY_METHOD == "mmr":
                 chosen = mmr_rerank(
                     candidates, scores, self.embeddings_normalized,
-                    top_k=top_k, lambda_=DIVERSITY_LAMBDA,
+                    top_k=fetch_k, lambda_=DIVERSITY_LAMBDA,
                 )
             else:
                 chosen = dpp_greedy_map(
-                    candidates, scores, self.embeddings_normalized, top_k=top_k,
+                    candidates, scores, self.embeddings_normalized, top_k=fetch_k,
                 )
+            if max_per_artist:
+                chosen = self._cap_per_artist(chosen, max_per_artist, top_k)
             indices = chosen
             final_scores_list = [float(scores[i]) for i in indices]
 
@@ -1507,6 +1594,8 @@ class MusicRecommender:
                     artist = self.artists[idx]
                     if artist:
                         count = selected_artists.get(artist, 0)
+                        if max_per_artist and count >= max_per_artist:
+                            continue
                         if count > 0:
                             score *= (1 - diversity_penalty) ** count
                             if score < MIN_SIMILARITY_THRESHOLD:

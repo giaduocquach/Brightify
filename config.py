@@ -256,10 +256,24 @@ RERANKER_TOP_K = 20      # Number of candidates to re-rank
 # ============================================================================
 # Pillar F — Cold-start: KG Embeddings + VN Holiday Context
 # ============================================================================
-# KG: bipartite SVD on artist-album-song graph (64-dim, TF-IDF weighted).
+# KG v2 (2026-05-29): CONTENT-similarity graph — k-NN on fused MERT + mood_tags
+# + instrument_tags + audio features, then SVD (64-dim). Replaces the old
+# artist-album bipartite graph, which injected same-artist bias into
+# recommend_by_song (pillar-f-xartist showed its gain collapsed on cross-artist
+# pairs). No artist/album edges. See docs/MASTER_UPGRADE_PLAN_V10.md §6.3.
 ENABLE_KG = os.environ.get("ENABLE_KG", "True") == "True"
 KG_EMBEDDINGS_FILE = "data/kg_embeddings.npy"
 KG_DIM = 64
+# Weight of the KG content signal in recommend_by_song fusion. Replaces the old
+# hardcoded +0.05 artist bonus; tunable/ablatable. 0 disables the term.
+KG_SIM_WEIGHT = float(os.environ.get("KG_SIM_WEIGHT", "0.08"))
+# Optional same-artist cap for similar-song results. DEFAULT 0 = NO CAP:
+# fix the *cause* (artist bias in the KG signal) not the *symptom*. With the
+# content-based KG, same-artist songs only rank high when they are genuinely the
+# most musically similar (e.g. an artist with a very consistent style) — capping
+# would discard correct results. Musical (not artist) diversity is handled by
+# MMR. Set >0 only if an operator explicitly wants a hard artist cap.
+MAX_PER_ARTIST_SIMILAR = int(os.environ.get("MAX_PER_ARTIST_SIMILAR", "0"))
 
 # Context: applies valence/arousal shifts based on VN holidays + time-of-day.
 ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "True") == "True"
@@ -267,9 +281,11 @@ ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "True") == "True"
 # Weather context — requires OpenWeatherMap free-tier key (1000 calls/day).
 # Set OWM_API_KEY env var or leave blank to silently skip weather shifts.
 OWM_API_KEY = os.environ.get("OWM_API_KEY", "")
-# Default location: Hồ Chí Minh City
-OWM_LAT = float(os.environ.get("OWM_LAT", "10.8231"))
-OWM_LON = float(os.environ.get("OWM_LON", "106.6297"))
+# Default location: Hà Nội (override per-deploy via OWM_LAT/OWM_LON env vars).
+# This is a fixed fallback — the user's real location is NOT auto-detected
+# (would need browser geolocation or IP lookup; not implemented yet).
+OWM_LAT = float(os.environ.get("OWM_LAT", "21.0278"))
+OWM_LON = float(os.environ.get("OWM_LON", "105.8342"))
 OWM_TIMEOUT_S = 2  # seconds — never block recommendation path
 
 # ============================================================================

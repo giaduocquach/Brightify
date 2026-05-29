@@ -86,7 +86,8 @@ def _get_weather_shift(lat: float, lon: float, api_key: str, timeout: int) -> Op
         import requests
         resp = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
-            params={"lat": lat, "lon": lon, "appid": api_key, "units": "metric"},
+            params={"lat": lat, "lon": lon, "appid": api_key,
+                    "units": "metric", "lang": "vi"},
             timeout=timeout,
         )
         if resp.status_code != 200:
@@ -145,6 +146,8 @@ def get_context_shift(
     use_time: bool = True,
     use_holiday: bool = True,
     use_weather: bool = True,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
 ) -> Dict:
     """Return combined valence/arousal shift for the current (or given) datetime.
 
@@ -186,9 +189,11 @@ def get_context_shift(
             import config as _cfg
             api_key = getattr(_cfg, "OWM_API_KEY", "")
             if api_key:
+                # Use the caller's live coordinates (browser geolocation) when
+                # provided; otherwise fall back to the configured default city.
                 w = _get_weather_shift(
-                    lat=getattr(_cfg, "OWM_LAT", 10.8231),
-                    lon=getattr(_cfg, "OWM_LON", 106.6297),
+                    lat=lat if lat is not None else getattr(_cfg, "OWM_LAT", 21.0278),
+                    lon=lon if lon is not None else getattr(_cfg, "OWM_LON", 105.8342),
                     api_key=api_key,
                     timeout=getattr(_cfg, "OWM_TIMEOUT_S", 2),
                 )

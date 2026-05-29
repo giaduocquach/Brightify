@@ -267,20 +267,35 @@ async def recommend_by_image(
 # ============================================================================
 
 class EmotionJourneyRequest(BaseModel):
-    start_valence: float = Field(..., ge=0.0, le=1.0)
-    start_arousal: float = Field(..., ge=0.0, le=1.0)
+    # Start V-A is optional: F2 auto-detects it from the now-playing song via
+    # start_track_id (user picks only the destination). Falls back to neutral.
+    start_valence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    start_arousal: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     end_valence: float = Field(..., ge=0.0, le=1.0)
     end_arousal: float = Field(..., ge=0.0, le=1.0)
     steps: int = Field(default=10, ge=6, le=15)
+    start_track_id: Optional[str] = None
 
 
 @router.post("/emotion-journey")
 async def emotion_journey(request: EmotionJourneyRequest):
-    """Generate an Iso-Principle emotion journey playlist from start → end mood."""
+    """Generate an Iso-Principle emotion journey playlist from start → end mood.
+
+    Start point precedence: explicit start_valence/arousal → now-playing song
+    (start_track_id) → neutral (0.5, 0.5).
+    """
     try:
+        sv, sa = request.start_valence, request.start_arousal
+        if (sv is None or sa is None) and request.start_track_id:
+            va = _recommender.get_song_va(request.start_track_id)
+            if va:
+                sv, sa = va
+        if sv is None or sa is None:
+            sv, sa = 0.5, 0.5
+
         result = _recommender.generate_emotion_journey(
-            start_valence=request.start_valence,
-            start_arousal=request.start_arousal,
+            start_valence=sv,
+            start_arousal=sa,
             end_valence=request.end_valence,
             end_arousal=request.end_arousal,
             steps=request.steps,
@@ -317,6 +332,10 @@ class ContextMixRequest(BaseModel):
     user_history: Optional[List[Dict[str, Any]]] = None
     user_liked: Optional[List[Dict[str, Any]]] = None
     count: int = Field(default=15, ge=5, le=30)
+    # Live coordinates from the browser (geolocation) for location-accurate
+    # weather. None → server falls back to the configured default city.
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lon: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
 
     @validator('activity')
     def validate_activity(cls, v):
@@ -354,6 +373,8 @@ async def context_mix(request: ContextMixRequest):
             user_history=request.user_history,
             user_liked=request.user_liked,
             count=request.count,
+            lat=request.lat,
+            lon=request.lon,
         )
 
         for song in result.get('songs', []):
