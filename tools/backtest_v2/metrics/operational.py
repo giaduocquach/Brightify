@@ -74,13 +74,6 @@ def measure_all_methods(catalog: Any, seed_indices: Sequence[int], n: int = 200)
         seeds, n=n,
     )
 
-    # recommend_by_mood (fixed set of moods)
-    moods = ['sad', 'happy', 'calm', 'energetic', 'melancholic', 'peaceful']
-    results['recommend_by_mood'] = latency_percentiles(
-        lambda m: rec.recommend_by_mood(m, top_k=10),
-        moods, n=n,
-    )
-
     # recommend_by_colors
     colors = ['#d2c317', '#4a90d9', '#c0392b', '#27ae60', '#8e44ad']
     results['recommend_by_colors'] = latency_percentiles(

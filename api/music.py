@@ -110,6 +110,19 @@ def _song_to_dict(row, idx):
     else:
         album_art_url = None
 
+    # Smart crossfade needs: tempo, energy, key, mode, mood_quadrant, duration_s,
+    # loudness_lufs (Phase 2), fade_out_cue_s/fade_in_cue_s/downbeat_times_json (Phase 3).
+    # Compute duration_s from various known column names (CSV uses track_duration_ms,
+    # DB model uses duration_ms, MP3 fallback is mp3_duration_s).
+    duration_s = None
+    for ms_col in ('duration_ms', 'track_duration_ms'):
+        val = row.get(ms_col)
+        if pd.notna(val) and val:
+            duration_s = float(val) / 1000.0
+            break
+    if duration_s is None and pd.notna(row.get('mp3_duration_s')):
+        duration_s = float(row.get('mp3_duration_s'))
+
     return {
         'song_index': int(idx),
         'track_id': track_id,
@@ -123,6 +136,14 @@ def _song_to_dict(row, idx):
         'arousal': _serialize(row.get('arousal')),
         'danceability': _serialize(row.get('danceability', 0.5)),
         'tempo': _serialize(row.get('tempo', 120)),
+        'key': _serialize(row.get('key')),
+        'mode': _serialize(row.get('mode')),
+        'loudness': _serialize(row.get('loudness')),
+        'loudness_lufs': _serialize(row.get('loudness_lufs')),
+        'duration_s': _serialize(duration_s),
+        'fade_out_cue_s': _serialize(row.get('fade_out_cue_s')),
+        'fade_in_cue_s': _serialize(row.get('fade_in_cue_s')),
+        'downbeat_times_json': row.get('downbeat_times_json') if pd.notna(row.get('downbeat_times_json')) else None,
         'timbre_bright': _serialize(row.get('timbre_bright')),
         'mood_quadrant': str(row.get('mood_quadrant', '')),
         'fused_emotion': str(row.get('fused_emotion', '')),
@@ -236,34 +257,6 @@ async def new_releases(count: int = Query(default=12, ge=1, le=50)):
     result = {"success": True, "songs": songs}
     await cache_set(cache_key, result, ttl=300)   # 5 min
     return result
-
-
-@router.get("/songs/by-mood/{mood}")
-async def songs_by_mood(mood: str, count: int = Query(default=20, ge=1, le=50)):
-    """Get songs filtered by mood quadrant"""
-    df = _recommender.df
-    
-    mood_map = {
-        'happy': 'Q1', 'excited': 'Q1',
-        'angry': 'Q2', 'tense': 'Q2', 'energetic': 'Q2',
-        'sad': 'Q3', 'melancholic': 'Q3',
-        'calm': 'Q4', 'peaceful': 'Q4', 'relaxed': 'Q4',
-    }
-    
-    quadrant = mood_map.get(mood.lower(), mood.upper())
-    
-    if 'mood_quadrant' in df.columns:
-        filtered = df[df['mood_quadrant'] == quadrant]
-        if len(filtered) == 0:
-            filtered = df[df['mood_quadrant'].str.contains(quadrant, case=False, na=False)]
-    else:
-        filtered = df
-    
-    if len(filtered) > count:
-        filtered = filtered.sample(n=count)
-    
-    songs = [_song_to_dict(row, idx) for idx, row in filtered.iterrows()]
-    return {"success": True, "songs": songs, "mood": mood, "quadrant": quadrant}
 
 
 @router.get("/songs/time-of-day")

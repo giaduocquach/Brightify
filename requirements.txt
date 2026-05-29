@@ -55,6 +55,7 @@ mutagen>=1.47.0
 # Audio Feature Extraction
 essentia-tensorflow>=2.1b6.dev1034
 librosa>=0.10.1
+pyloudnorm>=0.1.1  # ITU-R BS.1770 LUFS — Smart Crossfade Phase 2
 
 # Pillar C — Cross-encoder reranking (optional; required for ENABLE_RERANKER=True)
 sentence-transformers>=2.6.0

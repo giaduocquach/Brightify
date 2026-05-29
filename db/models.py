@@ -120,7 +120,12 @@ class Song(Base):
     energy = Column(Float)
     key = Column(SmallInteger)
     loudness = Column(Float)
+    loudness_lufs = Column(Float, nullable=True, comment="Integrated loudness in LUFS (ITU-R BS.1770) — Smart Crossfade")
     mode = Column(SmallInteger)
+    # Smart Crossfade Phase 3 — cue points + beat grid
+    fade_out_cue_s = Column(Float, nullable=True, comment="Outro start (s) — last structural boundary before silence")
+    fade_in_cue_s = Column(Float, nullable=True, comment="Intro end (s) — first structural boundary after silence")
+    downbeat_times_json = Column(Text, nullable=True, comment="JSON array of downbeat timestamps for beat-aligned mixing")
     speechiness = Column(Float)
     acousticness = Column(Float)
     instrumentalness = Column(Float)

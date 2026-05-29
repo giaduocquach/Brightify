@@ -259,7 +259,12 @@ def seed_songs(session, df, mood_map):
             energy=float(row["energy"]) if pd.notna(row.get("energy")) else None,
             key=int(row["key"]) if pd.notna(row.get("key")) else None,
             loudness=float(row["loudness"]) if pd.notna(row.get("loudness")) else None,
+            loudness_lufs=float(row["loudness_lufs"]) if pd.notna(row.get("loudness_lufs")) else None,
             mode=int(row["mode"]) if pd.notna(row.get("mode")) else None,
+            # Smart Crossfade Phase 3 — cue points + downbeats
+            fade_out_cue_s=float(row["fade_out_cue_s"]) if pd.notna(row.get("fade_out_cue_s")) else None,
+            fade_in_cue_s=float(row["fade_in_cue_s"]) if pd.notna(row.get("fade_in_cue_s")) else None,
+            downbeat_times_json=row.get("downbeat_times_json") if pd.notna(row.get("downbeat_times_json")) else None,
             speechiness=float(row["speechiness"]) if pd.notna(row.get("speechiness")) else None,
             acousticness=float(row["acousticness"]) if pd.notna(row.get("acousticness")) else None,
             instrumentalness=float(row["instrumentalness"]) if pd.notna(row.get("instrumentalness")) else None,

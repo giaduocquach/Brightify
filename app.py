@@ -45,6 +45,44 @@ def init_recommender():
     global recommender
     if recommender is None:
         recommender = get_recommender()
+        _hydrate_crossfade_columns(recommender)
+
+
+def _hydrate_crossfade_columns(rec):
+    """Merge Smart Crossfade DB columns (loudness_lufs + cue points + downbeats)
+    into the recommender's in-memory dataframe. The dataframe is sourced from CSV
+    which doesn't include these later-added columns, so we lazy-join from DB.
+
+    Idempotent and best-effort — if DB unavailable, falls back silently and
+    planCrossfade graceful defaults kick in.
+    """
+    if rec is None or rec.df is None:
+        return
+    crossfade_cols = ('loudness_lufs', 'fade_out_cue_s', 'fade_in_cue_s', 'downbeat_times_json')
+    try:
+        from db.engine import engine
+        from sqlalchemy import text
+        import pandas as _pd
+        with engine.connect() as conn:
+            db_df = _pd.read_sql(
+                text("""
+                    SELECT track_id, loudness_lufs, fade_out_cue_s, fade_in_cue_s, downbeat_times_json
+                    FROM songs
+                """),
+                conn,
+            )
+        if db_df.empty or 'track_id' not in rec.df.columns:
+            return
+        # Drop any existing values for these columns in df, then merge from DB
+        for col in crossfade_cols:
+            if col in rec.df.columns:
+                rec.df = rec.df.drop(columns=[col])
+        rec.df = rec.df.merge(db_df, on='track_id', how='left')
+        n_lufs = int(rec.df['loudness_lufs'].notna().sum())
+        n_cue = int(rec.df['fade_out_cue_s'].notna().sum())
+        logger.info(f"[crossfade] Hydrated DB columns: LUFS={n_lufs}, cue_points={n_cue}")
+    except Exception as e:
+        logger.warning(f"[crossfade] DB hydration failed (using CSV defaults): {e}")
 
 
 def init_image_analyzer():

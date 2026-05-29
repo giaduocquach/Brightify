@@ -3,6 +3,185 @@
  * HTML5 Audio with visualizer, radio mode, sleep timer, queue management
  */
 
+// ═════════════════════════════════════════════════════════════════════════
+// SMART CROSSFADE POLICY (Phase 1+2+3)
+// Research: Bittner 2017 (ISMIR), Vande Veire & De Bie 2018, Camelot Wheel,
+//           ITU-R BS.1770 (LUFS), Zehren 2020 (cue points)
+// ═════════════════════════════════════════════════════════════════════════
+
+// Camelot Wheel: (key 0-11, mode 0/1) → {n: 1-12, letter: 'A'|'B'}
+// Map produced from circle-of-fifths. Major=B, Minor=A.
+const CAMELOT_MAP = {
+    // Major (mode=1)
+    '0,1':  {n: 8,  letter: 'B'},   // C  major
+    '1,1':  {n: 3,  letter: 'B'},   // C# major
+    '2,1':  {n: 10, letter: 'B'},   // D  major
+    '3,1':  {n: 5,  letter: 'B'},   // D# / Eb major
+    '4,1':  {n: 12, letter: 'B'},   // E  major
+    '5,1':  {n: 7,  letter: 'B'},   // F  major
+    '6,1':  {n: 2,  letter: 'B'},   // F# major
+    '7,1':  {n: 9,  letter: 'B'},   // G  major
+    '8,1':  {n: 4,  letter: 'B'},   // G# / Ab major
+    '9,1':  {n: 11, letter: 'B'},   // A  major
+    '10,1': {n: 6,  letter: 'B'},   // A# / Bb major
+    '11,1': {n: 1,  letter: 'B'},   // B  major
+    // Minor (mode=0)
+    '0,0':  {n: 5,  letter: 'A'},   // C  minor
+    '1,0':  {n: 12, letter: 'A'},   // C# minor
+    '2,0':  {n: 7,  letter: 'A'},   // D  minor
+    '3,0':  {n: 2,  letter: 'A'},   // D# / Eb minor
+    '4,0':  {n: 9,  letter: 'A'},   // E  minor
+    '5,0':  {n: 4,  letter: 'A'},   // F  minor
+    '6,0':  {n: 11, letter: 'A'},   // F# minor
+    '7,0':  {n: 6,  letter: 'A'},   // G  minor
+    '8,0':  {n: 1,  letter: 'A'},   // G# / Ab minor
+    '9,0':  {n: 8,  letter: 'A'},   // A  minor
+    '10,0': {n: 3,  letter: 'A'},   // A# / Bb minor
+    '11,0': {n: 10, letter: 'A'},   // B  minor
+};
+
+function toCamelot(key, mode) {
+    return CAMELOT_MAP[`${key},${mode}`] || { n: 1, letter: 'A' };
+}
+
+function camelotCompatible(keyA, modeA, keyB, modeB) {
+    const camA = toCamelot(keyA, modeA);
+    const camB = toCamelot(keyB, modeB);
+    if (camA.n === camB.n && camA.letter === camB.letter) return 1.0;   // identical key
+    if (camA.n === camB.n) return 0.8;                                   // mode flip (relative major↔minor)
+    if (camA.letter === camB.letter) {
+        const diff = Math.abs(camA.n - camB.n);
+        if (diff === 1 || diff === 11) return 0.7;                       // adjacent same letter (+wrap 12↔1)
+    }
+    return 0.4;                                                          // incompatible
+}
+
+function dbToLin(db) {
+    return Math.pow(10, db / 20);
+}
+
+const CROSSFADE_TARGET_LUFS = -14;   // Spotify standard
+const CROSSFADE_DURATION_MIN = 2.0;
+const CROSSFADE_DURATION_MAX = 12.0;
+
+/**
+ * Compute a complete crossfade plan from track features.
+ *
+ * @param {Object} trackA - Current track (needs tempo, energy, key, mode, mood_quadrant,
+ *                          duration_s; optional: loudness_lufs, fade_out_cue_s, downbeat_times_json)
+ * @param {Object} trackB - Next track (same shape as trackA, optional fade_in_cue_s)
+ * @param {number} userBaseVolume - User's current volume 0..1
+ * @returns {{duration_s, fadeOutStartAt_s, fadeInStartAt_s, gainA, gainB, curve, debug}}
+ */
+function planCrossfade(trackA, trackB, userBaseVolume) {
+    // Safe defaults nếu thiếu data — never crash, but never assume "perfect match"
+    // when data is absent (would lead to over-optimistic 10s smooth blend on unknown pairs).
+    const Atempo  = Number.isFinite(trackA?.tempo) ? trackA.tempo : 120;
+    const Btempo  = Number.isFinite(trackB?.tempo) ? trackB.tempo : 120;
+    const Aenergy = Number.isFinite(trackA?.energy) ? trackA.energy : 0.5;
+    const Benergy = Number.isFinite(trackB?.energy) ? trackB.energy : 0.5;
+    const AdurS   = Number.isFinite(trackA?.duration_s) ? trackA.duration_s : 180;
+    const BdurS   = Number.isFinite(trackB?.duration_s) ? trackB.duration_s : 180;
+
+    // Track which features actually exist (without defaults) so we don't claim "same key"
+    // when in reality both are just falling back to "key=0 major".
+    const moodKnown = !!trackA?.mood_quadrant && !!trackB?.mood_quadrant;
+    const keyKnown  = Number.isFinite(trackA?.key) && Number.isFinite(trackB?.key)
+                   && Number.isFinite(trackA?.mode) && Number.isFinite(trackB?.mode);
+
+    // 1. Feature deltas
+    const dTempo   = Math.abs(Atempo - Btempo) / Math.max(Atempo, 1);
+    const dEnergy  = Math.abs(Aenergy - Benergy);
+    const sameQuad = moodKnown && trackA.mood_quadrant === trackB.mood_quadrant;
+    const keyCompat = keyKnown
+        ? camelotCompatible(trackA.key, trackA.mode, trackB.key, trackB.mode)
+        : 0.4;   // unknown key → treat as incompatible (safe)
+
+    // 2. Duration policy (Bittner 2017 + Spotify defaults)
+    let duration = 6.0;   // base
+    if (sameQuad && dTempo < 0.06 && keyCompat >= 0.7) duration = 10.0;   // smooth blend
+    if (dTempo > 0.10 || dEnergy > 0.4) duration = 3.0;                   // fast cut
+    if (Aenergy > 0.75 && Benergy > 0.75) duration = 8.0;                 // EDM pair
+    // Short-track safety: ensure we don't crossfade longer than 30% of track A
+    if (AdurS > 0) duration = Math.min(duration, AdurS * 0.3);
+    duration = Math.max(CROSSFADE_DURATION_MIN, Math.min(CROSSFADE_DURATION_MAX, duration));
+
+    // 3. Cue points (Zehren 2020 / Foote 2000 — fall back to heuristic)
+    const fadeOutStart = Number.isFinite(trackA?.fade_out_cue_s)
+        ? trackA.fade_out_cue_s
+        : Math.max(0, AdurS - duration - 5);
+    let fadeInStart = Number.isFinite(trackB?.fade_in_cue_s)
+        ? trackB.fade_in_cue_s
+        : (BdurS > 45 ? 10 : 0);
+
+    // 3b. Beat-align for danceable pairs (Phase 3)
+    const danceableA = Number.isFinite(trackA?.danceability) && trackA.danceability > 0.7;
+    const danceableB = Number.isFinite(trackB?.danceability) && trackB.danceability > 0.7;
+    if (danceableA && danceableB && dTempo < 0.08 && trackB?.downbeat_times_json) {
+        try {
+            const downbeats = typeof trackB.downbeat_times_json === 'string'
+                ? JSON.parse(trackB.downbeat_times_json)
+                : trackB.downbeat_times_json;
+            if (Array.isArray(downbeats) && downbeats.length > 0) {
+                const snapTo = downbeats.find(t => t >= fadeInStart);
+                if (Number.isFinite(snapTo)) fadeInStart = snapTo;
+            }
+        } catch (_e) {
+            // ignore invalid downbeat data
+        }
+    }
+
+    // 4. Loudness-matched gains (ITU-R BS.1770 / EBU R128)
+    const hasLUFS = Number.isFinite(trackA?.loudness_lufs) && Number.isFinite(trackB?.loudness_lufs);
+    const clamp = v => Math.min(1.0, Math.max(0, v));
+    const gainA = hasLUFS
+        ? clamp(userBaseVolume * dbToLin(CROSSFADE_TARGET_LUFS - trackA.loudness_lufs))
+        : userBaseVolume;
+    const gainB = hasLUFS
+        ? clamp(userBaseVolume * dbToLin(CROSSFADE_TARGET_LUFS - trackB.loudness_lufs))
+        : userBaseVolume;
+
+    // 5. Curve choice (Audacity / KVR consensus)
+    // Linear when tracks are highly correlated (same quad + key + tempo) → softer cancellation
+    // Equal-power otherwise → constant total perceived loudness for uncorrelated signals
+    const correlated = sameQuad && dTempo < 0.03 && keyCompat === 1.0;
+    const curve = correlated ? 'linear' : 'equal-power';
+
+    const plan = {
+        duration_s: duration,
+        fadeOutStartAt_s: fadeOutStart,
+        fadeInStartAt_s: fadeInStart,
+        gainA, gainB,
+        curve,
+        debug: { dTempo, dEnergy, sameQuad, keyCompat, hasLUFS, danceablePair: danceableA && danceableB },
+    };
+
+    // Optional debug log (gate behind localStorage flag)
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('bf_crossfade_debug') === 'true') {
+        console.log('[crossfade]', {
+            A: trackA?.track_name || '(?)',
+            B: trackB?.track_name || '(?)',
+            dTempo: dTempo.toFixed(3),
+            dEnergy: dEnergy.toFixed(3),
+            sameQuad,
+            keyCompat,
+            duration_s: duration.toFixed(2),
+            curve,
+            gainA: gainA.toFixed(2),
+            gainB: gainB.toFixed(2),
+            hasLUFS,
+            danceablePair: danceableA && danceableB,
+        });
+    }
+
+    return plan;
+}
+
+// Export for tests (browser global)
+if (typeof window !== 'undefined') {
+    window._smartCrossfade = { planCrossfade, camelotCompatible, toCamelot, dbToLin, CAMELOT_MAP };
+}
+
 class MusicPlayer {
     constructor() {
         // Dual audio elements for seamless crossfade
@@ -358,18 +537,39 @@ class MusicPlayer {
         this.isMuted = !this.isMuted;
         if (this.isMuted) {
             this._prevVolume = this.volume;
-            this.audio.volume = 0;
+            if (this._gainNodeA && this._gainNodeB) {
+                this._gainNodeA.gain.value = 0;
+                this._gainNodeB.gain.value = 0;
+            } else {
+                this.audio.volume = 0;
+            }
         } else {
-            this.audio.volume = this._prevVolume;
             this.volume = this._prevVolume;
+            if (this._gainNodeA && this._gainNodeB) {
+                // Re-apply LUFS gain via _applyLufsGain (handles both paths)
+                const song = this.queue[this.currentIndex];
+                if (song) this._applyLufsGain(song);
+            } else {
+                this.audio.volume = this._prevVolume;
+            }
         }
         this._updateVolumeUI();
     }
 
     setVolume(v) {
         this.volume = Math.max(0, Math.min(1, v));
-        this.audio.volume = this.volume;
         this.isMuted = false;
+        // Smart Crossfade Phase 2: route through GainNode (LUFS-aware) when available
+        if (this._gainNodeA && this._gainNodeB) {
+            const song = this.queue[this.currentIndex];
+            if (song) this._applyLufsGain(song);
+            else {
+                const active = (this.audio === this._audioA) ? this._gainNodeA : this._gainNodeB;
+                if (active) active.gain.value = this.volume;
+            }
+        } else {
+            this.audio.volume = this.volume;
+        }
         localStorage.setItem('bf_volume', this.volume);
         this._updateVolumeUI();
     }
@@ -449,9 +649,22 @@ class MusicPlayer {
             this._analyser.smoothingTimeConstant = 0.82;
             this._sourceA = this._audioCtx.createMediaElementSource(this._audioA);
             this._sourceB = this._audioCtx.createMediaElementSource(this._audioB);
-            this._sourceA.connect(this._analyser);
-            this._sourceB.connect(this._analyser);
+            // Smart Crossfade Phase 2: GainNodes between source and analyser
+            // Chain: source → gainNode → analyser → destination
+            // Allows LUFS-normalized per-track gain that survives crossfades cleanly.
+            this._gainNodeA = this._audioCtx.createGain();
+            this._gainNodeB = this._audioCtx.createGain();
+            this._gainNodeA.gain.value = this.volume;
+            this._gainNodeB.gain.value = this.volume;
+            this._sourceA.connect(this._gainNodeA).connect(this._analyser);
+            this._sourceB.connect(this._gainNodeB).connect(this._analyser);
             this._analyser.connect(this._audioCtx.destination);
+            // HTMLAudio elements should now be at 1.0 (gain handled downstream)
+            this._audioA.volume = 1.0;
+            this._audioB.volume = 1.0;
+            // Apply LUFS to currently playing song, if any
+            const curSong = this.queue[this.currentIndex];
+            if (curSong) this._applyLufsGain(curSong);
             this._dataArray = new Uint8Array(this._analyser.frequencyBinCount);
             // Smooth bar heights for lerping
             this._barSmooth = new Float32Array(16).fill(0);
@@ -693,13 +906,29 @@ class MusicPlayer {
         if (thumb) thumb.style.left = `${pct}%`;
         if (cur) cur.textContent = this._formatTime(currentTime);
 
-        // Crossfade: Start dual fade near end — trigger earlier for smooth overlap
-        // Cut the last 5s of the current song by triggering crossfade duration + 5s before end
-        if (window.crossfade?.enabled && duration > 15) {
+        // Crossfade trigger: in smart mode we peek the next track to compute
+        // the plan and trigger fade exactly when the planned window starts.
+        // Legacy mode (smart=false) keeps fixed `duration + 5s` heuristic.
+        if (window.crossfade?.enabled && duration > 15 && !this._crossfading) {
             const remaining = duration - currentTime;
-            const crossfadeDuration = window.crossfade.duration || 15;
-            const triggerAt = crossfadeDuration + 5; // start crossfade 5s before fade would normally begin
-            if (remaining <= triggerAt && remaining > 0.3 && !this._crossfading) {
+            const smart = window.crossfade?.smart !== false;
+            let triggerAt;
+            if (smart) {
+                const nextIdx = this._getNextIndex();
+                const nextSong = (nextIdx >= 0 && nextIdx !== this.currentIndex)
+                    ? this.queue[nextIdx] : null;
+                const currentSong = this.queue[this.currentIndex];
+                if (nextSong && currentSong) {
+                    const plan = planCrossfade(currentSong, nextSong, this.volume);
+                    triggerAt = plan.duration_s + 0.5;   // 0.5s safety margin
+                } else {
+                    triggerAt = 6.5;   // no next song info → default 6s + 0.5s
+                }
+            } else {
+                const crossfadeDuration = window.crossfade.duration || 15;
+                triggerAt = crossfadeDuration + 5;
+            }
+            if (remaining <= triggerAt && remaining > 0.3) {
                 this._startCrossfade();
             }
         }
@@ -708,6 +937,35 @@ class MusicPlayer {
     _onLoaded() {
         const total = document.getElementById('time-total');
         if (total) total.textContent = this._formatTime(this.audio.duration);
+        // Smart Crossfade Phase 2: re-apply LUFS-matched gain when track metadata
+        // becomes available (track switch path that doesn't go through crossfade).
+        const song = this.queue[this.currentIndex];
+        if (song) this._applyLufsGain(song);
+    }
+
+    /**
+     * Smart Crossfade Phase 2: pre-scale active track to match -14 LUFS target.
+     * Falls back to plain `this.volume` if LUFS data isn't available for the song
+     * or if Web Audio GainNodes haven't been initialised yet (no-op).
+     */
+    _applyLufsGain(song) {
+        if (!this._gainNodeA || !this._gainNodeB) return;
+        const activeGain = (this.audio === this._audioA) ? this._gainNodeA : this._gainNodeB;
+        if (!activeGain) return;
+
+        const lufs = (song && Number.isFinite(song.loudness_lufs))
+            ? song.loudness_lufs : null;
+        let gainVal;
+        if (lufs === null) {
+            gainVal = this.volume;   // no LUFS data → behave like before
+        } else {
+            const TARGET = -14;   // Spotify reference
+            // gain_lin = 10^((TARGET - measured) / 20)
+            gainVal = this.volume * Math.pow(10, (TARGET - lufs) / 20);
+            // Clamp to [0, 1.0] — never amplify above unity (would risk clipping)
+            gainVal = Math.min(1.0, Math.max(0, gainVal));
+        }
+        activeGain.gain.value = gainVal;
     }
 
     _onPlay() {
@@ -1073,24 +1331,45 @@ class MusicPlayer {
         const nextIdx = this._getNextIndex();
         if (nextIdx < 0 || nextIdx === this.currentIndex) return;
         const nextSong = this.queue[nextIdx];
+        const currentSong = this.queue[this.currentIndex];
         if (!nextSong?.has_audio || !nextSong?.audio_url) return;
+
+        // ── SMART POLICY: decide all crossfade params ──
+        // Falls back to legacy 15s fixed equal-power when smart=false
+        const smart = window.crossfade?.smart !== false;
+        const plan = smart
+            ? planCrossfade(currentSong, nextSong, this.volume)
+            : {
+                duration_s: window.crossfade?.duration || 15,
+                fadeOutStartAt_s: null,
+                fadeInStartAt_s: 10,   // legacy SKIP_INTRO
+                gainA: this.volume,
+                gainB: this.volume,
+                curve: 'equal-power',
+                debug: { legacy: true },
+            };
 
         this._crossfading = true;
         this._crossfadeNextIdx = nextIdx;
-
-        // Skip intro seconds on the next track to avoid silence/intro jingles
-        const SKIP_INTRO = 10; // seconds to skip at the beginning
+        this._currentCrossfadePlan = plan;   // for completeCrossfade reset
 
         // Load next track on inactive audio element
         this._audioInactive.src = nextSong.audio_url;
+        // Reset inactive element's HTMLAudio volume to neutral
+        // (real volume controlled by gainB below — or GainNode in Phase 2)
         this._audioInactive.volume = 0;
 
-        // Wait for metadata so we can safely seek past the intro
+        // Wait for metadata so we can safely seek past the intro / to cue point
         const onReady = () => {
             this._audioInactive.removeEventListener('loadedmetadata', onReady);
-            // Only skip if track is long enough (> 45s)
-            if (this._audioInactive.duration > 45) {
-                this._audioInactive.currentTime = SKIP_INTRO;
+            const skipTo = Number.isFinite(plan.fadeInStartAt_s) ? plan.fadeInStartAt_s : 0;
+            // Only seek if track is long enough to skip safely
+            if (this._audioInactive.duration > skipTo + 10) {
+                try {
+                    this._audioInactive.currentTime = skipTo;
+                } catch (_e) {
+                    // some browsers throw if seek > duration; ignore
+                }
             }
         };
         this._audioInactive.addEventListener('loadedmetadata', onReady);
@@ -1098,33 +1377,59 @@ class MusicPlayer {
         if (window.playbackSpeed) this._audioInactive.playbackRate = window.playbackSpeed.current;
         this._audioInactive.play().catch(() => {});
 
-        // Equal-power crossfade using requestAnimationFrame + cos/sin curves
-        // This gives constant perceived loudness throughout the transition
-        const duration = (window.crossfade?.duration || 15) * 1000;
-        const startVol = this.audio.volume;
-        const targetVol = this.volume;
+        // RAF fade loop — supports linear AND equal-power curves
+        const duration_ms = Math.max(100, plan.duration_s * 1000);
         const startTime = performance.now();
+        const halfPi = Math.PI / 2;
 
         if (this._crossfadeRaf) cancelAnimationFrame(this._crossfadeRaf);
 
+        // Pick the right gain control:
+        // - If Web Audio GainNodes available (Phase 2 path) → use those for cleaner gain
+        // - Otherwise fall back to HTMLAudioElement.volume
+        const useGainNodes = !!(this._gainNodeA && this._gainNodeB);
+        const gainNodeActive = useGainNodes
+            ? (this.audio === this._audioA ? this._gainNodeA : this._gainNodeB)
+            : null;
+        const gainNodeInactive = useGainNodes
+            ? (this._audioInactive === this._audioA ? this._gainNodeA : this._gainNodeB)
+            : null;
+
+        // Make sure the HTMLAudio elements are at 1.0 if using GainNode (gain happens downstream)
+        if (useGainNodes) {
+            this.audio.volume = 1.0;
+            this._audioInactive.volume = 1.0;
+        }
+
         const fadeStep = (now) => {
             const elapsed = now - startTime;
-            const p = Math.min(1, elapsed / duration);
+            const p = Math.min(1, elapsed / duration_ms);
 
-            // Equal-power crossfade: cos/sin curves maintain constant total power
-            // cos(0)=1→cos(π/2)=0 for fade-out, sin(0)=0→sin(π/2)=1 for fade-in
-            const halfPi = Math.PI / 2;
-            const fadeOutGain = Math.cos(p * halfPi);
-            const fadeInGain = Math.sin(p * halfPi);
+            let fadeOutMult, fadeInMult;
+            if (plan.curve === 'linear') {
+                fadeOutMult = 1 - p;
+                fadeInMult  = p;
+            } else {
+                // Equal-power cos/sin (constant total perceived loudness)
+                fadeOutMult = Math.cos(p * halfPi);
+                fadeInMult  = Math.sin(p * halfPi);
+            }
 
-            this.audio.volume = Math.max(0, Math.min(1, startVol * fadeOutGain));
-            this._audioInactive.volume = Math.max(0, Math.min(1, targetVol * fadeInGain));
+            const valOut = Math.max(0, Math.min(1, plan.gainA * fadeOutMult));
+            const valIn  = Math.max(0, Math.min(1, plan.gainB * fadeInMult));
+
+            if (useGainNodes) {
+                gainNodeActive.gain.value   = valOut;
+                gainNodeInactive.gain.value = valIn;
+            } else {
+                this.audio.volume          = valOut;
+                this._audioInactive.volume = valIn;
+            }
 
             if (p < 1 && this._crossfading) {
                 this._crossfadeRaf = requestAnimationFrame(fadeStep);
             } else {
                 this._crossfadeRaf = null;
-                // If the old track hasn't ended yet, complete crossfade now
                 if (this._crossfading) {
                     this._completeCrossfade();
                 }
@@ -1161,7 +1466,22 @@ class MusicPlayer {
 
         // Update state
         this.currentIndex = nextIdx;
-        this.audio.volume = this.volume;
+
+        // Apply LUFS-normalized gain to the now-active track
+        // (uses GainNode if available, falls back to HTMLAudio volume)
+        const newSong = this.queue[nextIdx];
+        if (this._gainNodeA && this._gainNodeB) {
+            // Reset old (inactive) gain to a clean state for next crossfade
+            const oldGainNode = (oldAudio === this._audioA) ? this._gainNodeA : this._gainNodeB;
+            if (oldGainNode) oldGainNode.gain.value = this.volume;
+            // Apply LUFS to active
+            this._applyLufsGain(newSong);
+            // HTMLAudio volumes stay at 1.0 when using GainNodes
+            this.audio.volume = 1.0;
+        } else {
+            this.audio.volume = this.volume;
+        }
+        this._currentCrossfadePlan = null;
 
         // CRITICAL: Restore play state & time display
         // These events were missed because they fired while audio was _audioInactive
@@ -1204,6 +1524,7 @@ class MusicPlayer {
         if (!this._crossfading) return;
         this._crossfading = false;
         this._crossfadeNextIdx = -1;
+        this._currentCrossfadePlan = null;
         if (this._crossfadeInterval) {
             clearInterval(this._crossfadeInterval);
             this._crossfadeInterval = null;
@@ -1214,7 +1535,15 @@ class MusicPlayer {
         }
         this._audioInactive.pause();
         this._audioInactive.src = '';
-        this.audio.volume = this.volume;
+        // Reset gain on the inactive element so a future crossfade starts clean
+        if (this._gainNodeA && this._gainNodeB) {
+            const inactiveGain = (this._audioInactive === this._audioA) ? this._gainNodeA : this._gainNodeB;
+            if (inactiveGain) inactiveGain.gain.value = this.volume;
+            // Active gain unchanged — current track keeps its LUFS-normalized level
+            this.audio.volume = 1.0;
+        } else {
+            this.audio.volume = this.volume;
+        }
     }
 
     _addToHistory(song) {

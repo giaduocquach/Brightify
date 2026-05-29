@@ -18,11 +18,7 @@ const API = {
         return this._get(`/api/songs/new-releases?count=${count}`);
     },
 
-    async getSongsByMood(mood, count = 20) {
-        return this._get(`/api/songs/by-mood/${encodeURIComponent(mood)}?count=${count}`);
-    },
-
-    async getRandomSongs(count = 10) {
+async getRandomSongs(count = 10) {
         return this._get(`/api/songs/random?count=${count}`);
     },
 
@@ -64,12 +60,6 @@ const API = {
     async recommendByColor(colors, topK = 10, diversityPenalty = 0.15) {
         return this._post('/api/recommend/color', {
             colors, top_k: topK, diversity_penalty: diversityPenalty,
-        });
-    },
-
-    async recommendByMood(mood, topK = 10) {
-        return this._post('/api/recommend/mood', {
-            mood, top_k: topK,
         });
     },
 
@@ -142,14 +132,6 @@ const API = {
             user_history: userHistory || null,
             user_liked: userLiked || null,
             count: count || 15,
-        });
-    },
-
-    // ── Musical DNA ─────────────────────────────────────────────────────
-    async getMusicalDNA({ userLiked, userHistory } = {}) {
-        return this._post('/api/recommend/musical-dna', {
-            user_liked: userLiked || null,
-            user_history: userHistory || null,
         });
     },
 

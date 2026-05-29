@@ -304,6 +304,36 @@ def _load_audio_safe(mp3_path: Path) -> np.ndarray | None:
             pass
 
 
+# ── LUFS measurement (ITU-R BS.1770 / EBU R128) ──────────────────────────────
+
+def measure_lufs(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> float | None:
+    """Integrated loudness in LUFS per ITU-R BS.1770-4.
+
+    Used by Smart Crossfade Phase 2 to LUFS-normalize playback across tracks.
+    Returns None if measurement fails or value is outside the plausible range
+    (audio shorter than ~3s, complete silence, or non-finite output).
+    Target reference for normalization is -14 LUFS (Spotify standard).
+    """
+    try:
+        import pyloudnorm as pyln
+    except ImportError:
+        log.warning("pyloudnorm not installed — LUFS measurement skipped")
+        return None
+    try:
+        # BS.1770 requires audio >= ~0.4s (a single integration block).
+        # pyloudnorm needs at least 1 block, so guard against very short clips.
+        if audio is None or len(audio) < int(0.5 * sample_rate):
+            return None
+        meter = pyln.Meter(sample_rate)
+        loudness = meter.integrated_loudness(audio)
+        if not np.isfinite(loudness) or loudness < -70 or loudness > 0:
+            return None
+        return round(float(loudness), 2)
+    except Exception as e:
+        log.debug(f"  LUFS measure failed: {e}")
+        return None
+
+
 # ── Essentia extraction (DSP + pre-trained TF models) ────────────────────────
 
 def _extract_essentia_dsp(audio: np.ndarray) -> dict | None:
@@ -345,10 +375,14 @@ def _extract_essentia_dsp(audio: np.ndarray) -> dict | None:
         # Beat-based time signature estimation
         time_signature = _estimate_time_signature(beats_intervals, bpm)
 
+        # LUFS (ITU-R BS.1770) for Smart Crossfade — optional, returns None on failure
+        loudness_lufs = measure_lufs(audio, SAMPLE_RATE)
+
         return {
             "energy": round(float(energy_norm), 4),
             "key": int(key_int),
             "loudness": round(float(loudness_db), 2),
+            "loudness_lufs": loudness_lufs,
             "mode": int(mode_int),
             "liveness": round(float(liveness), 4),
             "tempo": round(float(bpm), 2),
@@ -577,10 +611,14 @@ def _extract_librosa_dsp(audio: np.ndarray) -> dict | None:
         spec_flux = librosa.onset.onset_strength(y=y, sr=sr)
         liveness = float(np.clip(np.std(spec_flux) / 3.0, 0, 1))
 
+        # LUFS (ITU-R BS.1770) for Smart Crossfade
+        loudness_lufs = measure_lufs(audio, SAMPLE_RATE)
+
         return {
             "energy": round(float(energy_norm), 4),
             "key": int(key_int),
             "loudness": round(float(loudness_db), 2),
+            "loudness_lufs": loudness_lufs,
             "mode": int(mode_int),
             "liveness": round(float(liveness), 4),
             "tempo": round(float(tempo), 2),
@@ -669,7 +707,74 @@ def extract_features_for_track(mp3_path: Path) -> dict | None:
     if tf_features:
         features["audio_feature_source"] = f"{dsp_source}+tf"
 
+    # ── Smart Crossfade: cue points + downbeats ───────────────────────
+    # Reuses the already-loaded `audio` array (no extra disk read).
+    # Only computes downbeats when track looks danceable to save CPU.
+    try:
+        is_danceable = float(features.get("danceability") or 0) >= 0.7
+        cues = _extract_cue_points_from_array(audio, SAMPLE_RATE, is_danceable)
+        if cues:
+            features.update(cues)
+    except Exception as e:
+        log.debug(f"  cue point extraction failed: {e}")
+
     return features
+
+
+def _extract_cue_points_from_array(audio: np.ndarray, sr: int, is_danceable: bool) -> dict | None:
+    """Wrap tools.extract_cue_points for an in-memory array (no MP3 reread)."""
+    try:
+        import json as _json
+        import librosa
+
+        duration = len(audio) / sr
+        if duration < 10:
+            return None
+
+        rms = librosa.feature.rms(y=audio, frame_length=2048, hop_length=512)[0]
+        rms_times = librosa.times_like(rms, sr=sr, hop_length=512)
+        silent = rms < 0.02
+
+        # fade_out: last non-silent − 1s
+        fade_out = None
+        for i in range(len(rms_times) - 1, 0, -1):
+            if not silent[i]:
+                fade_out = float(rms_times[i] - 1.0)
+                break
+        if fade_out is None or fade_out < 30:
+            fade_out = max(0.0, duration - 20.0)
+        fade_out = max(0.0, min(float(duration), fade_out))
+
+        # fade_in: first non-silent + first structural boundary
+        first_loud = next((float(rms_times[i]) for i in range(len(rms_times)) if not silent[i]), 0.0)
+        boundary = 0.0
+        try:
+            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+            bounds = librosa.segment.agglomerative(chroma, k=6)
+            btimes = librosa.frames_to_time(bounds, sr=sr)
+            if len(btimes) > 1:
+                boundary = float(btimes[1])
+        except Exception:
+            pass
+        fade_in = max(0.0, min(15.0, max(first_loud, boundary)))
+
+        downbeat_json = None
+        if is_danceable:
+            try:
+                _t, beats = librosa.beat.beat_track(y=audio, sr=sr, units='time')
+                downbeats = [round(float(t), 3) for t in beats[::4].tolist()]
+                if len(downbeats) >= 2:
+                    downbeat_json = _json.dumps(downbeats)
+            except Exception:
+                pass
+
+        return {
+            "fade_out_cue_s": round(fade_out, 2),
+            "fade_in_cue_s": round(fade_in, 2),
+            "downbeat_times_json": downbeat_json,
+        }
+    except Exception:
+        return None
 
 
 # ── Worker function for multiprocessing ──────────────────────────────────────

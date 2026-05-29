@@ -693,10 +693,10 @@ const pages = {
 
             <div class="ai-tabs" id="ai-tabs">
                 <div class="ai-tab active" data-tab="color" onclick="switchAiTab('color')">🎨 Màu sắc</div>
-                <!-- <div class="ai-tab" data-tab="lyrics" onclick="switchAiTab('lyrics')">✍️ Lời nhạc</div> -->
+                <div class="ai-tab" data-tab="lyrics" onclick="switchAiTab('lyrics')">✨ Tìm theo cảm xúc</div>
                 <div class="ai-tab" data-tab="image" onclick="switchAiTab('image')">📷 Hình ảnh</div>
                 <div class="ai-tab" data-tab="journey" onclick="switchAiTab('journey')">🎯 Hành trình</div>
-                <!-- <div class="ai-tab" data-tab="context" onclick="switchAiTab('context')">🌤️ Ngữ cảnh</div> -->
+                <div class="ai-tab" data-tab="context" onclick="switchAiTab('context')">🌅 Hôm nay</div>
             </div>
 
             <!-- Color Tab -->
@@ -1269,41 +1269,6 @@ async function _checkAudioBatch(songs) {
             }
         });
     } catch(e) {}
-}
-
-async function playMood(mood) {
-    try {
-        app.toast('Đang tìm nhạc...', 'info');
-        const data = await API.recommendByMood(mood, 15);
-        if (data.results?.length) {
-            const songs = data.results.map(_normalizeSong);
-            await _checkAudioBatch(songs);
-            player.loadQueue(songs, 0, 'recommend');
-        }
-    } catch(e) { app.toast('Lỗi: ' + e.message, 'error'); }
-}
-
-async function playGenre(genreId, genreName) {
-    try {
-        app.toast(`Đang tải ${genreName}...`, 'info');
-        let songs;
-        if (genreId.startsWith('Q')) {
-            const mood = genreId === 'Q1' ? 'happy' : genreId === 'Q2' ? 'energetic' : genreId === 'Q3' ? 'sad' : 'calm';
-            const data = await API.getSongsByMood(mood, 20);
-            songs = data.songs;
-        } else if (genreId.startsWith('emotion_')) {
-            const mood = genreId.replace('emotion_', '');
-            const data = await API.recommendByMood(mood, 20);
-            songs = (data.results || []).map(_normalizeSong);
-        } else {
-            const data = await API.getRandomSongs(20);
-            songs = data.songs;
-        }
-        if (songs?.length) {
-            await _checkAudioBatch(songs);
-            player.loadQueue(songs, 0, 'genre');
-        }
-    } catch(e) { app.toast('Lỗi', 'error'); }
 }
 
 async function playTimePeriod(period, name) {
@@ -2276,16 +2241,26 @@ function _startLyricsWatcher() {
 }
 
 // ── Crossfade ──
+// Smart Crossfade engine: feature-aware (tempo / key / mood / energy / LUFS / cue points)
+// See docs/PLAN_SMART_CROSSFADE.md and core in player.js::planCrossfade
 const crossfade = {
     enabled: false,
-    duration: 15, // seconds — dual fade handled by player.js
+    smart: true,     // policy engine (planCrossfade) decides duration / curve / gains
+    duration: 6,     // legacy fallback duration when smart=false (was 15)
 
     toggle() {
         this.enabled = !this.enabled;
         localStorage.setItem('bf_crossfade', this.enabled);
         const btn = document.getElementById('btn-crossfade');
         if (btn) btn.classList.toggle('active', this.enabled);
-        app.toast(this.enabled ? '🔀 Crossfade bật (15s)' : '🔀 Crossfade tắt', 'info');
+        const label = this.smart ? '🧠 Smart Crossfade' : `🔀 Crossfade (${this.duration}s)`;
+        app.toast(this.enabled ? `${label} bật` : '🔀 Crossfade tắt', 'info');
+    },
+
+    toggleSmart() {
+        this.smart = !this.smart;
+        localStorage.setItem('bf_crossfade_smart', this.smart);
+        app.toast(this.smart ? '🧠 Smart mode on' : `🔀 Legacy ${this.duration}s fixed mode`, 'info');
     },
 };
 window.crossfade = crossfade;
@@ -2297,6 +2272,9 @@ if (localStorage.getItem('bf_crossfade') === 'true') {
         const btn = document.getElementById('btn-crossfade');
         if (btn) btn.classList.add('active');
     }, 200);
+}
+if (localStorage.getItem('bf_crossfade_smart') === 'false') {
+    crossfade.smart = false;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
