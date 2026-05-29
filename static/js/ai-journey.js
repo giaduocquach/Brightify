@@ -244,7 +244,17 @@ async function startMoodShift(key) {
         if (!data.success || !data.songs?.length) { app.toast('Không tạo được hành trình', 'error'); return; }
         const songs = data.songs.map(s => _normalizeSong(s));
         await _checkAudioBatch(songs);
+        // Store the journey context (raw API songs keep V-A / step / emotion that
+        // _normalizeSong drops) so the player can draw the arc & track the step.
+        window._activeJourney = {
+            label: m.label,
+            songs: data.songs,
+            waypoints: data.waypoints,
+            info: data.journey_info,
+            ids: new Set(data.songs.map(s => s.track_id)),
+        };
         player.loadQueue(songs, 0, 'emotion-journey');
+        renderJourneyStrip();
         const from = startTrackId && cur ? `“${cur.track_name}”` : 'tâm trạng hiện tại';
         app.toast(`${m.label}: dẫn bạn từ ${from} qua ${songs.length} bài`, 'success');
     } catch (e) {
@@ -286,4 +296,77 @@ function showMoodMenu() {
     };
     setTimeout(() => document.addEventListener('click', dismiss), 0);
 }
+
+// ── F2.2 Journey Mode: the arc you're being guided along, in the Player ──────
+// While an emotion journey plays, a slim strip floats above the player bar and
+// shows the emotional arc (energy over the steps) with a "you are here" dot,
+// step k/N, and the current → destination mood. Makes the iso-principle felt.
+function renderJourneyStrip() {
+    const strip = document.getElementById('journey-strip');
+    if (!strip) return;
+    const j = window._activeJourney;
+    const cur = window.player?.getCurrentSong?.() || null;
+    const active = j && cur && window.player?._playSource === 'emotion-journey' && j.ids.has(cur.track_id);
+    if (!active) { strip.style.display = 'none'; return; }
+
+    const idx = j.songs.findIndex(s => s.track_id === cur.track_id);
+    const N = j.songs.length;
+    const curMood = j.songs[idx]?.fused_emotion || '';
+    const destMood = j.songs[N - 1]?.fused_emotion || '';
+
+    // Anchor just above the player bar regardless of its height.
+    const bar = document.getElementById('player-bar');
+    const barTop = bar ? bar.getBoundingClientRect().top : window.innerHeight - 90;
+    strip.style.cssText = `position:fixed;left:50%;transform:translateX(-50%);bottom:${window.innerHeight - barTop + 6}px;z-index:101;display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:12px;background:rgba(20,18,32,.93);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border);box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:min(560px,92vw)`;
+    strip.innerHTML = `
+        <canvas id="journey-mini-canvas" width="200" height="42" style="flex-shrink:0"></canvas>
+        <div style="min-width:0;flex:1">
+            <div style="font-size:.82rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(j.label)} · Bước ${idx + 1}/${N}</div>
+            <div style="font-size:.72rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">đang: ${esc(curMood || '—')} → hướng tới: ${esc(destMood || '—')}</div>
+        </div>
+        <button onclick="exitJourneyMode()" title="Thoát chế độ hành trình" style="flex-shrink:0;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.15rem;line-height:1;padding:2px 4px">×</button>
+    `;
+    strip.style.display = 'flex';
+    _drawJourneyMiniArc(document.getElementById('journey-mini-canvas'), j, idx);
+}
+
+function _drawJourneyMiniArc(canvas, j, curIdx) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height, pad = 8;
+    ctx.clearRect(0, 0, W, H);
+    const songs = j.songs, N = songs.length;
+    const X = i => pad + (N <= 1 ? 0 : i / (N - 1)) * (W - pad * 2);
+    const Y = a => pad + (1 - a) * (H - pad * 2);  // arousal as height: energy rising/falling
+    // Gradient path (mood hue progresses start→end)
+    ctx.lineWidth = 2;
+    for (let i = 0; i < N - 1; i++) {
+        const a1 = songs[i].song_arousal ?? 0.5, a2 = songs[i + 1].song_arousal ?? 0.5;
+        const t = i / Math.max(1, N - 1);
+        const g = ctx.createLinearGradient(X(i), 0, X(i + 1), 0);
+        g.addColorStop(0, `hsla(${260 + t * 120},70%,65%,.7)`);
+        g.addColorStop(1, `hsla(${260 + (t + 1 / N) * 120},70%,65%,.7)`);
+        ctx.strokeStyle = g;
+        ctx.beginPath(); ctx.moveTo(X(i), Y(a1)); ctx.lineTo(X(i + 1), Y(a2)); ctx.stroke();
+    }
+    // Step dots; current step enlarged with a white ring
+    songs.forEach((s, i) => {
+        const a = s.song_arousal ?? 0.5, isCur = i === curIdx, t = i / Math.max(1, N - 1);
+        ctx.beginPath(); ctx.arc(X(i), Y(a), isCur ? 4.5 : 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = `hsl(${260 + t * 120},75%,${isCur ? 70 : 52}%)`;
+        ctx.fill();
+        if (isCur) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    });
+}
+
+function exitJourneyMode() {
+    window._activeJourney = null;
+    const strip = document.getElementById('journey-strip');
+    if (strip) strip.style.display = 'none';
+}
+
+window.renderJourneyStrip = renderJourneyStrip;
+window.exitJourneyMode = exitJourneyMode;
+window.startMoodShift = startMoodShift;
+window.showMoodMenu = showMoodMenu;
 

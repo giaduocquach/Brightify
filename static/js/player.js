@@ -81,6 +81,8 @@ class MusicPlayer {
             if (btn) btn.classList.remove('radio-active');
         }
         this._playSource = source;
+        // Leaving a journey queue exits Journey Mode (F2.2).
+        if (source !== 'emotion-journey' && window.exitJourneyMode) window.exitJourneyMode();
         this.queue = songs.filter(s => s);
         this.currentIndex = -1;
         this._shuffleOrder = [];
@@ -451,6 +453,7 @@ class MusicPlayer {
         if (bar) bar.classList.add('player-hidden');
         const queuePanel = document.getElementById('queue-panel');
         if (queuePanel) queuePanel.classList.remove('queue-visible');
+        if (window.exitJourneyMode) window.exitJourneyMode();  // F2.2
         this._updateQueuePanel();
     }
 
@@ -667,6 +670,7 @@ class MusicPlayer {
 
         this._updateLikeBtn();
         document.title = `${song.track_name} — Brightify`;
+        if (window.renderJourneyStrip) window.renderJourneyStrip();  // F2.2 Journey Mode
     }
 
     _updatePlayBtn(playing) {

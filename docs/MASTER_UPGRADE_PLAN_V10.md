@@ -94,6 +94,8 @@
 5. **Preset có BẢN SẮC VIỆT theo khoảnh khắc** (thay nhãn mood trừu tượng) — "Thất tình 3am → ngủ được", "Cày deadline khuya", "Sáng Chủ nhật chữa lành", "Khóc cho xong rồi nguôi". Khác biệt thương hiệu + đúng P3.
 6. **Journey là MỘT NƠI, không phải một nút** — arc visualization làm *hero*, tới được từ cả thẻ Home lẫn Player (overlay nhẹ), không chôn trong tab.
 
+**Tiến độ:** ✅ **F2.2 ĐÃ LÀM (2026-05-29)** — "Journey Mode" trong Player: dải `#journey-strip` nổi trên player bar khi đang phát hành trình (`player._playSource==='emotion-journey'`), vẽ mini-arc canvas (arousal theo trục dọc = năng lượng lên/xuống, hue theo tiến trình) + chấm "bạn đang ở đây" bước k/N + nhãn "đang → hướng tới" + nút thoát. `window._activeJourney` giữ raw journey songs (V-A/step/emotion mà `_normalizeSong` bỏ); hook trong `player._updateUI`; tự ẩn khi đổi queue/stop. *(Còn lại F2.1/F2.3/F2.4/F2.5.)*
+
 **Lộ trình thực hiện (đề xuất, Phase 3):**
 - **F2.1** *(M)*: Sheet xem-trước-cung khi chọn đích (Home + AI Lab); dẫn bằng human-preset; V-A picker → "Nâng cao" gập. → *giải quyết "AI Lab quá khó" + "phát mù".*
 - **F2.2** *(M)*: "Journey Mode" trong Player — dải arc + chấm bước hiện tại + chip "vì sao bài này hợp bước này". → *phần WOW chính.*
@@ -204,7 +206,7 @@
 - **Vì sao:** sau khi gợi ý đáng tin (Phase 1), đưa chúng ra chỗ dễ chạm để phát huy. **→ PHASE 2 HOÀN TẤT** (F1 ✅ + F2 ✅ + F5 ✅).
 
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
-12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". **F2.2** "Journey Mode" trong Player (arc thấy-được + chấm bước hiện tại + màu chuyển dần + chip lý do) *(M, đòn wow chính)* · **F2.1** sheet xem-trước-cung có cover/màu/tên thân thuộc, human-preset dẫn đầu, V-A picker→"Nâng cao" *(M)* · **F2.5** bản "đổi mood nhanh 5 phút" (3–4 bài) *(S)* · **F2.3** re-steer khi phát *(M)* · **F2.4** preset bản-sắc-Việt *(S)*. Khi F2.1+F2.2 xong, tab AI Lab "Hành trình" thành cửa nâng cao.
+12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". **F2.2** ✅ "Journey Mode" trong Player (arc thấy-được + chấm bước hiện tại) — XONG 2026-05-29 · **F2.1** sheet xem-trước-cung có cover/màu/tên thân thuộc, human-preset dẫn đầu, V-A picker→"Nâng cao" *(M)* · **F2.5** bản "đổi mood nhanh 5 phút" (3–4 bài) *(S)* · **F2.3** re-steer khi phát *(M)* · **F2.4** preset bản-sắc-Việt *(S)*. Khi F2.1 xong, tab AI Lab "Hành trình" thành cửa nâng cao.
 13. **F3**: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (3 matcher trộn-xếp, xem §3/F3-CƠ-CHẾ; phải thêm lyrics-line matcher + sửa bug `/songs/search` không search lyrics). Xong thì gỡ tab "Tìm theo cảm xúc". *(M)*
 14. **F7**: MERT vào KG (đã ở #4), Audio Radio, bổ sung context/journey. *(M-L)*
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
