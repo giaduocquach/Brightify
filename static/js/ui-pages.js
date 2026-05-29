@@ -76,10 +76,10 @@ const pages = {
                     <div><div class="section-title">🎭 Đổi tâm trạng</div><div class="section-subtitle">Chọn nơi muốn đến — AI dẫn bạn tới đó qua từng bài, bắt đầu từ bài đang nghe (Iso Principle)</div></div>
                 </div>
                 <div class="journey-presets-grid">
-                    <button class="journey-preset" onclick="startMoodShift('lift')">🌅 Vực dậy</button>
-                    <button class="journey-preset" onclick="startMoodShift('calm')">🧘 Hạ lo âu</button>
-                    <button class="journey-preset" onclick="startMoodShift('sleep')">🌙 Ru ngủ</button>
-                    <button class="journey-preset" onclick="startMoodShift('focus')">🎯 Tập trung</button>
+                    <button class="journey-preset" onclick="openMoodPreview('lift')">🌅 Vực dậy</button>
+                    <button class="journey-preset" onclick="openMoodPreview('calm')">🧘 Hạ lo âu</button>
+                    <button class="journey-preset" onclick="openMoodPreview('sleep')">🌙 Ru ngủ</button>
+                    <button class="journey-preset" onclick="openMoodPreview('focus')">🎯 Tập trung</button>
                 </div>
             </div>
 
@@ -447,8 +447,21 @@ const pages = {
                 <div class="journey-section">
                     <div class="journey-header">
                         <div class="journey-title">Hành Trình Cảm Xúc</div>
-                        <div class="journey-subtitle">Chọn tâm trạng hiện tại & đích đến — AI dẫn dắt bạn qua từng bước mượt mà (Iso Principle)</div>
+                        <div class="journey-subtitle">Chọn nơi bạn muốn đến — AI dẫn từ bài đang nghe qua từng bước (Iso Principle). Xem trước trước khi bắt đầu.</div>
                     </div>
+
+                    <!-- F2.1 — need-presets lead: 1 chạm → xem trước cung → bắt đầu -->
+                    <div class="journey-presets" style="margin-bottom:6px">
+                        <div class="journey-presets-grid">
+                            <button class="journey-preset" onclick="openMoodPreview('lift')">🌅 Vực dậy</button>
+                            <button class="journey-preset" onclick="openMoodPreview('calm')">🧘 Hạ lo âu</button>
+                            <button class="journey-preset" onclick="openMoodPreview('sleep')">🌙 Ru ngủ</button>
+                            <button class="journey-preset" onclick="openMoodPreview('focus')">🎯 Tập trung</button>
+                        </div>
+                    </div>
+
+                    <details class="journey-advanced">
+                        <summary style="cursor:pointer;color:var(--text-secondary);font-size:.85rem;padding:6px 0;user-select:none">⚙️ Tùy chỉnh nâng cao — tự chọn điểm đầu & đích trên biểu đồ cảm xúc</summary>
 
                     <!-- Quick Mood Cards — Russell's Circumplex × 13 system emotions -->
                     <div class="journey-quick-moods">
@@ -558,6 +571,7 @@ const pages = {
                             Tạo hành trình ✨
                         </button>
                     </div>
+                    </details>
                 </div>
 
                 <div id="journey-visualization" style="display:none"></div>

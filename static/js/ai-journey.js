@@ -216,10 +216,11 @@ function _drawJourneyVisualization(waypoints, songs, info) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// F2 — Mood Shift: 1-tap need-based journeys (Home card + Player button)
-// User picks only the DESTINATION (the need); the start point is auto-detected
-// from the now-playing song so the machine plans the path (P7). Falls back to a
-// sensible default start when nothing is playing. No V-A picker, no extra screen.
+// F2 — Mood Shift: need-based journeys (Home card · Player button · AI Lab)
+// User picks only the DESTINATION (the need); the start is auto-detected from the
+// now-playing song so the machine plans the path (P7). F2.1: generates then shows
+// a PREVIEW (arc + first songs + duration) before committing — "see the mood
+// before you press play" — instead of playing blind.
 // ══════════════════════════════════════════════════════════════════════════
 const MOOD_SHIFTS = {
     lift:  { label: '🌅 Vực dậy',   end: [0.85, 0.65], start: [0.25, 0.35], desc: 'Nâng tâm trạng dần lên vui tươi' },
@@ -228,38 +229,97 @@ const MOOD_SHIFTS = {
     focus: { label: '🎯 Tập trung', end: [0.60, 0.42], start: [0.50, 0.62], desc: 'Ổn định để tập trung' },
 };
 
-async function startMoodShift(key) {
+let _preparedJourney = null;
+
+async function openMoodPreview(key) {
     const m = MOOD_SHIFTS[key];
     if (!m) return;
     const cur = window.player?.getCurrentSong?.() || null;
     const startTrackId = cur?.track_id || null;
-    // With a now-playing song, let the backend resolve the start V-A from it;
-    // otherwise seed the journey with the preset's default start.
+    // With a now-playing song the backend resolves the start V-A from it;
+    // otherwise seed with the preset's default start.
     const sv = startTrackId ? null : m.start[0];
     const sa = startTrackId ? null : m.start[1];
 
-    app.toast(`${m.label} — đang tạo hành trình…`, 'info');
+    _showJourneyPreviewSheet(`<div class="loading-inline"><div class="loader"></div>${esc(m.label)} — đang dựng hành trình…</div>`);
     try {
         const data = await API.getEmotionJourney(sv, sa, m.end[0], m.end[1], 8, { startTrackId });
-        if (!data.success || !data.songs?.length) { app.toast('Không tạo được hành trình', 'error'); return; }
-        const songs = data.songs.map(s => _normalizeSong(s));
-        await _checkAudioBatch(songs);
-        // Store the journey context (raw API songs keep V-A / step / emotion that
-        // _normalizeSong drops) so the player can draw the arc & track the step.
-        window._activeJourney = {
-            label: m.label,
-            songs: data.songs,
-            waypoints: data.waypoints,
-            info: data.journey_info,
-            ids: new Set(data.songs.map(s => s.track_id)),
-        };
-        player.loadQueue(songs, 0, 'emotion-journey');
-        renderJourneyStrip();
-        const from = startTrackId && cur ? `“${cur.track_name}”` : 'tâm trạng hiện tại';
-        app.toast(`${m.label}: dẫn bạn từ ${from} qua ${songs.length} bài`, 'success');
+        if (!data.success || !data.songs?.length) { app.toast('Không tạo được hành trình', 'error'); closeJourneyPreview(); return; }
+        _preparedJourney = { label: m.label, desc: m.desc, data, fromName: (startTrackId && cur) ? cur.track_name : null };
+        _renderJourneyPreview();
     } catch (e) {
         app.toast(e.message || 'Lỗi tạo hành trình', 'error');
+        closeJourneyPreview();
     }
+}
+
+function _showJourneyPreviewSheet(innerHtml) {
+    let ov = document.getElementById('journey-preview-overlay');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'journey-preview-overlay';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)';
+        ov.addEventListener('click', (e) => { if (e.target === ov) closeJourneyPreview(); });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = `<div class="journey-preview-card" style="width:min(440px,92vw);max-height:86vh;overflow:auto;background:var(--surface,#15131f);border:1px solid var(--border);border-radius:16px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)">${innerHtml}</div>`;
+    ov.style.display = 'flex';
+}
+
+function closeJourneyPreview() {
+    const ov = document.getElementById('journey-preview-overlay');
+    if (ov) ov.style.display = 'none';
+}
+
+function _renderJourneyPreview() {
+    const pj = _preparedJourney;
+    if (!pj) return;
+    const songs = pj.data.songs, N = songs.length;
+    const curMood = songs[0]?.fused_emotion || '—';
+    const destMood = songs[N - 1]?.fused_emotion || '—';
+    const estMin = Math.round(N * 3.5);
+    const first = songs.slice(0, 3).map((s, i) => `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+            <span style="width:18px;color:var(--text-secondary);font-size:.78rem">${i + 1}</span>
+            <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.85rem">${esc(s.track_name)} <span style="color:var(--text-secondary)">· ${esc(s.artist)}</span></span>
+        </div>`).join('');
+    _showJourneyPreviewSheet(`
+        <div style="font-size:1.05rem;font-weight:700;margin-bottom:2px">${esc(pj.label)}</div>
+        <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:12px">${esc(pj.desc || '')}</div>
+        <canvas id="journey-preview-canvas" width="380" height="96" style="width:100%;height:96px;margin-bottom:10px"></canvas>
+        <div style="font-size:.8rem;color:var(--text-secondary);margin-bottom:10px">
+            ${pj.fromName ? `Từ “${esc(pj.fromName)}” · ` : ''}đang: ${esc(curMood)} → hướng tới: ${esc(destMood)} · ${N} bài · ~${estMin} phút
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:14px">${first}${N > 3 ? `<div style="font-size:.78rem;color:var(--text-secondary);padding-top:4px">…và ${N - 3} bài nữa</div>` : ''}</div>
+        <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-glow" style="flex:1" onclick="playPreparedJourney()">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Bắt đầu hành trình
+            </button>
+            <button class="btn btn-ghost" onclick="closeJourneyPreview()">Hủy</button>
+        </div>
+    `);
+    // Reuse the player mini-arc renderer (bigger canvas) for a consistent look.
+    _drawJourneyMiniArc(document.getElementById('journey-preview-canvas'), { songs }, -1);
+}
+
+function playPreparedJourney() {
+    const pj = _preparedJourney;
+    if (!pj) return;
+    const songs = pj.data.songs.map(s => _normalizeSong(s));
+    // Raw API songs keep V-A / step / emotion that _normalizeSong drops.
+    window._activeJourney = {
+        label: pj.label,
+        songs: pj.data.songs,
+        waypoints: pj.data.waypoints,
+        info: pj.data.journey_info,
+        ids: new Set(pj.data.songs.map(s => s.track_id)),
+    };
+    closeJourneyPreview();
+    _checkAudioBatch(songs).then(() => {
+        player.loadQueue(songs, 0, 'emotion-journey');
+        renderJourneyStrip();
+    });
+    app.toast(`${pj.label}: bắt đầu hành trình ${songs.length} bài`, 'success');
 }
 
 // Player "đổi mood" button → popover of mood-shift destinations.
@@ -284,7 +344,7 @@ function showMoodMenu() {
     popup.addEventListener('click', (e) => {
         const item = e.target.closest('[data-mood]');
         if (!item) return;
-        startMoodShift(item.dataset.mood);
+        openMoodPreview(item.dataset.mood);
         popup.remove();
         document.removeEventListener('click', dismiss);
     });
@@ -367,6 +427,8 @@ function exitJourneyMode() {
 
 window.renderJourneyStrip = renderJourneyStrip;
 window.exitJourneyMode = exitJourneyMode;
-window.startMoodShift = startMoodShift;
+window.openMoodPreview = openMoodPreview;
+window.closeJourneyPreview = closeJourneyPreview;
+window.playPreparedJourney = playPreparedJourney;
 window.showMoodMenu = showMoodMenu;
 
