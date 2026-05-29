@@ -104,6 +104,24 @@
 - **F2.2** *(M)*: "Journey Mode" trong Player — dải arc + chấm bước hiện tại + chip "vì sao bài này hợp bước này". → *phần WOW chính.*
 - **F2.3** *(M)*: Re-steer khi đang phát (sinh lại bước còn lại từ bài hiện tại + đích).
 - **F2.4** *(S)*: Bộ preset bản-sắc-Việt theo khoảnh khắc.
+- **F2.5** *(S)*: bản "đổi mood nhanh 5 phút" (3–4 bài).
+- **F2.6** *(M)*: **Taxonomy chế độ theo tâm lý điều tiết cảm xúc** (xem F2-NGHIÊN-CỨU bên dưới).
+- **F2.7** *(M)*: **Độ dài thích ứng + "tới đích rồi ở lại"** thay fix cứng 8 bài (xem F2-NGHIÊN-CỨU).
+
+#### F2-NGHIÊN-CỨU (web, 2026-05-29) — phản hồi user: "4 chế độ thế?" + "fix cứng 8 bài, muốn nghe hơn thì sao?"
+
+**(1) 4 chế độ là CHƯA ĐỦ & lệch — căn cứ tâm lý học.** Saarikallio *Music in Mood Regulation* (MMR, 2008/2011) xác định **7 chiến lược** người ta thực sự dùng nhạc để điều tiết cảm xúc: *entertainment* (giữ vibe đang vui), *revival* (hồi sức/thư giãn), *strong sensation* (phiêu/cường độ mạnh), *diversion* (đánh lạc hướng khỏi lo âu), *discharge* (xả — sống cùng cơn giận/buồn qua nhạc hợp tâm trạng), *mental work* (suy ngẫm/tái định khung), *solace* (được an ủi khi buồn). **Vấn đề cốt lõi:** 4 chế độ hiện (Vực dậy/Hạ lo âu/Ru ngủ/Tập trung) đều giả định *"chuyển sang tâm trạng TỐT hơn"* — nhưng **không phải nhu cầu nào cũng là dịch chuyển**: *solace* và *entertainment* là **ở lại** với tâm trạng (được an ủi / giữ vibe), *discharge* là **biểu đạt** chứ không "sửa". Ép buồn→vui có thể **vô hiệu hoá cảm xúc** (invalidating).
+- → **Thiết kế lại preset thành 2 họ:**
+  - **Đổi sang (iso A→B):** Vực dậy (revival/diversion) · Hạ lo âu (relaxation) · Ru ngủ (deep relax) · Tập trung (mental work).
+  - **Ở lại / biểu đạt (dwell tại một vùng V-A, không ép dịch):** **"Buồn cùng mình"** (solace — ở lại Q3, nhạc an ủi) · **"Xả"** (discharge — cường độ/giận) · **"Giữ vibe"** (entertainment — duy trì mood đang tốt) · *(tùy chọn)* "Phiêu hết mình" (strong sensation).
+- **Cảnh báo wellness (Sakka & Juslin 2018; trầm cảm):** *solace/discharge* nếu lạm dụng có thể thành **nhai-lại (rumination)** ở người trầm cảm. → các chế độ "ở lại" phải đi kèm **nudge nhẹ opt-in** (chính là **F2.b rumination** đang HOÃN): sau thời gian dài ở Q3 → *gợi ý* (không tự đổi) "thử nhẹ chuyển hướng?". Tôn trọng P7.
+- **Không nhồi 7 nút:** giữ ~5–6 preset rõ nghĩa (đủ phủ shift + ít nhất 1 "solace" + 1 "discharge"); phần đuôi dài giao cho **F3 mô tả tự nhiên** ("muốn được an ủi", "cần xả").
+
+**(2) Fix cứng 8 bài — bỏ; cho độ dài thích ứng + "tới đích rồi ở lại".** Bằng chứng: 5–6 bài là khởi điểm tốt, **10–15 bài "vừa tay"**, phiên trị liệu iso ~**30 phút**; *không có con số một-cho-tất-cả*, nhấn mạnh **cá nhân hoá** (It's Complicated; Dynamic Lynks; thử nghiệm iso NCT05442099). 8 bài (~28′) hợp lý làm *mặc định* nhưng phải cho chọn.
+- **Chọn độ dài:** Ngắn (~5 bài/15′) · Vừa (~8/28′, mặc định) · Dài (~12/40′) — hoặc theo **phút**. Lộ ngay ở **sheet xem-trước** (F2.1) + truyền `steps` xuống endpoint (đã hỗ trợ 6–15; cần mở trần nếu muốn >15).
+- **"Tới đích rồi ở lại" (đòn chính, giải đúng "muốn nghe hơn"):** iso đưa BẠN TỚI tâm trạng đích — **đừng dừng phựt**; khi hết các bước chuyển, **tự phát tiếp các bài quanh V-A đích** (radio neo tại đích = chiến lược *entertainment/maintain*). Nghe bao lâu tùy ý mà vẫn giữ tâm trạng đã đạt. Toggle "🔁 Ở lại tâm trạng đích". Kỹ thuật: sau N bài journey, nối thêm bằng kNN quanh V-A cuối (hoặc `smart_context` neo V-A đích).
+- **Endless:** bật từ "ở lại đích" — không bao giờ dừng cho tới khi user đổi.
+
 > **Quyết định tab "🎯 Hành trình" (AI Lab):** GIỮ tạm (chưa xóa) tới khi F2.1+F2.2 xong — lúc đó nó trở thành cửa "nâng cao" với arc-preview dẫn đầu, picker V-A gập lại. Tab "🌅 Hôm nay" (context) đã **GỠ** (2026-05-29) vì trùng hoàn toàn với shelf Home tự động.
 
 **Nghiên cứu bổ sung (web, 2026-05-29) — củng cố hướng trên:**
@@ -209,7 +227,7 @@
 - **Vì sao:** sau khi gợi ý đáng tin (Phase 1), đưa chúng ra chỗ dễ chạm để phát huy. **→ PHASE 2 HOÀN TẤT** (F1 ✅ + F2 ✅ + F5 ✅).
 
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
-12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". **F2.2** ✅ "Journey Mode" trong Player (arc + chấm bước) — XONG · **F2.1** ✅ sheet xem-trước-cung + human-preset dẫn đầu + V-A picker→"Nâng cao" gập — XONG · **F2.5** bản "đổi mood nhanh 5 phút" (3–4 bài) *(S)* · **F2.3** re-steer khi phát *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
+12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode (arc+bước) · ✅ **F2.1** preview + human-preset + V-A→nâng cao. Còn: **F2.7** độ dài thích ứng + "tới đích rồi ở lại" (bỏ fix 8 bài) *(M, ưu tiên — user yêu cầu)* · **F2.6** taxonomy 7-chiến-lược MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment) *(M)* · **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
 13. **F3**: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (3 matcher trộn-xếp, xem §3/F3-CƠ-CHẾ; phải thêm lyrics-line matcher + sửa bug `/songs/search` không search lyrics). Xong thì gỡ tab "Tìm theo cảm xúc". *(M)*
 14. **F7**: MERT vào KG (đã ở #4), Audio Radio, bổ sung context/journey. *(M-L)*
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
@@ -313,6 +331,13 @@ MERT (768-dim, đã có file 16M, là *biểu diễn nội dung nhạc thật*) 
 - Heartfelt Harmony — *Making a mood-management playlist with the iso principle*: https://heartfeltharmonymusictherapy.com/2019/05/21/mood-and-music-how-to-make-a-playlist-for-mood-management-using-the-iso-principle/
 - Raw.Studio — *Spotify Daylists: the UI, UX, and ML* (mood-arc, cover/title, palette-by-time): https://raw.studio/blog/spotify-daylists-unveiling-the-ui-ux-and-ml-magic-behind-personalized-music/
 - UX Magazine — *Analyzing Spotify's Daylist: UI, UX, and ML*: https://uxmag.com/articles/analyzing-spotifys-new-day-list-feature-ui-ux-and-great-ml
+
+**Tâm lý điều tiết cảm xúc & độ dài phiên (bổ sung 2026-05-29, cho F2.6/F2.7)**
+- Saarikallio — *Music in Mood Regulation: Initial Scale Development* (MMR, 7 chiến lược): https://journals.sagepub.com/doi/10.1177/102986490801200206
+- Saarikallio — *Music as emotional self-regulation throughout adulthood* (2011): https://journals.sagepub.com/doi/10.1177/0305735610374894
+- Sakka & Juslin — *Emotion regulation with music in depressed and non-depressed individuals* (2018, rủi ro rumination): https://journals.sagepub.com/doi/10.1177/2059204318755023
+- *Iso-Principle Based Music Playlists on Anxiety* (clinical trial, phiên ~30′): https://clinicaltrials.gov/study/NCT05442099
+- It's Complicated — *Emotional Regulation Playlist* (độ dài 5–6 khởi điểm, cá nhân hoá): https://complicated.life/blog/the-emotional-regulation-playlist-using-music-to-shift-your-mood/
 
 ---
 
