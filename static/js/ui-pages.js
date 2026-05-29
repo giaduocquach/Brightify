@@ -219,7 +219,6 @@ const pages = {
 
             <div class="ai-tabs" id="ai-tabs">
                 <div class="ai-tab active" data-tab="color" onclick="switchAiTab('color')">🎨 Bắt vibe từ ảnh/màu</div>
-                <div class="ai-tab" data-tab="lyrics" onclick="switchAiTab('lyrics')">✨ Tìm theo cảm xúc</div>
                 <div class="ai-tab" data-tab="journey" onclick="switchAiTab('journey')">🎯 Hành trình</div>
             </div>
 
@@ -407,34 +406,6 @@ const pages = {
                 <div class="ai-results" id="image-results"></div>
             </div>
 
-            <!-- Lyrics Tab -->
-            <div class="ai-panel" id="tab-lyrics" style="display:none">
-                <div class="lyrics-search-section">
-                    <div class="lyrics-search-prompt">
-                        <div class="lyrics-search-title">Mô tả cảm xúc bằng lời</div>
-                        <div class="lyrics-search-subtitle">Hãy viết vài từ về tâm trạng, chủ đề hoặc cảm giác bạn muốn nghe — AI sẽ tìm bài hát phù hợp</div>
-                    </div>
-                    <div class="lyrics-search-input-wrap">
-                        <textarea id="lyrics-search-input" class="lyrics-search-textarea" placeholder="Ví dụ: nhớ người yêu cũ, đêm mưa buồn, muốn quên đi mọi thứ..." rows="3"></textarea>
-                        <div class="lyrics-search-suggestions">
-                            <button class="lyrics-suggestion" onclick="setLyricQuery('tình yêu đầu tan vỡ, nước mắt')">💔 Thất tình</button>
-                            <button class="lyrics-suggestion" onclick="setLyricQuery('đường phố đêm khuya, tự do, bay cao')">🌃 Đêm thành phố</button>
-                            <button class="lyrics-suggestion" onclick="setLyricQuery('mẹ ơi, gia đình, quê hương, nhớ nhà')">🏠 Nhớ nhà</button>
-                            <button class="lyrics-suggestion" onclick="setLyricQuery('cùng nhau, bên nhau mãi, hạnh phúc')">💍 Hạnh phúc</button>
-                            <button class="lyrics-suggestion" onclick="setLyricQuery('tuổi trẻ, ước mơ, thanh xuân')">🌅 Tuổi trẻ</button>
-                        </div>
-                    </div>
-                    <div class="lyrics-search-actions">
-                        <label>Số bài: <span id="lyrics-count-val">10</span></label>
-                        <input type="range" id="lyrics-count" min="5" max="20" value="10" oninput="document.getElementById('lyrics-count-val').textContent=this.value">
-                        <button class="btn btn-primary btn-glow" onclick="getLyricsRecommendations()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M12 2a5 5 0 015 5c0 2-1 3-2 4l-1 1v2h-4v-2l-1-1c-1-1-2-2-2-4a5 5 0 015-5z"/></svg>
-                            Tìm nhạc ✨
-                        </button>
-                    </div>
-                </div>
-                <div class="ai-results" id="lyrics-results"></div>
-            </div>
 
 
             <!-- Emotion Journey Tab -->
@@ -647,6 +618,40 @@ const pages = {
             `;
         } catch (e) {
             container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div>Không tìm thấy nghệ sĩ</div>';
+        }
+    },
+
+    // ── SEARCH (F3 — unified full results: khớp-nhất + liên-quan, play-all) ──
+    async search(container, hash) {
+        const query = decodeURIComponent(hash.replace('search/', '')).trim();
+        container.innerHTML = '<div class="loading-screen"><div class="loader"></div></div>';
+        if (!query) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔍</div>Nhập từ khoá để tìm</div>'; return; }
+        try {
+            const data = await API.searchUnified(query, 20, 20);
+            const matches = (data.matches || []).map(s => _normalizeSong(s));
+            const related = (data.related || []).map(s => _normalizeSong(s));
+            await _checkAudioBatch([...matches, ...related]);
+            window._searchMatches = matches;
+            window._searchRelated = related;
+
+            const section = (title, sub, songs, which) => songs.length ? `
+                <div class="section-header" style="margin-top:18px">
+                    <div><div class="section-title">${title}</div><div class="section-subtitle">${sub}</div></div>
+                    <button class="btn btn-primary btn-sm" onclick="playSearchResults('${which}')"><svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Phát tất cả</button>
+                </div>
+                <div class="song-list">${songs.map((s, i) => songRowHTML(s, i + 1)).join('')}</div>` : '';
+
+            container.innerHTML = `
+                <div class="page-header">
+                    <div class="page-title">Kết quả: "${esc(query)}"</div>
+                    <div class="page-subtitle">${matches.length + related.length} bài · khớp nhất trước, liên quan ở dưới</div>
+                </div>
+                ${(!matches.length && !related.length) ? '<div class="empty-state"><div class="empty-state-icon">🔍</div>Không tìm thấy bài nào</div>' : ''}
+                ${section('🎯 Khớp nhất', 'Trùng tên, nghệ sĩ hoặc lời bài hát', matches, 'matches')}
+                ${section('🔗 Liên quan · cùng vibe', 'AI gợi ý theo cảm xúc/chủ đề', related, 'related')}
+            `;
+        } catch (e) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div>Lỗi tìm kiếm</div>';
         }
     },
 

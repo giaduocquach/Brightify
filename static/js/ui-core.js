@@ -120,6 +120,14 @@ const app = {
             });
             searchInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') { dropdown.classList.remove('visible'); searchInput.blur(); }
+                else if (e.key === 'Enter') {
+                    const q = searchInput.value.trim();
+                    if (q.length >= 2) {
+                        dropdown.classList.remove('visible');
+                        searchInput.blur();
+                        router.navigate(`search/${encodeURIComponent(q)}`);  // F3 — full results page
+                    }
+                }
             });
 
             dropdown.addEventListener('click', (e) => {
@@ -149,6 +157,7 @@ const app = {
         router.register('history', (c) => pages.history(c));
         router.register('artist', (c, h) => pages.artist(c, h));
         router.register('artists', (c) => pages.allArtists(c));
+        router.register('search', (c, h) => pages.search(c, h));
 
         router.init();
 

@@ -134,6 +134,12 @@ async function _loadContextShelf() {
     } catch(e) {}
 }
 
+// F3 — play a whole search-result group (matches / related) from the search page.
+function playSearchResults(which) {
+    const songs = which === 'related' ? window._searchRelated : window._searchMatches;
+    if (songs?.length) player.loadQueue([...songs], 0, 'search');
+}
+
 function playCurrentTimeSongs() {
     if (window._currentTimeSongs?.length) player.loadQueue(window._currentTimeSongs, 0, 'time-of-day');
 }

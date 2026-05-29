@@ -65,7 +65,7 @@
 
 > **AI Lab** không biến mất — nó trở thành **"Khám phá / Phòng thí nghiệm"** cho input lạ (màu, ảnh) và người dùng nâng cao; còn *discovery hằng ngày* chuyển hết về Home + Search + Player.
 >
-> **Trạng thái AI Lab (2026-05-29) — còn 3 tab:** `🎨 Bắt vibe từ ảnh/màu` (gộp F5 ✅) · `✨ Tìm theo cảm xúc` (GIỮ TẠM tới khi F3 đưa lên search) · `🎯 Hành trình` (GIỮ TẠM tới khi F2-REDESIGN xong, sẽ thành cửa "nâng cao"). Tab `🌅 Hôm nay` đã **GỠ** (trùng shelf Home tự động). Markup + JS chết của context tab đã dọn (`context-init.js` chỉ còn app-bootstrap).
+> **Trạng thái AI Lab (2026-05-29) — còn 2 tab:** `🎨 Bắt vibe từ ảnh/màu` (gộp F5 ✅) · `🎯 Hành trình` (Emotion Journey — ĐANG GÁC, bản nháp). Đã **GỠ**: `🌅 Hôm nay` (trùng shelf Home) + `✨ Tìm theo cảm xúc` (F3 đưa lên thanh search hợp nhất). JS chết đã dọn.
 
 ---
 
@@ -133,7 +133,8 @@
 - **Tổng hợp → ưu tiên F2.2 (Journey Mode thấy-được-cung) + F2.1 (preview có cover/màu/tên)** là 2 đòn wow chính; thêm **F2.5** *(S)*: bản "đổi mood nhanh 5 phút". Nguồn liệt kê ở §8.
 
 ### F3. Search HỢP NHẤT — "gì cũng tìm ra: tên · lyrics · vibe" (thanh search toàn cục) — ✅ LÕI ĐÃ LÀM (2026-05-29)
-**Đã làm:** endpoint `/api/songs/search/unified` chạy 3 matcher → trả `{matches, related}`: (1) name/artist/album substring, (2) **lyrics-line substring** trên `plain_lyrics` (sửa bug `/songs/search` không search lời), (3) semantic `recommend_by_lyrics_keywords` cho "liên quan/cùng vibe" (đã trừ matches). FE: dropdown search toàn cục đổi sang `searchUnified` → render **2 nhóm "🎯 Khớp nhất" + "🔗 Liên quan · cùng vibe"** (match theo lời gắn tag "· lời"); placeholder mời cả 3 kiểu. Đo end-to-end: tên/câu-lyrics/mô-tả-vibe đều ra đúng, khớp-nhất nổi đầu. **Còn lại (follow-up):** Enter → *trang kết quả đầy đủ* (play-all) để thật sự thay tab "✨ Tìm theo cảm xúc" (dropdown 5–6 mục chưa thay được trải nghiệm "vibe → cả playlist"); **giữ tab lyrics tới lúc đó.**
+**Đã làm:** endpoint `/api/songs/search/unified` chạy 3 matcher → trả `{matches, related}`: (1) name/artist/album substring, (2) **lyrics-line substring** trên `plain_lyrics` (sửa bug `/songs/search` không search lời), (3) semantic `recommend_by_lyrics_keywords` cho "liên quan/cùng vibe" (đã trừ matches). FE: dropdown search toàn cục đổi sang `searchUnified` → render **2 nhóm "🎯 Khớp nhất" + "🔗 Liên quan · cùng vibe"** (match theo lời gắn tag "· lời"); placeholder mời cả 3 kiểu. Đo end-to-end: tên/câu-lyrics/mô-tả-vibe đều ra đúng, khớp-nhất nổi đầu.
+**Follow-up ✅ (2026-05-29):** **Enter → trang kết quả đầy đủ** (`pages.search`, route `search/<q>`): 2 section "Khớp nhất" + "Liên quan · cùng vibe" dạng song-list (20+20) mỗi section có **"Phát tất cả"** (`playSearchResults`). → đã **GỠ tab "✨ Tìm theo cảm xúc"** khỏi AI Lab (panel + nút + `switchAiTab` + JS chết `setLyricQuery`/`getLyricsRecommendations`). **AI Lab còn 2 tab:** Bắt vibe ảnh/màu · Hành trình. **F3 HOÀN TẤT.**
 
 > **Cập nhật yêu cầu user (2026-05-29):** KHÔNG còn là "route sang 1 chế độ". Mục tiêu: **gõ gì cũng ra kết quả đúng**, và **kết quả khớp nhất luôn nằm trên cùng, bên dưới là bài tương đồng/liên quan**. Tức search hợp nhất 3 nguồn, xếp lớp — không bắt user chọn "tìm theo tên" hay "theo vibe".
 - **[AI]** Một ô search chạy **song song 3 matcher** rồi **trộn + xếp lớp**:
@@ -232,7 +233,7 @@
 
 ### 🟠 PHASE 3 — Mở rộng trí thông minh
 12. **F2-REDESIGN** (xem chi tiết §3/F2): biến Emotion Journey thành "wow & dễ dùng". ✅ **F2.2** Journey Mode · ✅ **F2.1** preview + human-preset + V-A→nâng cao · ✅ **F2.7** độ dài thích ứng + "tới đích rồi ở lại" · ✅ **F2.6** taxonomy MMR (thêm họ "ở lại/biểu đạt": solace/discharge/entertainment). Còn: **F2.5** đổi-mood-nhanh-5′ *(S)* · **F2.3** re-steer *(M)* · **F2.4** preset bản-sắc-Việt *(S)*.
-13. **F3** ✅ LÕI: Search HỢP NHẤT trên thanh search toàn cục — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (endpoint `/songs/search/unified` 3 matcher; đã sửa bug `/songs/search` không search lyrics). *Follow-up:* trang kết quả đầy đủ (Enter→play-all) rồi gỡ tab "Tìm theo cảm xúc".
+13. **F3** ✅ HOÀN TẤT: Search HỢP NHẤT — gõ **tên / câu lyrics / mô tả vibe** đều ra, **khớp-nhất-trước + liên-quan-dưới** (dropdown + Enter→trang kết quả đầy đủ play-all). Đã gỡ tab "Tìm theo cảm xúc" (AI Lab còn 2 tab).
 14. **F7** ✅ phần chính: MERT vào KG (F6) + **Audio Radio thuần MERT (2026-05-29)** — context-menu "🎧 Radio chất âm". Còn (c) bổ sung tín hiệu context/journey/color + (d) cover/dup-detection *(cần backtest nếu đổi default)*.
 - **Vì sao:** nâng "chất" AI sau khi cấu trúc đã đúng. F2-REDESIGN ưu tiên đầu Phase 3 vì user đã thử & thấy bản hiện tại chưa đạt.
 

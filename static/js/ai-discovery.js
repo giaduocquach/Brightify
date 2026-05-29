@@ -6,7 +6,7 @@ let _selectedColors = [];
 
 function switchAiTab(tab) {
     document.querySelectorAll('.ai-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-    ['color', 'lyrics', 'journey'].forEach(t => {
+    ['color', 'journey'].forEach(t => {
         const el = document.getElementById(`tab-${t}`);
         if (el) el.style.display = t === tab ? 'block' : 'none';
     });
@@ -370,25 +370,6 @@ function addAiResultsToQueue() {
     }
 }
 
-// ── Lyrics Mood Search ──
-function setLyricQuery(text) {
-    const el = document.getElementById('lyrics-search-input');
-    if (el) el.value = text;
-}
-
-async function getLyricsRecommendations() {
-    const input = document.getElementById('lyrics-search-input');
-    const keywords = input?.value?.trim();
-    if (!keywords) { app.toast('Hãy mô tả cảm xúc của bạn', 'info'); return; }
-    const count = parseInt(document.getElementById('lyrics-count')?.value || 10);
-    const results = document.getElementById('lyrics-results');
-    results.innerHTML = '<div class="loading-inline"><div class="loader"></div>AI đang phân tích lời bạn viết...</div>';
-    try {
-        const data = await API.recommendByLyrics(keywords, count);
-        renderAiResults(results, data.results, `Nhạc phù hợp: "${keywords}"`, 'lyrics');
-    } catch (e) {
-        results.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">Lỗi</div></div>';
-        app.toast(e.message, 'error');
-    }
-}
+// (Lyrics Mood Search tab removed — F3 unified search now covers vibe/lyrics
+//  queries from the global search bar.)
 
