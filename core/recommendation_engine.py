@@ -1688,27 +1688,42 @@ class MusicRecommender:
             else:
                 matched['_kw_norm'] = 0.0
 
-            # Centroid embedding similarity for matched subset
-            matched['_centroid_sim'] = 0.0
-            if self.embeddings_normalized is not None and len(matched) > 0:
-                top_idx = matched.nlargest(min(10, len(matched)), '_match_score').index
-                centroid = self.embeddings_normalized[top_idx].mean(axis=0)
-                cn = np.linalg.norm(centroid)
-                if cn > 0:
-                    centroid = centroid / cn
-                    mid = matched.index.tolist()
-                    matched['_centroid_sim'] = (self.embeddings_normalized[mid] @ centroid + 1) / 2
-
             # Semantic score for matched subset
             matched['_sem'] = 0.0
             if semantic_scores is not None:
                 matched['_sem'] = semantic_scores[matched.index]
 
-            # Hybrid: keyword 35% + semantic 40% + centroid 25%
+            # E8 — emotion/V-A term for mood/vibe queries.
+            # The centroid-γ term (0.25) was removed (E8 2026-05-30): it added noise
+            # without clear benefit (V11 plan), and V-A/emotion alignment is the right
+            # signal for "vibe" intent.  We gate this term on whether the query looks
+            # like a mood description (≥2 tokens and a non-trivial emotion score).
+            # E8 — emotion/V-A alignment for mood/vibe queries (≥2 tokens).
+            # Encodes the query's emotional intent as a V-A coordinate and scores
+            # songs by Gaussian RBF proximity (σ=0.25). Only applied when the
+            # emotion classifier returns a meaningful emotion dict. Silent on failure.
+            matched['_emo_va'] = 0.0
+            if len(terms) >= 2 and self.emotion_classifier.available:
+                try:
+                    q_emo = self.emotion_classifier.analyze_emotion(keywords)
+                    if q_emo and max(q_emo.values(), default=0) > 0.05:
+                        q_v, q_a = self.emotion_classifier.emotions_to_valence_arousal(q_emo)
+                        va_dist = np.sqrt(
+                            (self.song_va[:, 0] - q_v) ** 2 +
+                            (self.song_va[:, 1] - q_a) ** 2
+                        )
+                        va_sim = np.exp(-(va_dist ** 2) / (2 * 0.25 ** 2))
+                        mid = matched.index.tolist()
+                        matched['_emo_va'] = va_sim[mid]
+                except Exception:
+                    pass
+
+            # Hybrid: keyword 40% + semantic 45% + emotion/V-A 15%
+            # (centroid-γ removed; emotion/V-A adds the mood-alignment signal)
             matched['_final_score'] = (
-                0.35 * matched['_kw_norm'] +
-                0.40 * matched['_sem'] +
-                0.25 * matched['_centroid_sim']
+                0.40 * matched['_kw_norm'] +
+                0.45 * matched['_sem'] +
+                0.15 * matched['_emo_va']
             )
 
             matched = matched.sort_values('_final_score', ascending=False)
@@ -1723,7 +1738,7 @@ class MusicRecommender:
         result['original_index'] = result.index
         result['similarity_score'] = result['_final_score'].values
 
-        for col in ['_match_score', '_kw_norm', '_centroid_sim', '_sem', '_final_score']:
+        for col in ['_match_score', '_kw_norm', '_sem', '_emo_va', '_final_score']:
             if col in result.columns:
                 result = result.drop(columns=[col])
 
