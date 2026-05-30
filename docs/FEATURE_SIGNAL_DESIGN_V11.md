@@ -217,6 +217,14 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
 3. **E7** ✅ **(2026-05-30):** Color bỏ `audio_sim` (25%): màu→audio formulaic hoàn toàn tương quan với va_sim/emotion_sim (cùng pipeline màu→V-A→audio), Δ V-A proximity = 0.0000 trên 12 màu test. Redistribute: lyrics 40%, va 30%, emotion 30%. **Bonus fix:** null-centroid bug crashing matmul từ E1d.
 
+**E7-CHAIN — Đại tu chain màu→cảm xúc→nhạc (2026-05-31):** Phát hiện và sửa 5 lỗi cốt lõi khi kiểm tra triết lý feature:
+1. ✅ `song_va` = màu album art thay vì âm nhạc (valence r=0.22→0.93 sau fix audio+lyrics).
+2. ✅ `hex_to_hsl` hoán vị S↔L (colorsys trả h,l,s nhưng code unpack h,s,l → mọi HSL sai).
+3. ✅ 13 emotion labels trong profiles ≠ 8 CLAP labels của bài → `emotion_sim` = 0, lyrics query rỗng.
+4. ✅ `color_to_emotion_probs` flat (max 0.15) → đổi thành V-A Gaussian soft-assignment (max 0.35–0.60).
+5. ✅ `preferred_emotions` chứa 'passionate/romantic/tender' không có trong catalog → `emotion_boost` = 0.
+Thêm: lyrics query dùng PhoBERT encode từ khóa tiếng Việt của emotion (thay 5 bài random). Kết quả: 10/12 màu test đúng emotion (83%), 4/4 quadrant coverage (từ 0/4). Cơ sở: Palmer PNAS 2013, Whiteford PMC6240980, Russell 1980, Wilms&Oberfeld 2018.
+
 #### GT-COLOR — Phương pháp xây backtest tin cậy cho recommend_by_colors (nghiên cứu 2026-05-30)
 
 **Vấn đề hiện tại:** GT `color_emotion_gt_v1` là "engine-derived" (vòng lặp): dùng cùng `color_to_valence_arousal()` của engine để xác định "relevant song" → NDCG=1.0 là tautology, không phải chất lượng thật.
