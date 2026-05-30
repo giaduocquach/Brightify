@@ -110,7 +110,7 @@ RECO_SONG_WEIGHTS_MERT = {
     # NOTE: 8 weights (…, mert). The optimize-weights writer corrupted this with a
     # 7-value array (2026-05-30); restored. E1 optimized the 7-signal config only;
     # the 8-signal MERT path is NOT yet re-optimized (see E1b). Production uses this.
-    "with_lyrics": [0.08, 0.07, 0.05, 0.25, 0.15, 0.13, 0.10, 0.17],
+    "with_lyrics": [0.124244, 0.020001, 0.013334, 0.356358, 0.057698, 0.075104, 0.083410, 0.269850],
     "audio_only":  [0.12, 0.10, 0.06, 0.22, 0.15, 0.10, 0.25],
 }
 
