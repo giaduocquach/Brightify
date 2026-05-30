@@ -28,88 +28,91 @@ class AdvancedColorMapper:
     def __init__(self, use_vietnamese_adaptation: bool = True):
         self.use_vietnamese_adaptation = use_vietnamese_adaptation
 
-        # Updated emotion-to-color profiles based on:
-        # Jonauskaite et al. (2020) "Universal patterns in color-emotion associations"
-        # Values are median responses from 12 countries, 4,598 participants
+        # Emotion-color profiles aligned with CLAP fused_emotion labels (8 labels).
+        # CRITICAL: these must match the song catalog's fused_emotion values exactly
+        # so the emotion_sim signal in recommend_by_colors actually works.
+        #
+        # Sources: Jonauskaite 2020 (Psych Science, 4598 participants, 30 countries),
+        # Palmer 2013 (PNAS), Whiteford 2018 (PMC6240980), Wilms & Oberfeld 2018.
+        # Vietnamese cultural notes embedded per color.
+        #
+        # HSL similarity weights: 0.40 saturation + 0.35 lightness + 0.25 hue
+        # (Wilms & Oberfeld 2018: chroma > lightness > hue in effect size;
+        #  Whiteford: saturation r_s=0.720 for arousal, lightness r_s=0.484 for valence)
         self.emotion_color_profiles = {
-            'ecstatic': {
-                'hue_range': (40, 60),    # Bright Yellow
-                'saturation_range': (85, 100),
-                'lightness_range': (60, 80),
-                'valence': 0.95, 'arousal': 0.90
-            },
             'happy': {
-                'hue_range': (45, 75),    # Yellow-Orange
-                'saturation_range': (75, 95),
-                'lightness_range': (55, 80),
-                'valence': 0.85, 'arousal': 0.70
+                # Yellow–Orange: warm, bright, high saturation
+                # Jonauskaite: yellow = joy globally; Vietnamese yellow = festive/royal
+                'hue_range': (30, 75),
+                'saturation_range': (65, 100),
+                'lightness_range': (55, 85),
+                'valence': 0.88, 'arousal': 0.70,
+                'vi_keywords': ['vui vẻ', 'hạnh phúc', 'tươi vui', 'rạng rỡ'],
             },
-            'hopeful': {
-                'hue_range': (90, 130),   # Yellow-Green
-                'saturation_range': (60, 85),
-                'lightness_range': (60, 85),
-                'valence': 0.75, 'arousal': 0.55
+            'excited': {
+                # Bright red–orange: intense, high saturation, mid lightness
+                # Jonauskaite: orange/red = excitement/passion
+                'hue_range': (0, 35),
+                'saturation_range': (80, 100),
+                'lightness_range': (40, 65),
+                'valence': 0.72, 'arousal': 0.92,
+                'vi_keywords': ['phấn khích', 'sôi động', 'năng lượng', 'bùng cháy'],
             },
             'peaceful': {
-                'hue_range': (160, 200),  # Cyan-Light Blue
-                'saturation_range': (25, 55),
-                'lightness_range': (65, 90),
-                'valence': 0.70, 'arousal': 0.15
+                # Cyan–light blue: cool, desaturated, bright
+                # Jonauskaite: blue-green = serenity/peace cross-culturally
+                'hue_range': (155, 210),
+                'saturation_range': (20, 55),
+                'lightness_range': (65, 92),
+                'valence': 0.72, 'arousal': 0.15,
+                'vi_keywords': ['bình yên', 'thanh thản', 'nhẹ nhàng', 'thư thái'],
             },
             'calm': {
-                'hue_range': (130, 170),  # Green-Cyan
-                'saturation_range': (30, 60),
-                'lightness_range': (50, 75),
-                'valence': 0.60, 'arousal': 0.20
-            },
-            'tender': {
-                'hue_range': (320, 350),  # Light Pink
-                'saturation_range': (35, 65),
-                'lightness_range': (70, 90),
-                'valence': 0.72, 'arousal': 0.30
-            },
-            'romantic': {
-                'hue_range': (340, 360),  # Pink-Red
-                'saturation_range': (50, 75),
-                'lightness_range': (55, 75),
-                'valence': 0.70, 'arousal': 0.45
+                # Green–cyan: moderate saturation, medium lightness
+                'hue_range': (110, 170),
+                'saturation_range': (25, 60),
+                'lightness_range': (45, 72),
+                'valence': 0.62, 'arousal': 0.22,
+                'vi_keywords': ['bình tĩnh', 'ổn định', 'tĩnh lặng', 'dịu dàng'],
             },
             'melancholic': {
-                'hue_range': (220, 260),  # Blue
-                'saturation_range': (30, 60),
-                'lightness_range': (25, 50),
-                'valence': 0.30, 'arousal': 0.30
+                # Medium-dark blue: moderate saturation, low-mid lightness
+                # Jonauskaite: blue = sadness but with some reflection
+                'hue_range': (215, 265),
+                'saturation_range': (28, 62),
+                'lightness_range': (22, 48),
+                'valence': 0.28, 'arousal': 0.32,
+                'vi_keywords': ['u sầu', 'hoài niệm', 'trầm buồn', 'nhớ thương'],
             },
             'sad': {
-                'hue_range': (210, 250),  # Blue
-                'saturation_range': (20, 50),
-                'lightness_range': (15, 40),
-                'valence': 0.20, 'arousal': 0.20
+                # Dark blue–grey: low saturation, very dark
+                # Jonauskaite: black/dark blue = sadness/grief
+                'hue_range': (200, 260),
+                'saturation_range': (10, 42),
+                'lightness_range': (8, 35),
+                'valence': 0.15, 'arousal': 0.18,
+                'vi_keywords': ['buồn bã', 'đau lòng', 'cô đơn', 'tuyệt vọng'],
             },
-            'nostalgic': {
-                'hue_range': (30, 50),    # Sepia/Brown tones
-                'saturation_range': (35, 60),
-                'lightness_range': (35, 55),
-                'valence': 0.45, 'arousal': 0.35
-            },
-            'anxious': {
-                'hue_range': (60, 90),    # Yellow-Green (sickly)
-                'saturation_range': (70, 95),
-                'lightness_range': (40, 60),
-                'valence': 0.25, 'arousal': 0.80
+            'tense': {
+                # Yellow-green, high saturation: unsettling, nervous energy
+                # Wilms & Oberfeld: high chroma + medium hue = tension/anxiety
+                'hue_range': (55, 100),
+                'saturation_range': (72, 100),
+                'lightness_range': (38, 62),
+                'valence': 0.30, 'arousal': 0.78,
+                'vi_keywords': ['căng thẳng', 'lo lắng', 'bất an', 'hồi hộp'],
             },
             'angry': {
-                'hue_range': (0, 15),     # Red
-                'saturation_range': (80, 100),
-                'lightness_range': (30, 50),
-                'valence': 0.15, 'arousal': 0.90
+                # Deep red: highest saturation, mid-low lightness
+                # Jonauskaite: red = anger cross-culturally (most consistent emotion-color)
+                # Vietnamese: red also = luck/festive → context matters;
+                # dark/deep red = anger, bright red = festive (handled by lightness)
+                'hue_range': (345, 20),   # wraps around 0°
+                'saturation_range': (82, 100),
+                'lightness_range': (25, 50),
+                'valence': 0.12, 'arousal': 0.92,
+                'vi_keywords': ['tức giận', 'bực bội', 'nổi loạn', 'phẫn nộ'],
             },
-            'passionate': {
-                'hue_range': (350, 10),   # Deep Red
-                'saturation_range': (75, 100),
-                'lightness_range': (40, 60),
-                'valence': 0.65, 'arousal': 0.85
-            }
         }
 
         # Vietnamese cultural adjustments (maintained)
@@ -223,32 +226,64 @@ class AdvancedColorMapper:
         return hex_color, confidence * 0.8
 
     def color_to_emotion_probs(self, hex_color: str) -> Dict[str, float]:
-        """
-        Reverse mapping: Color to emotion probabilities
-        """
-        h, s, l = self.hex_to_hsl(hex_color)
+        """Color → emotion probability distribution via V-A Gaussian soft-assignment.
 
-        scores = {}
-        for emotion, profile in self.emotion_color_profiles.items():
-            hue_min, hue_max = profile['hue_range']
-            if hue_min > hue_max:
-                hue_mid = ((hue_min + hue_max + 360) / 2) % 360
+        Chain: colour → V-A (Whiteford 2018 HSL formula) → Gaussian over
+        Russell circumplex centroids of the 8 CLAP emotion labels.
+
+        This is more principled than HSL-profile matching: the profile approach
+        collapses to near-uniform (all 8 centroids equidistant from most inputs)
+        because the hue Gaussians overlap heavily. The V-A intermediate is the
+        validated bridge (Palmer 2013 PNAS: r=0.89–0.99).
+
+        References:
+          Whiteford 2018 (PMC6240980): sat→arousal r_s=0.720, light→valence r_s=0.484
+          Wilms & Oberfeld 2018: chroma > lightness > hue in effect size
+          Palmer 2013: emotion mediates colour-music correspondence
+          Russell 1980: circumplex V-A positions of emotion labels
+        """
+        h, l, s = self.hex_to_hsl(hex_color)   # (hue°, lightness%, saturation%)
+        s01, l01 = s / 100.0, l / 100.0
+
+        # Whiteford structural mappings (hue computed as warmth and yellow-blue axis)
+        if s01 < 0.12:
+            # Achromatic (grey/white/black): hue meaningless, driven by lightness
+            # Bright (white) → peaceful; Dark (black) → sad; Mid-grey → calm
+            valence = float(np.clip(0.35 + 0.55 * l01, 0, 1))
+            arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
+        else:
+            # Warmth: red/orange/yellow=1, green/teal=0, blue/purple=0, wraps at 330
+            # Extended cool zone: 90–300° all cool (green through purple)
+            if h <= 60 or h >= 330:
+                hue_warmth = 1.0
+            elif h <= 90:
+                hue_warmth = 1.0 - (h - 60) / 30   # 60→90: warm to cool
+            elif h <= 300:
+                hue_warmth = 0.0                    # green, teal, blue, purple = cool
             else:
-                hue_mid = (hue_min + hue_max) / 2
-            sat_mid = np.mean(profile['saturation_range'])
-            light_mid = np.mean(profile['lightness_range'])
+                hue_warmth = (h - 300) / 30 * 0.7  # 300→330: cool to warm
+            # Yellow-blue axis for valence
+            hue_yb = (1.0 if 40 <= h <= 80 else
+                      0.0 if 200 <= h <= 260 else 0.5)
+            valence = float(np.clip(0.45*l01 + 0.35*hue_yb + 0.20*(1-s01), 0, 1))
+            arousal = float(np.clip(0.40*s01 + 0.35*hue_warmth + 0.25*(1-l01), 0, 1))
 
-            # Hue distance (circular)
-            hue_diff = min(abs(h - hue_mid), 360 - abs(h - hue_mid))
-            hue_sim = np.exp(-hue_diff / 60)
-
-            # Saturation and lightness
-            sat_sim = np.exp(-abs(s - sat_mid) / 30)
-            light_sim = np.exp(-abs(l - light_mid) / 25)
-
-            scores[emotion] = 0.5 * hue_sim + 0.3 * sat_sim + 0.2 * light_sim
-
-        # Normalize
+        # Gaussian soft-assignment over 8 CLAP Russell centroids (σ=0.22)
+        centroids = {
+            'happy':       (0.88, 0.70),
+            'excited':     (0.72, 0.92),
+            'peaceful':    (0.72, 0.15),
+            'calm':        (0.62, 0.22),
+            'melancholic': (0.28, 0.32),
+            'sad':         (0.15, 0.18),
+            'tense':       (0.30, 0.78),
+            'angry':       (0.12, 0.92),
+        }
+        sigma = 0.22
+        scores = {
+            emo: float(np.exp(-((valence-cv)**2 + (arousal-ca)**2) / (2*sigma**2)))
+            for emo, (cv, ca) in centroids.items()
+        }
         total = sum(scores.values())
         return {k: v/total for k, v in scores.items()} if total > 0 else scores
 
@@ -471,8 +506,9 @@ class AdvancedColorMapper:
     def hex_to_hsl(self, hex_color: str) -> Tuple[float, float, float]:
         rgb = self.hex_to_rgb(hex_color)
         r, g, b = [x/255.0 for x in rgb]
+        # colorsys.rgb_to_hls returns (hue, lightness, saturation) — note l before s
         h, l, s = colorsys.rgb_to_hls(r, g, b)
-        return (h*360, s*100, l*100)
+        return (h*360, l*100, s*100)  # (hue°, lightness%, saturation%)
 
 
 # Singleton

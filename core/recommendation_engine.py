@@ -417,19 +417,33 @@ class MusicRecommender:
                 for i, emo in enumerate(self.emotion_labels):
                     query_emotion[i] += emotion_probs.get(emo, 0)
 
-                # Map color to target emotions, then find representative lyrics embeddings
-                # This creates a "query lyrics vector" based on emotional profile
-                if self.embeddings_normalized is not None and 'fused_emotion' in self.df.columns:
-                    # Get top emotion for this color
+                # Build lyrics query vector from emotion keywords (Vietnamese) via PhoBERT.
+                # Philosophy: colour → emotion → music theme.
+                # Old approach (broken): averaged 5 random songs with same fused_emotion
+                #   → often returned no songs (profile labels ≠ CLAP labels) + weak signal.
+                # New approach: encode the emotion's Vietnamese keywords directly with
+                #   PhoBERT → captures the semantic/lyrical theme of the colour's mood.
+                if self.embeddings_normalized is not None:
                     top_emotion = max(emotion_probs.items(), key=lambda x: x[1])[0]
-                    # Find songs with this emotion and use their average embedding
-                    emotion_mask = self.df['fused_emotion'] == top_emotion
-                    if emotion_mask.sum() > 0:
-                        emotion_indices = np.where(emotion_mask)[0]
-                        # Average of top 5 songs with this emotion
-                        sample_indices = emotion_indices[:min(5, len(emotion_indices))]
-                        avg_lyrics = self.embeddings_normalized[sample_indices].mean(axis=0)
-                        query_lyrics_vecs.append(avg_lyrics)
+                    profile = self.color_mapper.emotion_color_profiles.get(top_emotion, {})
+                    vi_keywords = profile.get('vi_keywords', [])
+                    if vi_keywords and self.emotion_classifier.available:
+                        # Encode each keyword phrase with PhoBERT, average
+                        kw_vecs = []
+                        for kw in vi_keywords:
+                            v = self.emotion_classifier.encode_lyrics(kw)
+                            if v is not None and np.linalg.norm(v) > 0:
+                                kw_vecs.append(v / np.linalg.norm(v))
+                        if kw_vecs:
+                            avg_lyrics = np.mean(kw_vecs, axis=0)
+                            query_lyrics_vecs.append(avg_lyrics)
+                    elif 'fused_emotion' in self.df.columns:
+                        # Fallback: centroid of songs with matching emotion label
+                        emotion_mask = self.df['fused_emotion'] == top_emotion
+                        if emotion_mask.sum() >= 3:
+                            idxs = np.where(emotion_mask)[0][:min(20, emotion_mask.sum())]
+                            avg_lyrics = self.embeddings_normalized[idxs].mean(axis=0)
+                            query_lyrics_vecs.append(avg_lyrics)
             except (ValueError, KeyError, TypeError):
                 query_va.append([0.5, 0.5])
 
@@ -466,18 +480,22 @@ class MusicRecommender:
 
         # Determine target mood quadrant based on V-A
         valence, arousal = query_va_centroid
+        # preferred_emotions uses CLAP fused_emotion labels only (8 values:
+        # happy/excited/peaceful/calm/melancholic/sad/tense/angry).
+        # Old code included 'passionate/nostalgic/romantic/tender' which are NOT
+        # in fused_emotion → emotion_boost was always 0 for those labels.
         if valence >= 0.5 and arousal >= 0.5:
             target_quadrant = 'Q1'  # Happy/Excited
-            preferred_emotions = {'happy', 'excited', 'passionate'}
+            preferred_emotions = {'happy', 'excited'}
         elif valence < 0.5 and arousal >= 0.5:
             target_quadrant = 'Q2'  # Angry/Tense
-            preferred_emotions = {'angry', 'tense', 'excited'}
+            preferred_emotions = {'angry', 'tense'}
         elif valence < 0.5 and arousal < 0.5:
             target_quadrant = 'Q3'  # Sad/Melancholic
-            preferred_emotions = {'sad', 'melancholic', 'nostalgic'}
+            preferred_emotions = {'sad', 'melancholic'}
         else:
             target_quadrant = 'Q4'  # Calm/Peaceful
-            preferred_emotions = {'calm', 'peaceful', 'romantic', 'tender'}
+            preferred_emotions = {'calm', 'peaceful'}
 
         if self.verbose:
             print(f"   Query V-A: valence={valence:.2f}, arousal={arousal:.2f} ({target_quadrant})")
