@@ -734,12 +734,16 @@ def _update_config_weights(new_weights) -> None:
     # Format new weights as Python list with 6 dp
     formatted = "[" + ", ".join(f"{w:.6f}" for w in new_weights) + "]"
 
-    # Replace the "with_lyrics" line inside RECO_SONG_WEIGHTS dict
-    pattern = r'("with_lyrics"\s*:\s*)\[.*?\]'
+    # Replace ONLY the "with_lyrics" line inside the RECO_SONG_WEIGHTS dict.
+    # BUGFIX (2026-05-30): the old pattern matched EVERY "with_lyrics": [...] line
+    # and re.subn replaced all of them — corrupting RECO_SONG_WEIGHTS_MERT (8-value)
+    # with this 7-signal array. Anchor to the exact dict name + count=1 so the
+    # 8-signal MERT config is never touched by the 7-signal optimizer.
+    pattern = r'(RECO_SONG_WEIGHTS = \{[^}]*?"with_lyrics"\s*:\s*)\[.*?\]'
     replacement = r'\g<1>' + formatted
-    new_src, n = re.subn(pattern, replacement, src)
+    new_src, n = re.subn(pattern, replacement, src, count=1, flags=re.DOTALL)
     if n == 0:
-        print("[optimize] WARNING: could not find 'with_lyrics' pattern in config.py — not updated")
+        print("[optimize] WARNING: could not find RECO_SONG_WEIGHTS 'with_lyrics' pattern in config.py — not updated")
         return
 
     with open(config_path, "w", encoding="utf-8") as fh:
