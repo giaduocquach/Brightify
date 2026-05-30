@@ -216,7 +216,7 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
    - **Kiểm chứng đa-metric (1050 queries, cũ vs mới):** NDCG +0.0082 · Precision@10 +0.0079 · Recall@10 +0.0008 (+18% rel) · MRR +0.0136 — **cả 4 đều dương** → win không phải artifact của NDCG. *(Bài học: gate nên report cả họ metric — NDCG + Recall@k + MRR — chứ không chỉ NDCG; Recall tuyệt đối nhỏ do GT editorial có tập-liên-quan lớn.)*
 2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
 3. **E7 — Color bỏ/hạ CIEDE2000-1-màu** *(M)*: chuyển sang **đa-màu→V-A** (saturation→arousal, lightness→valence); đo color-path.
-4. **E8 — Vibe search: bỏ centroid-γ** *(S)* + **thêm term emotion/V-A** cho query mood (gate); đo (cần GT chủ đề-lời).
+4. **E8** ✅ **(2026-05-30):** Vibe search bỏ centroid-γ (25%), thêm emotion/V-A (15%), kw 35→40%, sem 40→45%. GT-1 (20 queries semi-independent): **NDCG +0.0064, Prec +0.0100, Recall +0.0017, MRR +0.0108 — cả 4 dương**.
 
 **E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30; ĐÍNH CHÍNH 2026-05-30 sau phản hồi user).**
 Câu hỏi: optimizer đã hạ tonal (0.013)/rhythmic (0.020)/V-A (0.058) gần 0 — xoá hẳn cho gọn?
