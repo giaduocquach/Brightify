@@ -215,7 +215,38 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
    - ✅ **E1b — config 8-signal MERT (PRODUCTION) ĐÃ TỐI ƯU & ÁP DỤNG (2026-05-30):** mở rộng `optimize-weights --mert` (x0=`RECO_SONG_WEIGHTS_MERT` 8-dim, ENABLE_MERT=True). **CONFIRMED:** NDCG@10 Δ**+0.0097, CI95 [+0.0063, +0.0155]** (>0) · ILD **+0.053** · coverage **+0.027** · MoodCoherence −0.021 (nhẹ). Trọng số mới: lyrics 0.25→**0.356**, **MERT 0.17→0.270**, V-A 0.15→0.058, emotion 0.13→0.075, tonal/rhythmic cắt mạnh → **xác nhận V11: lyrics+MERT gánh chính, cắt dư thừa**. ✅ **Đã vào production** (config sum=1.0, recommend_by_song chạy OK). Writer đã neo `\b`+count=1 (không phá dict kia).
    - **Kiểm chứng đa-metric (1050 queries, cũ vs mới):** NDCG +0.0082 · Precision@10 +0.0079 · Recall@10 +0.0008 (+18% rel) · MRR +0.0136 — **cả 4 đều dương** → win không phải artifact của NDCG. *(Bài học: gate nên report cả họ metric — NDCG + Recall@k + MRR — chứ không chỉ NDCG; Recall tuyệt đối nhỏ do GT editorial có tập-liên-quan lớn.)*
 2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
-3. **E7** ✅ **(2026-05-30):** Color bỏ `audio_sim` (25%): màu→audio formulaic hoàn toàn tương quan với va_sim/emotion_sim (cùng pipeline màu→V-A→audio), Δ V-A proximity = 0.0000 trên 12 màu test. Redistribute: lyrics 35→40%, va 20→30%, emotion 20→30%. **Bonus fix:** null-centroid bug (query_lyrics_centroid=None crashing matmul) — tồn tại từ E1d bỏ use_lyrics guard.
+3. **E7** ✅ **(2026-05-30):** Color bỏ `audio_sim` (25%): màu→audio formulaic hoàn toàn tương quan với va_sim/emotion_sim (cùng pipeline màu→V-A→audio), Δ V-A proximity = 0.0000 trên 12 màu test. Redistribute: lyrics 40%, va 30%, emotion 30%. **Bonus fix:** null-centroid bug crashing matmul từ E1d.
+
+#### GT-COLOR — Phương pháp xây backtest tin cậy cho recommend_by_colors (nghiên cứu 2026-05-30)
+
+**Vấn đề hiện tại:** GT `color_emotion_gt_v1` là "engine-derived" (vòng lặp): dùng cùng `color_to_valence_arousal()` của engine để xác định "relevant song" → NDCG=1.0 là tautology, không phải chất lượng thật.
+
+**Thiết kế GT độc lập — 4 lớp, theo thứ tự bắt buộc:**
+
+**Lớp 1 (bắt buộc trước) — Calibration nhạc VN thật:**
+Lấy 50–100 bài từ catalog, mời 5+ người nghe VN rate V-A (scale SAM/GEW). Đo Pearson r giữa Essentia V-A ước lượng vs human V-A. **Nếu arousal r < 0.50 hoặc valence r < 0.30 → proxy không đáng tin.** Đây là cơ sở để quyết định có tiến lên Lớp 2-3 hay không. *(Lý do: Essentia valence R²=0.17–0.40 trong-corpus, cross-corpus DEAM→PMEmo valence R²=−0.27; nhạc VN chưa được đo, cần đo trực tiếp.)*
+
+**Lớp 2 — Anchor corpus: PMEmo (nhạc pop Trung/Đài/HK), KHÔNG phải DEAM:**
+PMEmo (794 bài pop, MIT license, IS13 OpenSMILE sẵn, human V-A scale −1→+1) gần nhạc VN hơn DEAM (rock/electronic Tây; DEAM→PMEmo valence R²=−0.27 âm). Dùng PMEmo làm corpus anchor human-rated V-A. Extract features từ PMEmo bằng Essentia (cùng pipeline catalog) → tìm nearest neighbor PMEmo cho mỗi bài VN (trong MERT embedding space, không phải IS13 — MERT cải thiện cross-corpus ~2.6× so với handcrafted, arXiv 2510.04688). Proxy V-A của bài VN = V-A của PMEmo neighbor gần nhất.
+
+**Lớp 3 — Query V-A: Whiteford 2018 structural formula (không phải Jonauskaite lookup):**
+Jonauskaite 2020 KHÔNG có bảng V-A tọa độ (chỉ có discrete emotion freq via GEW), và Vietnam không trong 30 nước mẫu (red VN = tích cực/lễ hội, white VN = tang trắng). Thay vào đó: dùng **Whiteford 2018** (i-Perception, PMC6240980) — đã đo quantified: saturation→arousal (r_s=0.720), lightness→valence (r_s=0.484) — apply trực tiếp từ HSL của màu:
+```
+query_arousal = f(saturation, hue_RG)   # dominant signal
+query_valence = f(lightness, hue_YB)    # secondary
+```
+Cách này culturally portable hơn named-color lookup (structural = physical, không phải cultural association).
+
+**Lớp 4 — Metric & threshold:**
+Chuẩn lĩnh vực (cross-modal retrieval: IMEMNet/MMVA): **Recall@1, @5, @10 + mAP@10** (không phải NDCG là primary). Soft scoring: S = exp(−d/σ) thay binary threshold. Hard threshold nếu cần binary: **θ = 0.25 Euclidean trong V-A normalized** (từ Memo2496: 30 expert annotators, consensus consistency distance; MERP: ±2σ≈0.20–0.30). Report sensitivity tại θ ∈ {0.15, 0.20, 0.25, 0.30}.
+
+**7 sanity checks trước khi chạy:**
+(1) V-A distribution coverage ≥ 3/4 quadrants · (2) Calibration r (Lớp 1) pass · (3) MERT neighbor distance < 0.25 cho ≥80% songs · (4) Random baseline Recall@10 << 50% · (5) Opposite-emotion colors có mean arousal khác biệt (t-test p<0.05) · (6) Color GT audit: red/white VN có cần offset không? · (7) Top-5 cực trị V-A khớp giữa GT cũ và GT mới.
+
+**Cơ sở nghiên cứu (đã kiểm chứng):**
+Palmer PNAS 2013 (r=0.89–0.99 emotion mediation) · Whiteford i-Perception 2018 (PMC6240980: saturation r_s=0.720) · DEAM PMC5345802 · PMEmo ICMR 2018 (MIT) · Ching&Widmer 2510.04688 (cross-corpus R² tables) · Memo2496 2512.13998 (θ=0.25) · MERP PMC9824842 (±2σ calibration) · MMVA 2501.01094 (Recall@K, soft scoring) · Eerola&Anderson ACM CSUR 2026 (meta-analysis arousal r=0.81>valence r=0.67).
+
+**Trạng thái:** ⏳ Chưa triển khai — cần thực hiện Lớp 1 (human rating VN) trước. **Đây là điều kiện tiên quyết; không nên làm Lớp 2-4 nếu Lớp 1 thất bại.** Effort tổng: M-L (chủ yếu ở human annotation Lớp 1 + PMEmo download+extract Lớp 2).
 4. **E8** ✅ **(2026-05-30):** Vibe search bỏ centroid-γ (25%), thêm emotion/V-A (15%), kw 35→40%, sem 40→45%. GT-1 (20 queries semi-independent): **NDCG +0.0064, Prec +0.0100, Recall +0.0017, MRR +0.0108 — cả 4 dương**.
 
 **E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30; ĐÍNH CHÍNH 2026-05-30 sau phản hồi user).**
