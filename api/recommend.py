@@ -129,11 +129,15 @@ async def recommend_by_color(request: ColorRecommendationRequest):
             weights=request.weights,
             diversity_penalty=request.diversity_penalty,
         )
+        # V12: colour→emotion bridge for the UI chip (the feature's core value made
+        # visible — Palmer/PLOS: emotion mediates the colour↔music link).
+        bridge = _recommender.color_emotion_bridge(request.colors)
         payload = RecommendationResponse(
             success=True,
             query={"colors": request.colors, "top_k": request.top_k,
                    "weights": request.weights or config.WEIGHTS_COLOR_QUERY,
-                   "diversity_penalty": request.diversity_penalty},
+                   "diversity_penalty": request.diversity_penalty,
+                   "bridge": bridge},
             results=_dataframe_to_dict(results),
             count=len(results),
         )

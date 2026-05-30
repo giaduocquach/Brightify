@@ -242,50 +242,59 @@ class AdvancedColorMapper:
           Palmer 2013: emotion mediates colour-music correspondence
           Russell 1980: circumplex V-A positions of emotion labels
         """
-        h, l, s = self.hex_to_hsl(hex_color)   # (hue°, lightness%, saturation%)
-        s01, l01 = s / 100.0, l / 100.0
+        valence, arousal = self.hsl_to_va(hex_color)
 
-        # Whiteford structural mappings (hue computed as warmth and yellow-blue axis)
-        if s01 < 0.12:
-            # Achromatic (grey/white/black): hue meaningless, driven by lightness
-            # Bright (white) → peaceful; Dark (black) → sad; Mid-grey → calm
-            valence = float(np.clip(0.35 + 0.55 * l01, 0, 1))
-            arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
-        else:
-            # Warmth: red/orange/yellow=1, green/teal=0, blue/purple=0, wraps at 330
-            # Extended cool zone: 90–300° all cool (green through purple)
-            if h <= 60 or h >= 330:
-                hue_warmth = 1.0
-            elif h <= 90:
-                hue_warmth = 1.0 - (h - 60) / 30   # 60→90: warm to cool
-            elif h <= 300:
-                hue_warmth = 0.0                    # green, teal, blue, purple = cool
-            else:
-                hue_warmth = (h - 300) / 30 * 0.7  # 300→330: cool to warm
-            # Yellow-blue axis for valence
-            hue_yb = (1.0 if 40 <= h <= 80 else
-                      0.0 if 200 <= h <= 260 else 0.5)
-            valence = float(np.clip(0.45*l01 + 0.35*hue_yb + 0.20*(1-s01), 0, 1))
-            arousal = float(np.clip(0.40*s01 + 0.35*hue_warmth + 0.25*(1-l01), 0, 1))
-
-        # Gaussian soft-assignment over 8 CLAP Russell centroids (σ=0.22)
-        centroids = {
-            'happy':       (0.88, 0.70),
-            'excited':     (0.72, 0.92),
-            'peaceful':    (0.72, 0.15),
-            'calm':        (0.62, 0.22),
-            'melancholic': (0.28, 0.32),
-            'sad':         (0.15, 0.18),
-            'tense':       (0.30, 0.78),
-            'angry':       (0.12, 0.92),
-        }
         sigma = 0.22
         scores = {
             emo: float(np.exp(-((valence-cv)**2 + (arousal-ca)**2) / (2*sigma**2)))
-            for emo, (cv, ca) in centroids.items()
+            for emo, (cv, ca) in self.RUSSELL_CENTROIDS.items()
         }
         total = sum(scores.values())
         return {k: v/total for k, v in scores.items()} if total > 0 else scores
+
+    # Russell-circumplex V-A centroids for the 8 CLAP emotion labels (normalised 0–1)
+    RUSSELL_CENTROIDS = {
+        'happy':       (0.88, 0.70),
+        'excited':     (0.72, 0.92),
+        'peaceful':    (0.72, 0.15),
+        'calm':        (0.62, 0.22),
+        'melancholic': (0.28, 0.32),
+        'sad':         (0.15, 0.18),
+        'tense':       (0.30, 0.78),
+        'angry':       (0.12, 0.92),
+    }
+
+    def hsl_to_va(self, hex_color: str) -> Tuple[float, float]:
+        """Color → (valence, arousal) in [0,1], Whiteford-2018-exact weighting.
+
+        Single source of truth for the colour→V-A bridge (used by
+        color_to_emotion_probs AND the recommender). Weights are the normalised
+        Spearman correlations reported in Whiteford et al. 2018 (PMC6240980):
+
+          Arousal ← redness r_s=.755, saturation .720, darkness −.549
+                    → normalised 0.37 / 0.36 / 0.27
+          Valence ← lightness r_s=.484, yellowness .466  (saturation does NOT predict
+                    valence → excluded)  → normalised 0.52 / 0.48
+
+        Perceptual axes from hue (cosine of the colour wheel):
+          redness    = (1+cos h)/2       → red=1, cyan=0   (a* proxy)
+          yellowness = (1+cos(h-60))/2   → yellow=1, blue=0 (b* proxy)
+        """
+        h, l, s = self.hex_to_hsl(hex_color)   # (hue°, lightness%, saturation%)
+        s01, l01 = s / 100.0, l / 100.0
+
+        if s01 < 0.12:
+            # Achromatic (grey/white/black): hue meaningless → lightness drives both.
+            # Bright→peaceful (high V, low A); dark→sad/tense (low V, higher A).
+            valence = float(np.clip(0.35 + 0.55 * l01, 0, 1))
+            arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
+        else:
+            h_rad = np.deg2rad(h)
+            redness = (1 + np.cos(h_rad)) / 2
+            yellowness = (1 + np.cos(np.deg2rad(h - 60))) / 2
+            valence = float(np.clip(0.52*l01 + 0.48*yellowness, 0, 1))
+            arousal = float(np.clip(0.37*redness + 0.36*s01 + 0.27*(1-l01), 0, 1))
+        return valence, arousal
 
     def color_to_valence_arousal(self, hex_color: str) -> Tuple[float, float, float]:
         """

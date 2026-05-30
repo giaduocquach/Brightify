@@ -383,39 +383,38 @@ class MusicRecommender:
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
 
+        # V12: cap at 3 colours. Research validates 1 colour → 1 emotion; >3 colours
+        # averaged together drift the V-A query toward the centre (mush). With UNION
+        # aggregation (below) up to 3 colours give a rich "mixed-mood" without drift.
+        color_hexes = list(color_hexes)[:3]
+
         if self.verbose:
             logger.debug(f"Recommending by colors: {color_hexes}")
 
-        # Extract query features (E7: audio removed — see fusion comment below)
-        query_va = []
-        query_emotion = np.zeros(len(self.emotion_labels))
+        # Extract query features (E7: audio removed — see fusion comment below).
+        # V12: keep PER-COLOUR V-A and emotion vectors for UNION aggregation
+        # (a song is relevant if it matches ANY chosen colour's mood).
+        per_color_va = []          # [[v, a], ...]
+        per_color_emotion = []     # [emotion_vec, ...]  (len = n emotion labels)
+        query_emotion = np.zeros(len(self.emotion_labels))  # sum, for bridge/quadrant
         query_lyrics_vecs = []
         target_quadrant = None
 
         for color in color_hexes:
             try:
-                # Whiteford 2018 (PMC6240980) structural HSL formula — culturally
-                # portable: saturation→arousal (r_s=0.720), lightness→valence
-                # (r_s=0.484). More grounded than the heuristic hue-mapping used
-                # previously (Vietnam is not in Jonauskaite's 30-country sample so
-                # named-color associations are unreliable for VN users).
-                h, l, s = self.color_mapper.hex_to_hsl(color)
-                h_deg = h  # already in degrees
-                hue_warmth = (
-                    1.0 if h_deg <= 60 or h_deg >= 330 else
-                    1.0 - (h_deg - 60) / 60 if h_deg <= 120 else
-                    0.0 if h_deg <= 240 else
-                    (h_deg - 240) / 90 * 0.5
-                )
-                hue_yb = (1.0 if 40 <= h_deg <= 80 else
-                          0.0 if 200 <= h_deg <= 260 else 0.5)
-                q_arousal = float(np.clip(0.40*s + 0.35*hue_warmth + 0.25*(1-l), 0, 1))
-                q_valence = float(np.clip(0.45*l + 0.35*hue_yb + 0.20*(1-s), 0, 1))
-                query_va.append([q_valence, q_arousal])
+                # Whiteford 2018 (PMC6240980) structural HSL formula — single source
+                # of truth in AdvancedColorMapper.hsl_to_va(): arousal ← redness/
+                # saturation/darkness, valence ← lightness/yellowness. Portable
+                # (Vietnam is not in Jonauskaite's sample → named-colour lookups
+                # are unreliable for VN users; the dimensional formula is).
+                q_valence, q_arousal = self.color_mapper.hsl_to_va(color)
+                per_color_va.append([q_valence, q_arousal])
 
                 emotion_probs = self.color_mapper.color_to_emotion_probs(color)
-                for i, emo in enumerate(self.emotion_labels):
-                    query_emotion[i] += emotion_probs.get(emo, 0)
+                evec = np.array([emotion_probs.get(emo, 0.0)
+                                 for emo in self.emotion_labels])
+                per_color_emotion.append(evec)
+                query_emotion += evec
 
                 # Build lyrics query vector from emotion keywords (Vietnamese) via PhoBERT.
                 # Philosophy: colour → emotion → music theme.
@@ -445,25 +444,28 @@ class MusicRecommender:
                             avg_lyrics = self.embeddings_normalized[idxs].mean(axis=0)
                             query_lyrics_vecs.append(avg_lyrics)
             except (ValueError, KeyError, TypeError):
-                query_va.append([0.5, 0.5])
+                per_color_va.append([0.5, 0.5])
+                per_color_emotion.append(np.ones(len(self.emotion_labels))
+                                         / len(self.emotion_labels))
 
-        # Compute centroids
-        query_va_centroid = np.mean(query_va, axis=0)
-        query_emotion /= len(color_hexes)
+        per_color_va = np.array(per_color_va, dtype=float)  # (C, 2)
 
-        # Pillar F — apply VN holiday + time-of-day V-A shift
+        # Pillar F — apply VN holiday + time-of-day V-A shift to every colour's V-A
         if ENABLE_VN_CONTEXT:
             try:
                 from core.vn_context import get_context_shift
                 ctx = get_context_shift()
-                query_va_centroid = np.clip(
-                    query_va_centroid + np.array([ctx["valence_shift"], ctx["arousal_shift"]]),
+                per_color_va = np.clip(
+                    per_color_va + np.array([ctx["valence_shift"], ctx["arousal_shift"]]),
                     0.0, 1.0,
                 )
             except Exception:
                 pass
 
-        # Normalize emotion vector
+        # Centroid used only for quadrant determination / emotion_boost (display-ish)
+        query_va_centroid = per_color_va.mean(axis=0)
+
+        # Normalize emotion sum vector (for quadrant/bridge reference)
         emotion_sum = query_emotion.sum()
         if emotion_sum > 0:
             query_emotion /= emotion_sum
@@ -478,47 +480,50 @@ class MusicRecommender:
         else:
             query_lyrics_centroid = None
 
-        # Determine target mood quadrant based on V-A
+        # V12: UNION-aware preferred emotions — the top inferred emotion of EACH
+        # chosen colour (CLAP labels only). For 1 colour this is its single mood;
+        # for 2–3 colours it's the set of all chosen moods (so a mixed-colour query
+        # boosts songs of any chosen mood, consistent with the union va/emotion sim).
+        preferred_emotions = set()
+        for evec in per_color_emotion:
+            if evec.sum() > 0:
+                preferred_emotions.add(self.emotion_labels[int(np.argmax(evec))])
+
+        # Centroid quadrant — used only to gate the single-colour cross-mood penalty.
         valence, arousal = query_va_centroid
-        # preferred_emotions uses CLAP fused_emotion labels only (8 values:
-        # happy/excited/peaceful/calm/melancholic/sad/tense/angry).
-        # Old code included 'passionate/nostalgic/romantic/tender' which are NOT
-        # in fused_emotion → emotion_boost was always 0 for those labels.
         if valence >= 0.5 and arousal >= 0.5:
             target_quadrant = 'Q1'  # Happy/Excited
-            preferred_emotions = {'happy', 'excited'}
         elif valence < 0.5 and arousal >= 0.5:
             target_quadrant = 'Q2'  # Angry/Tense
-            preferred_emotions = {'angry', 'tense'}
         elif valence < 0.5 and arousal < 0.5:
             target_quadrant = 'Q3'  # Sad/Melancholic
-            preferred_emotions = {'sad', 'melancholic'}
         else:
             target_quadrant = 'Q4'  # Calm/Peaceful
-            preferred_emotions = {'calm', 'peaceful'}
 
         if self.verbose:
             print(f"   Query V-A: valence={valence:.2f}, arousal={arousal:.2f} ({target_quadrant})")
 
         # ===== VECTORIZED SIMILARITY COMPUTATION =====
 
-        # 1. V-A similarity — proper Gaussian RBF, σ=0.20 (same as recommend_by_song).
-        # Previous: exp(-dist * 3) = pseudo-RBF with poorly-defined width.
-        # Now: exp(-dist²/(2σ²)) with σ=0.20 → songs within ~0.20 V-A units get
-        # high scores; beyond 0.40 units score drops near zero. More principled.
-        va_diff = self.song_va - query_va_centroid
-        va_dist = np.sqrt(np.sum(va_diff ** 2, axis=1))
-        va_sim = np.exp(-(va_dist ** 2) / (2 * 0.20 ** 2))
+        # 1. V-A similarity — UNION over colours (V12). Gaussian RBF σ=0.20 per
+        # colour, then element-wise MAX → a song scores high if it sits near ANY
+        # chosen colour's mood. Avoids the centroid-average "drift to centre".
+        va_sims = []
+        for cva in per_color_va:
+            d = np.sqrt(np.sum((self.song_va - cva) ** 2, axis=1))
+            va_sims.append(np.exp(-(d ** 2) / (2 * 0.20 ** 2)))
+        va_sim = np.max(np.stack(va_sims, axis=0), axis=0)
 
-        # 2. Emotion vector cosine similarity
-        query_norm = np.linalg.norm(query_emotion)
-        if query_norm > 0:
-            song_norms = np.linalg.norm(self.song_emotion_vec, axis=1)
-            dots = self.song_emotion_vec @ query_emotion
-            emotion_sim = dots / (song_norms * query_norm + 1e-10)
-            emotion_sim = (emotion_sim + 1) / 2
-        else:
-            emotion_sim = np.ones(self.n_songs) * 0.5
+        # 2. Emotion vector cosine similarity — UNION over colours (max).
+        song_norms = np.linalg.norm(self.song_emotion_vec, axis=1)
+        emo_sims = []
+        for evec in per_color_emotion:
+            qn = np.linalg.norm(evec)
+            if qn > 0:
+                s = (self.song_emotion_vec @ evec) / (song_norms * qn + 1e-10)
+                emo_sims.append((s + 1) / 2)
+        emotion_sim = (np.max(np.stack(emo_sims, axis=0), axis=0)
+                       if emo_sims else np.ones(self.n_songs) * 0.5)
 
         # 3. Audio feature cosine similarity
         # E7 (2026-05-30): audio_sim term REMOVED. It was a formulaic colour→audio
@@ -541,14 +546,18 @@ class MusicRecommender:
         if 'fused_emotion' in self.df.columns:
             fused_emo = self.df['fused_emotion'].fillna('').str.lower().values
             emotion_boost = np.where(np.isin(fused_emo, list(preferred_emotions)), 0.12, 0.0)
-            if target_quadrant in ('Q1', 'Q4'):
-                emotion_boost = np.where(
-                    np.isin(fused_emo, ('sad', 'melancholic')), -0.08, emotion_boost
-                )
-            elif target_quadrant == 'Q3':
-                emotion_boost = np.where(
-                    np.isin(fused_emo, ('happy', 'excited')), -0.08, emotion_boost
-                )
+            # Cross-mood penalty ONLY for a single colour (unambiguous target mood).
+            # For 2–3 colours the query intentionally spans moods → no penalty.
+            if len(per_color_va) == 1:
+                if target_quadrant in ('Q1', 'Q4'):
+                    emotion_boost = np.where(
+                        np.isin(fused_emo, ('sad', 'melancholic')), -0.08, emotion_boost)
+                elif target_quadrant == 'Q3':
+                    emotion_boost = np.where(
+                        np.isin(fused_emo, ('happy', 'excited')), -0.08, emotion_boost)
+                elif target_quadrant == 'Q2':
+                    emotion_boost = np.where(
+                        np.isin(fused_emo, ('peaceful', 'calm')), -0.08, emotion_boost)
 
         # ===== WEIGHTED FUSION =====
         # E7: audio_sim removed; redistribute to the three evidence-grounded signals.
@@ -567,6 +576,39 @@ class MusicRecommender:
             candidates = self._rrf_candidates([va_sim, emotion_sim, lyrics_sim])
 
         return self._fast_rank(final_scores, top_k, diversity_penalty, restrict_to=candidates)
+
+    # Vietnamese display names for the 8 CLAP emotion labels (for the bridge chip)
+    _EMO_VI = {
+        'happy': 'Vui vẻ', 'excited': 'Phấn khích', 'peaceful': 'Bình yên',
+        'calm': 'Thư thái', 'melancholic': 'U sầu', 'sad': 'Buồn',
+        'tense': 'Căng thẳng', 'angry': 'Giận dữ',
+    }
+
+    def color_emotion_bridge(self, color_hexes):
+        """Return the colour→emotion bridge for UI display (no song matching).
+
+        For each chosen colour: its inferred top emotion (CLAP label + Vietnamese
+        name) and V-A point. This is the feature's core value made visible
+        (Palmer/PLOS: emotion mediates the colour↔music link).
+        """
+        if isinstance(color_hexes, str):
+            color_hexes = [color_hexes]
+        bridge = []
+        for color in list(color_hexes)[:3]:
+            try:
+                v, a = self.color_mapper.hsl_to_va(color)
+                probs = self.color_mapper.color_to_emotion_probs(color)
+                top = max(probs.items(), key=lambda x: x[1])[0]
+                bridge.append({
+                    'hex': color,
+                    'emotion': top,
+                    'emotion_vi': self._EMO_VI.get(top, top),
+                    'valence': round(float(v), 2),
+                    'arousal': round(float(a), 2),
+                })
+            except (ValueError, KeyError, TypeError):
+                continue
+        return bridge
 
     def recommend_by_song(self,
                          song_id_or_name,
