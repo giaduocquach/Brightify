@@ -218,6 +218,14 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 3. **E7 — Color bỏ/hạ CIEDE2000-1-màu** *(M)*: chuyển sang **đa-màu→V-A** (saturation→arousal, lightness→valence); đo color-path.
 4. **E8 — Vibe search: bỏ centroid-γ** *(S)* + **thêm term emotion/V-A** cho query mood (gate); đo (cần GT chủ đề-lời).
 
+**E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30) → KẾT LUẬN: GIỮ (soft-prune), KHÔNG hard-remove.**
+Câu hỏi: optimizer đã hạ tonal (0.013)/rhythmic (0.020)/V-A (0.058) về gần 0 — có nên *xoá hẳn* (zero/bỏ tính) cho gọn không? Cân đo theo bằng chứng:
+- **Chi phí GIỮ ≈ 0:** mọi tín hiệu **vẫn được tính** rồi mới nhân trọng số (zero-weight KHÔNG bỏ qua tính toán); muốn tiết kiệm phải bỏ *phép tính*, mà các cosine này rất rẻ (vectorized 5548). → hard-remove **gần như không tiết kiệm gì**.
+- **Lý do GIỮ — quyết định nhất (cold-start/fallback):** bài **KHÔNG có lyrics** chạy path `audio_only` (không có tín hiệu lyrics) → khi đó tonal/rhythmic/V-A/emotion **là xương sống**. Lyrics chỉ áp đảo *khi có mặt*; bỏ các tín hiệu kia = **phá path no-lyrics + mất graceful degradation** (auxiliary features có giá trị cold-start — arXiv 2102.12369; MDPI 11/9608).
+- **Handcrafted không hoàn toàn thừa:** "nuanced, not simple redundancy" — bổ trợ một phần + interpretability ([arXiv 2601.19109], [2106.00110]). Cheap-scalar của ta *phần lớn* trùng MERT nhưng vẫn là fallback.
+- **Optimizer đã "prune mềm" dưới ràng buộc diversity** → cấu hình small-but-nonzero là **bản CI-confirmed**; hard-zero là **lệch chưa kiểm chứng**, lợi ích biên ≈ 0 ([pruning chỉ "minor degradation" — arXiv 2101.07577]).
+- → **GIỮ ở trọng số đã tối ưu.** Nếu sau muốn xoá-cho-gọn, phải chạy ablation riêng (zero-3-tín-hiệu vs optimized) đo đủ họ metric + diversity + path no-lyrics; **chỉ bỏ nếu tất cả không xấu đi**. Mặc định: không động.
+
 **Nhóm B — Thêm tín hiệu THIẾU có bằng chứng (giá trị cao):**
 5. **E9 — Context: session/sequence + repeat/skip + day-of-week** *(L, giá trị cao nhất mảng context)*: chuyển scorer pointwise → có ngữ cảnh phiên (Deezer RecSys'24). Hạ weather (ứng viên ablate) + giảm season cho VN.
 6. **E10 — Image: thêm semantic scene tags** *(M)* (+ về sau learned emotion-aligned embedding Won 2024); gộp color-V-A trùng.
@@ -236,7 +244,8 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 
 > **Vì sao mỗi feature một cách đo riêng:** mỗi feature có *ground-truth (GT)* và *mục tiêu* khác nhau → dùng chung 1 metric là sai. Nguyên tắc xuyên suốt:
 > - Dùng **harness sẵn có** (Bonferroni đa-biến · CI bootstrap cụm · auto-revert khi FAIL) — tránh lặp bài học **Pillar B "PASS giả do naive bootstrap"**. [Widespread Flaws in Offline Eval, arXiv 2307.14951](https://arxiv.org/pdf/2307.14951)
-> - Đo **cả accuracy LẪN beyond-accuracy** (diversity/novelty/coverage) — đừng tối ưu mù 1 số. [Towards Unified Accuracy+Diversity, ACM 2021]
+> - **BẮT BUỘC đo ĐỦ HỌ ACCURACY cho MỌI feature xếp hạng** — không chỉ NDCG: **NDCG@k + Precision@k + Recall@k + MRR** (đều có sẵn trong `metrics/accuracy.py`). NDCG là metric *chính* (graded + chiết khấu vị trí) nhưng phải xem cả họ để win không phải artifact 1 số (bài học E1: cả 4 cùng dương mới chắc). Cross-modal/retrieval dùng thêm **Recall@K** (chuẩn của lĩnh vực).
+> - Đo **cả accuracy LẪN beyond-accuracy** (diversity/novelty/coverage/same-artist) — đừng tối ưu mù 1 số. [Towards Unified Accuracy+Diversity, ACM 2021]
 > - **Chống rò rỉ thời gian:** khi có log, dùng **global temporal split**, không leave-one-out. [Time to Split, arXiv 2507.16289](https://arxiv.org/abs/2507.16289)
 > - **Offline là proxy** (offline-online gap có thật; novelty cao có thể *hại* online) → coi kết quả offline là *điều kiện cần*, không phải đủ; nơi nào cần cảm nhận người thì ghi rõ là *cần A/B/human* (hiện hệ thống thiếu log người dùng — đây là giới hạn).
 > - **Vòng lặp chuẩn mỗi feature:** `đo metric → so gate (CI/Bonferroni) → nếu FAIL: chỉnh tín hiệu/trọng số theo chẩn đoán → re-test → chỉ bật mặc định khi PASS bền`.
