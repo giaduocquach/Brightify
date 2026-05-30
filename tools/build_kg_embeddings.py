@@ -51,9 +51,11 @@ OUT_EMB = "data/kg_embeddings.npy"
 OUT_META = "data/kg_embeddings_meta.json"
 
 # Per-modality block weights (applied after each block is L2-normalised).
-# MERT dominates because it is the strongest pretrained musicality signal,
-# but mood/instrument/audio keep the graph from being pure-MERT redundancy.
-MODALITY_WEIGHTS = {"mert": 0.50, "mood": 0.20, "instrument": 0.20, "audio": 0.10}
+# E2 (2026-05-30): "audio" block removed — ablation on 1050 GT queries showed
+# all 6 metrics (NDCG/Prec/Recall/MRR/ILD/SameArtist) changed ≤ 0.0001 without
+# it. MERT already captures audio shape; coarse-scalar block is redundant here.
+# mood redistributed from 0.20→0.25, instrument 0.20→0.25 to keep Σ=1.
+MODALITY_WEIGHTS = {"mert": 0.50, "mood": 0.25, "instrument": 0.25}
 DEFAULT_NEIGHBORS = 25
 
 # Coarse audio-shape features (must exist in the processed CSV).
@@ -118,12 +120,13 @@ def _build_content_matrix(df: pd.DataFrame) -> np.ndarray:
         blocks.append(_l2(inst) * MODALITY_WEIGHTS["instrument"])
         logger.info(f"[KG] instrument_tags block {inst.shape} (w={MODALITY_WEIGHTS['instrument']})")
 
-    # --- Coarse audio shape ---
-    audio_cols = [c for c in _AUDIO_COLS if c in df.columns]
-    if audio_cols:
-        audio = df[audio_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(np.float32)
-        blocks.append(_l2(audio) * MODALITY_WEIGHTS["audio"])
-        logger.info(f"[KG] audio block {audio.shape} cols={audio_cols} (w={MODALITY_WEIGHTS['audio']})")
+    # --- Coarse audio shape (E2: removed — ablation showed ≤0.0001 impact) ---
+    if "audio" in MODALITY_WEIGHTS and MODALITY_WEIGHTS["audio"] > 0:
+        audio_cols = [c for c in _AUDIO_COLS if c in df.columns]
+        if audio_cols:
+            audio = df[audio_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(np.float32)
+            blocks.append(_l2(audio) * MODALITY_WEIGHTS["audio"])
+            logger.info(f"[KG] audio block {audio.shape} cols={audio_cols} (w={MODALITY_WEIGHTS['audio']})")
 
     if not blocks:
         raise RuntimeError("[KG] No content modalities available — cannot build content graph.")
