@@ -227,6 +227,34 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 
 ---
 
+## 5.5. BACKTEST + VÒNG LẶP CẢI THIỆN THEO TỪNG FEATURE
+
+> **Vì sao mỗi feature một cách đo riêng:** mỗi feature có *ground-truth (GT)* và *mục tiêu* khác nhau → dùng chung 1 metric là sai. Nguyên tắc xuyên suốt:
+> - Dùng **harness sẵn có** (Bonferroni đa-biến · CI bootstrap cụm · auto-revert khi FAIL) — tránh lặp bài học **Pillar B "PASS giả do naive bootstrap"**. [Widespread Flaws in Offline Eval, arXiv 2307.14951](https://arxiv.org/pdf/2307.14951)
+> - Đo **cả accuracy LẪN beyond-accuracy** (diversity/novelty/coverage) — đừng tối ưu mù 1 số. [Towards Unified Accuracy+Diversity, ACM 2021]
+> - **Chống rò rỉ thời gian:** khi có log, dùng **global temporal split**, không leave-one-out. [Time to Split, arXiv 2507.16289](https://arxiv.org/abs/2507.16289)
+> - **Offline là proxy** (offline-online gap có thật; novelty cao có thể *hại* online) → coi kết quả offline là *điều kiện cần*, không phải đủ; nơi nào cần cảm nhận người thì ghi rõ là *cần A/B/human* (hiện hệ thống thiếu log người dùng — đây là giới hạn).
+> - **Vòng lặp chuẩn mỗi feature:** `đo metric → so gate (CI/Bonferroni) → nếu FAIL: chỉnh tín hiệu/trọng số theo chẩn đoán → re-test → chỉ bật mặc định khi PASS bền`.
+
+| Feature | Ground-truth (GT) | Metric offline phù hợp | Gate (PASS khi) | Vòng lặp cải thiện |
+|---|---|---|---|---|
+| **Similar song** | editorial playlist / đồng-xuất-hiện genre-tag (đã có) + cặp cùng-playlist giữ lại | **nDCG@10, MAP, Recall@k** + beyond: **intra-list diversity, %same-artist (bias), coverage** | ΔnDCG ≥ baseline, CI không chạm ngưỡng fail, Bonferroni qua các biến thể; diversity không giảm | E1: cắt tín hiệu/gộp cảm xúc/học trọng số → nếu nDCG giữ & diversity ↑ → giữ; nếu tụt → khôi phục, thử *học trọng số* thay cộng đều → re-test |
+| **Audio Radio** (MERT thuần) | *không có nhãn "nghe giống"* → **proxy:** (a) truy hồi **cover/bản trùng** (MERT phải xếp top); (b) **độ thuần nhãn** (instrument/mood/genre) của k láng giềng vs ngẫu nhiên | **tag/instrument neighbor-purity@k** vs random (bootstrap CI); cover-retrieval **MRR** (nếu có cover) | purity@k *cao hơn ngẫu nhiên có ý nghĩa* (CI) | nếu purity thấp → đổi *layer/pooling* MERT → re-test; (xa hơn) thu nhãn A/B người nghe |
+| **KG content** | như similar + **%same-artist** (pillar-f-xartist đã có) | nDCG (không regress) + **%same-artist (mục tiêu thấp)** + genre-purity láng giềng | nDCG không tụt SIG **và** %same-artist không tăng | E2: bỏ `audio 0.1` → nếu relevance/bias giữ → bỏ cho gọn |
+| **Color → music** | xác thực **color→V-A** bằng dataset color-emotion (Palmer/Jonauskaite); **proxy match:** V-A bài gợi ý ↔ V-A-của-màu | **V-A target proximity** (khoảng cách trung bình) + **emotion-match@k** + diversity | proximity tốt hơn ngẫu nhiên; **bỏ CIEDE2000-1-màu KHÔNG làm xấu** proximity | E7: thay bằng **đa-màu→V-A** → đo proximity+emotion-match → giữ nếu ≥ |
+| **Image → music** | **IMEMNet (~140K cặp ảnh-nhạc gán V-A)** hoặc IAPS/NAPS/EMOTIC (ảnh có nhãn V-A) | **Recall@K** theo GT; khoảng cách V-A (ảnh↔bài) | R@K ≥ baseline emotion-bridge | E10: thêm **semantic scene tags** (+ sau: embedding học emotion-aligned) → đo R@K → giữ nếu ↑ |
+| **Context** | *thiếu log* → **proxy:** thoả ràng buộc context (V-A đích + thuộc tính activity: focus→instrumental cao/speech thấp). *Khi có log:* **global temporal split**, dự đoán bài-nghe-tiếp trong ngữ cảnh đó | nay: **target-V-A proximity + activity-attribute-fit rate** + diversity. sau: **nDCG/Recall next-item** | nay: fit-rate cao + bỏ/hạ weather không giảm fit; sau: nDCG next-item ≥ | E9: thêm session/sequence + day-of-week (cần log); hạ weather/season VN → đo fit-rate giữ |
+| **Emotion Journey** *(gác)* | *generative path — không cần GT người cho cấu trúc:* đo chất lượng quỹ đạo | **path-straightness, độ lệch chuẩn bước V-A, endpoint V-A error, start-match**; smoothness = **khoảng cách MERT liên-bài** (thấp=mượt) | quỹ đạo mượt & tới đúng đích; *hiệu quả điều tiết cảm xúc cần A/B người* (ghi rõ) | E5: smoothness→MERT, bỏ emotion-interpolation nếu trùng → đo step-distance + (nếu được) A/B nhỏ |
+| **Vibe/Lyrics search** | **~100–150 cặp `query→bài-liên-quan` gán nhãn THỦ CÔNG** (không weak-annotation — theo ghi chú reranker); lyric-line: bài chứa đúng câu | **nDCG/MRR/Recall** + **lyric-line P@1** + (vibe) emotion/V-A match | nDCG/MRR ≥ baseline; P@1 lyric-line cao | E8: bỏ centroid-γ + thêm term emotion/V-A (gate query mood) → đo nDCG/MRR → giữ nếu ↑ |
+
+**Việc nền bắt buộc (mở khoá nhiều backtest trên):**
+- **GT-1:** dựng **GT chủ đề-lời thủ công ~100–150 cặp** (mở khoá Vibe-search + reranker).
+- **GT-2:** nhúng **bộ ảnh có nhãn V-A** (IMEMNet/IAPS) vào harness (mở khoá Image→music R@K).
+- **GT-3:** thêm **metric beyond-accuracy** (intra-list diversity, coverage, %same-artist) vào harness — hiện chủ yếu đo nDCG.
+- **GT-4:** *(dài hạn)* thu **log nghe có ngữ cảnh** → mới đánh giá Context/Session đúng nghĩa (global temporal split). Tới đó Context chỉ đo *proxy fit-rate*.
+
+> **Lưu ý trung thực:** các feature cảm xúc/cross-modal/context **chỉ đo được PROXY offline** khi chưa có log + nhãn người. Proxy (V-A proximity, attribute-fit, trajectory smoothness) là *điều kiện cần*, không thay được đánh giá người. Đừng coi proxy-PASS là "đã tối ưu cho người dùng".
+
 ## 6. NGUỒN (đã công bố & kiểm chứng)
 
 **MERT / audio embeddings cho reco**
@@ -273,6 +301,12 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 - *Disentangled / separated instrument-similarity representations*: https://arxiv.org/html/2404.06682 · https://arxiv.org/html/2503.17281
 - *Audio Prototypical Network for Controllable Music Recommendation* (interpretable layer over embeddings): https://arxiv.org/html/2508.00194
 - Iso-principle RCT (PMC8656869): https://pmc.ncbi.nlm.nih.gov/articles/PMC8656869/
+**Phương pháp backtest/đánh giá offline (bổ sung §5.5)**
+- *Widespread Flaws in Offline Evaluation of Recommender Systems* (arXiv 2307.14951): https://arxiv.org/pdf/2307.14951
+- *Time to Split: Data Splitting Strategies for Offline Eval of Sequential Recommenders* (RecSys'25, arXiv 2507.16289): https://arxiv.org/abs/2507.16289
+- *A Revisiting Study of Appropriate Offline Evaluation for Top-N Recommendation* (ACM TOIS): https://dl.acm.org/doi/full/10.1145/3545796
+- *Towards Unified Metrics for Accuracy and Diversity* (RecSys 2021): https://dl.acm.org/doi/fullHtml/10.1145/3460231.3474234
+- IMEMNet / cross-modal V-A retrieval eval (Recall@K): https://arxiv.org/abs/2009.05103 · https://arxiv.org/html/2501.01094
 - ⚠️ *Saari "10–15%/bước"* — **không xác minh được nguồn**; Saari (JYU thesis) là về gán nhãn mood, không phải tốc-độ-bước → coi là heuristic: https://jyx.jyu.fi/bitstream/handle/123456789/45096/978-951-39-6074-2.pdf
 
 ---
