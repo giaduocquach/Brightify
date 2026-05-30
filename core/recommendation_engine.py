@@ -110,6 +110,13 @@ class MusicRecommender:
         if 'lyrics_cleaned' in self.df.columns and 'fused_emotion' not in self.df.columns:
             self._analyze_lyrics_emotions()
 
+        # Recompute song_va now that fused_emotion labels are available.
+        # _precompute_all_features runs before CLAP load, so song_va was built
+        # with the default 'happy' for all songs. Now that real labels are loaded,
+        # re-derive the audio+lyrics V-A with correct CLAP Russell centroids.
+        if self.colors is not None and 'fused_emotion' in self.df.columns:
+            self._recompute_song_va()
+
         # Artist column for diversity
         self.artist_col = detect_artist_column(self.df)
         if self.artist_col:
@@ -184,41 +191,27 @@ class MusicRecommender:
         self.song_emotion_vec = np.zeros((self.n_songs, n_emotions))
         self.color_hsl = np.zeros((self.n_songs, 3))
 
+        # Emotion vector from album-art color (kept for recommend_by_colors emotion signal)
         for idx in range(self.n_songs):
             color = self.colors[idx]
-
             if pd.isna(color):
-                self.song_va[idx] = [0.5, 0.5]
                 self.color_hsl[idx] = [0, 0, 50]
                 continue
-
             try:
-                # Get V-A from color
-                va = self.color_mapper.color_to_valence_arousal(color)
-                self.song_va[idx] = [va[0], va[1]]
-
-                # Get HSL
                 hsl = self.color_mapper.hex_to_hsl(color)
                 self.color_hsl[idx] = hsl
-
-                # Get emotion probabilities
                 emotion_probs = self.color_mapper.color_to_emotion_probs(color)
                 for i, emo in enumerate(self.emotion_labels):
                     self.song_emotion_vec[idx, i] = emotion_probs.get(emo, 0)
             except Exception:
-                self.song_va[idx] = [0.5, 0.5]
                 self.color_hsl[idx] = [0, 0, 50]
 
-        # Normalize emotion vectors
         row_sums = self.song_emotion_vec.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         self.song_emotion_vec = self.song_emotion_vec / row_sums
 
-        # Add fused valence/energy from dataframe if available
-        if 'fused_valence' in self.df.columns:
-            fused_va = self.df[['fused_valence', 'fused_energy']].fillna(0.5).values
-            # Blend with color-derived V-A (audio takes priority)
-            self.song_va = 0.6 * fused_va + 0.4 * self.song_va
+        # song_va initial fill — will be recomputed after CLAP loads via _recompute_song_va
+        self._recompute_song_va()
 
         # --- Pre-computed feature groups for multi-faceted similarity ---
         # Berenzweig et al. (2004): Separate timbral, rhythmic, and tonal
@@ -259,6 +252,59 @@ class MusicRecommender:
         # Mood-quadrant one-hot for category matching
         # McFee & Lanckriet (2011): Genre/mood coherence boosts perceived similarity
         self._mood_labels = self.df.get('fused_emotion', pd.Series([''] * self.n_songs)).fillna('').values
+
+    def _recompute_song_va(self) -> None:
+        """Compute song_va from AUDIO+LYRICS signals (not album-art color).
+
+        Root cause fix (2026-05-30): the old approach stored V-A derived from
+        each song's album-art color_hex, which reflected album art palette NOT
+        musical content (measured valence correlation with multi-signal proxy:
+        r=0.22 — effectively random).
+
+        New approach (evidence-grounded):
+          Arousal = 0.60×Essentia_energy + 0.40×Essentia_arousal
+            → audio energy/tempo reliably predicts arousal across cultures
+              (r≈0.81, Eerola & Anderson ACM CSUR 2026; arXiv:2302.13321)
+          Valence = 0.50×CLAP_Russell_centroid + 0.50×Essentia_valence
+            → CLAP fused_emotion labels mapped to Russell 1980 circumplex
+              centroids provide valence signal grounded in music content;
+              blended with Essentia audio valence estimate
+
+        Called twice: once during _precompute_all_features (fused_emotion may
+        not yet exist → defaults to 'happy') and once after CLAP/lexicon load
+        to use real emotion labels.
+        """
+        _RUSSELL_V = {"happy": 0.90, "excited": 0.70, "peaceful": 0.78, "calm": 0.72,
+                      "melancholic": 0.30, "sad": 0.15, "tense": 0.35, "angry": 0.15}
+        _RUSSELL_A = {"happy": 0.75, "excited": 0.90, "peaceful": 0.20, "calm": 0.15,
+                      "melancholic": 0.35, "sad": 0.30, "tense": 0.85, "angry": 0.90}
+
+        def _norm(col):
+            if col not in self.df.columns:
+                return np.full(self.n_songs, 0.5)
+            v = self.df[col].fillna(0.5).astype(float).values
+            mn, mx = v.min(), v.max()
+            return np.clip((v - mn) / (mx - mn + 1e-9), 0.0, 1.0)
+
+        emo_labels = (
+            self.df['fused_emotion'].fillna('happy').str.lower().values
+            if 'fused_emotion' in self.df.columns
+            else np.full(self.n_songs, 'happy')
+        )
+        clap_v = np.array([_RUSSELL_V.get(e, 0.50) for e in emo_labels])
+        clap_a = np.array([_RUSSELL_A.get(e, 0.50) for e in emo_labels])
+
+        # 'valence' = Essentia valence (reliable), 'valence_estimated' is a broken col
+        song_arousal = 0.60 * _norm('energy') + 0.40 * _norm('arousal')
+        song_valence = 0.50 * clap_v + 0.50 * _norm('valence')
+
+        self.song_va[:, 0] = np.clip(song_valence, 0.0, 1.0)
+        self.song_va[:, 1] = np.clip(song_arousal, 0.0, 1.0)
+
+        # Override with fused_valence/fused_energy if available (full pipeline)
+        if 'fused_valence' in self.df.columns:
+            fused_va = self.df[['fused_valence', 'fused_energy']].fillna(0.5).values
+            self.song_va = np.clip(fused_va, 0.0, 1.0)
 
     def _analyze_lyrics_emotions(self):
         """One-time lyrics emotion analysis"""
@@ -348,8 +394,24 @@ class MusicRecommender:
 
         for color in color_hexes:
             try:
-                va = self.color_mapper.color_to_valence_arousal(color)
-                query_va.append([va[0], va[1]])
+                # Whiteford 2018 (PMC6240980) structural HSL formula — culturally
+                # portable: saturation→arousal (r_s=0.720), lightness→valence
+                # (r_s=0.484). More grounded than the heuristic hue-mapping used
+                # previously (Vietnam is not in Jonauskaite's 30-country sample so
+                # named-color associations are unreliable for VN users).
+                h, l, s = self.color_mapper.hex_to_hsl(color)
+                h_deg = h  # already in degrees
+                hue_warmth = (
+                    1.0 if h_deg <= 60 or h_deg >= 330 else
+                    1.0 - (h_deg - 60) / 60 if h_deg <= 120 else
+                    0.0 if h_deg <= 240 else
+                    (h_deg - 240) / 90 * 0.5
+                )
+                hue_yb = (1.0 if 40 <= h_deg <= 80 else
+                          0.0 if 200 <= h_deg <= 260 else 0.5)
+                q_arousal = float(np.clip(0.40*s + 0.35*hue_warmth + 0.25*(1-l), 0, 1))
+                q_valence = float(np.clip(0.45*l + 0.35*hue_yb + 0.20*(1-s), 0, 1))
+                query_va.append([q_valence, q_arousal])
 
                 emotion_probs = self.color_mapper.color_to_emotion_probs(color)
                 for i, emo in enumerate(self.emotion_labels):
@@ -422,10 +484,13 @@ class MusicRecommender:
 
         # ===== VECTORIZED SIMILARITY COMPUTATION =====
 
-        # 1. V-A similarity with tighter Gaussian kernel
+        # 1. V-A similarity — proper Gaussian RBF, σ=0.20 (same as recommend_by_song).
+        # Previous: exp(-dist * 3) = pseudo-RBF with poorly-defined width.
+        # Now: exp(-dist²/(2σ²)) with σ=0.20 → songs within ~0.20 V-A units get
+        # high scores; beyond 0.40 units score drops near zero. More principled.
         va_diff = self.song_va - query_va_centroid
         va_dist = np.sqrt(np.sum(va_diff ** 2, axis=1))
-        va_sim = np.exp(-va_dist * 3)  # Tighter kernel (was 2)
+        va_sim = np.exp(-(va_dist ** 2) / (2 * 0.20 ** 2))
 
         # 2. Emotion vector cosine similarity
         query_norm = np.linalg.norm(query_emotion)
