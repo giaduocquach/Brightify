@@ -223,30 +223,41 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 
 **Thiết kế GT độc lập — 4 lớp, theo thứ tự bắt buộc:**
 
-**Lớp 1 (bắt buộc trước) — Calibration nhạc VN thật:**
-Lấy 50–100 bài từ catalog, mời 5+ người nghe VN rate V-A (scale SAM/GEW). Đo Pearson r giữa Essentia V-A ước lượng vs human V-A. **Nếu arousal r < 0.50 hoặc valence r < 0.30 → proxy không đáng tin.** Đây là cơ sở để quyết định có tiến lên Lớp 2-3 hay không. *(Lý do: Essentia valence R²=0.17–0.40 trong-corpus, cross-corpus DEAM→PMEmo valence R²=−0.27; nhạc VN chưa được đo, cần đo trực tiếp.)*
+**Thiết kế không cần người thật (2026-05-30, sau brainstorm đa nguồn):**
 
-**Lớp 2 — Anchor corpus: PMEmo (nhạc pop Trung/Đài/HK), KHÔNG phải DEAM:**
-PMEmo (794 bài pop, MIT license, IS13 OpenSMILE sẵn, human V-A scale −1→+1) gần nhạc VN hơn DEAM (rock/electronic Tây; DEAM→PMEmo valence R²=−0.27 âm). Dùng PMEmo làm corpus anchor human-rated V-A. Extract features từ PMEmo bằng Essentia (cùng pipeline catalog) → tìm nearest neighbor PMEmo cho mỗi bài VN (trong MERT embedding space, không phải IS13 — MERT cải thiện cross-corpus ~2.6× so với handcrafted, arXiv 2510.04688). Proxy V-A của bài VN = V-A của PMEmo neighbor gần nhất.
-
-**Lớp 3 — Query V-A: Whiteford 2018 structural formula (không phải Jonauskaite lookup):**
-Jonauskaite 2020 KHÔNG có bảng V-A tọa độ (chỉ có discrete emotion freq via GEW), và Vietnam không trong 30 nước mẫu (red VN = tích cực/lễ hội, white VN = tang trắng). Thay vào đó: dùng **Whiteford 2018** (i-Perception, PMC6240980) — đã đo quantified: saturation→arousal (r_s=0.720), lightness→valence (r_s=0.484) — apply trực tiếp từ HSL của màu:
+**Cốt lõi 3 nguồn proxy V-A song (bổ sung nhau):**
 ```
-query_arousal = f(saturation, hue_RG)   # dominant signal
-query_valence = f(lightness, hue_YB)    # secondary
+Arousal: music2emo(audio)               R²≈0.79 [đáng tin nhất từ audio]
+Valence: 0.4×music2emo + 0.6×PhoBERT  [lyrics sửa điểm yếu valence audio]
+QC:      CLAP_quadrant vs music2emo_quadrant  [high-conf nếu đồng thuận]
 ```
-Cách này culturally portable hơn named-color lookup (structural = physical, không phải cultural association).
+- **music2emo** (Apache 2.0, AMAAI Lab 2025, arXiv:2502.03979): train trên PMEmo+DEAM+EmoMusic+MTG-Jamendo; Arousal R²=0.79, Valence R²=0.55 (trên PMEmo). Chạy trên bất kỳ MP3 nào.
+- **PhoBERT lyrics correction valence**: arXiv:2302.13321 chứng minh lyrics cải thiện valence đáng kể; PhoBERT cosine với emotion-reference vectors → quadrant-weighted valence. Tỉ lệ 60% lyrics vì audio valence yếu (R²=0.55 in-domain, collapse cross-corpus).
+- **CLAP quadrant consistency filter**: 8 nhãn sẵn có → tọa độ Russell cố định → xác nhận quadrant đồng thuận → high-confidence GT set.
 
-**Lớp 4 — Metric & threshold:**
-Chuẩn lĩnh vực (cross-modal retrieval: IMEMNet/MMVA): **Recall@1, @5, @10 + mAP@10** (không phải NDCG là primary). Soft scoring: S = exp(−d/σ) thay binary threshold. Hard threshold nếu cần binary: **θ = 0.25 Euclidean trong V-A normalized** (từ Memo2496: 30 expert annotators, consensus consistency distance; MERP: ±2σ≈0.20–0.30). Report sensitivity tại θ ∈ {0.15, 0.20, 0.25, 0.30}.
+**Query V-A từ Whiteford 2018 structural HSL** (không phải Jonauskaite named-color):
+Vietnam không trong 30 nước Jonauskaite; formula HSL portable hơn (vật lý màu sắc, không phải cultural association):
+```
+arousal = 0.4×saturation + 0.35×hue_warmth + 0.25×(1−lightness)  [Whiteford r_s=0.720]
+valence = 0.45×lightness + 0.35×hue_YB + 0.20×(1−saturation)     [Whiteford r_s=0.484]
+```
 
-**7 sanity checks trước khi chạy:**
-(1) V-A distribution coverage ≥ 3/4 quadrants · (2) Calibration r (Lớp 1) pass · (3) MERT neighbor distance < 0.25 cho ≥80% songs · (4) Random baseline Recall@10 << 50% · (5) Opposite-emotion colors có mean arousal khác biệt (t-test p<0.05) · (6) Color GT audit: red/white VN có cần offset không? · (7) Top-5 cực trị V-A khớp giữa GT cũ và GT mới.
+**Metric chuẩn lĩnh vực (IMEMNet/MMVA):**
+Recall@1, @5, @10 · mAP@10 · soft S=exp(−d/σ) · hard θ=0.25 (Memo2496/MERP) · sensitivity tại {0.15, 0.20, 0.25, 0.30}.
+
+**6 sanity checks:**
+(1) Phân bố V-A ≥ 3/4 quadrants · (2) Arousal proxy pass (music2emo arousal > CLAP random baseline) · (3) High-conf songs ≥ 60% catalog · (4) Random baseline Recall@10 < 30% · (5) Opposite-color arousal khác biệt có ý nghĩa (t-test) · (6) Top extremes khớp với fused_emotion.
+
+**Caveats bắt buộc document:**
+- "Proxy GT từ music2emo (Western-trained), not human-annotated" — không thể claim absolute quality
+- Valence uncertainty ±0.3 V-A; dùng quadrant-level interpretation
+- Circular bias nhẹ vẫn còn (music2emo bias → cả GT lẫn reco có thể cùng lệch)
+- Cross-corpus severe cho probe thuần — giải quyết bằng multi-signal fusion (PhoBERT correction)
 
 **Cơ sở nghiên cứu (đã kiểm chứng):**
-Palmer PNAS 2013 (r=0.89–0.99 emotion mediation) · Whiteford i-Perception 2018 (PMC6240980: saturation r_s=0.720) · DEAM PMC5345802 · PMEmo ICMR 2018 (MIT) · Ching&Widmer 2510.04688 (cross-corpus R² tables) · Memo2496 2512.13998 (θ=0.25) · MERP PMC9824842 (±2σ calibration) · MMVA 2501.01094 (Recall@K, soft scoring) · Eerola&Anderson ACM CSUR 2026 (meta-analysis arousal r=0.81>valence r=0.67).
+music2emo arXiv:2502.03979 (R² tables) · Ching&Widmer 2510.04688 (cross-corpus collapse: PMEmo→WCMED valence R²=−1.01) · arXiv:2302.13321 (lyrics→valence) · Whiteford PMC6240980 (HSL→VA r_s) · Memo2496 2512.13998 (θ=0.25) · MMVA 2501.01094 (Recall@K soft) · Eerola&Anderson ACM CSUR 2026 (arousal r=0.81>valence r=0.67).
 
-**Trạng thái:** ⏳ Chưa triển khai — cần thực hiện Lớp 1 (human rating VN) trước. **Đây là điều kiện tiên quyết; không nên làm Lớp 2-4 nếu Lớp 1 thất bại.** Effort tổng: M-L (chủ yếu ở human annotation Lớp 1 + PMEmo download+extract Lớp 2).
+**Trạng thái:** ⏳ Implementing — bước tiếp theo chạy music2emo + build GT builder.
 4. **E8** ✅ **(2026-05-30):** Vibe search bỏ centroid-γ (25%), thêm emotion/V-A (15%), kw 35→40%, sem 40→45%. GT-1 (20 queries semi-independent): **NDCG +0.0064, Prec +0.0100, Recall +0.0017, MRR +0.0108 — cả 4 dương**.
 
 **E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30; ĐÍNH CHÍNH 2026-05-30 sau phản hồi user).**
