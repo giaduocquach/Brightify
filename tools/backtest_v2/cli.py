@@ -468,6 +468,9 @@ def cmd_optimize_weights(args: argparse.Namespace) -> int:
 
     # --- Run optimizer ---
     max_opt_queries = int(getattr(args, "max_opt_queries", None) or 30)
+    mert = bool(getattr(args, "mert", False))  # E1b: optimize the 8-signal MERT config
+    if mert:
+        print("[optimize] MERT mode: optimizing RECO_SONG_WEIGHTS_MERT (8-signal, production).")
     result = optimize_weights(
         catalog=catalog,
         playlists=playlists,
@@ -475,6 +478,7 @@ def cmd_optimize_weights(args: argparse.Namespace) -> int:
         top_k=10,
         max_opt_queries=max_opt_queries,
         verbose=True,
+        mert=mert,
     )
 
     # --- Save optimal_weights.yaml ---
@@ -499,12 +503,13 @@ def cmd_optimize_weights(args: argparse.Namespace) -> int:
         iter1_dir=iter1_dir,
     )
 
-    # --- Update config.RECO_SONG_WEIGHTS if improvement confirmed ---
+    # --- Update config if improvement confirmed (target the right dict) ---
+    target_dict = "RECO_SONG_WEIGHTS_MERT" if mert else "RECO_SONG_WEIGHTS"
     if result.update_config:
-        _update_config_weights(result.optimal_weights)
-        print(f"\n[optimize] config.RECO_SONG_WEIGHTS['with_lyrics'] updated to new optimal weights.")
+        _update_config_weights(result.optimal_weights, dict_name=target_dict)
+        print(f"\n[optimize] config.{target_dict}['with_lyrics'] updated to new optimal weights.")
     else:
-        print(f"\n[optimize] config.RECO_SONG_WEIGHTS unchanged (weights already near-optimal).")
+        print(f"\n[optimize] config.{target_dict} unchanged (weights already near-optimal).")
 
     return 0
 
@@ -723,32 +728,32 @@ def _print_iter1_summary(new_metrics: dict, old_metrics: dict) -> None:
             print(f"  {label:<20} {old_v:>12.5f} {new_v:>12.5f} {delta:>+10.5f}")
 
 
-def _update_config_weights(new_weights) -> None:
-    """Overwrite config.RECO_SONG_WEIGHTS['with_lyrics'] in config.py."""
+def _update_config_weights(new_weights, dict_name: str = "RECO_SONG_WEIGHTS") -> None:
+    """Overwrite config.<dict_name>['with_lyrics'] in config.py.
+
+    dict_name is 'RECO_SONG_WEIGHTS' (7-signal) or 'RECO_SONG_WEIGHTS_MERT'
+    (8-signal, production). Anchored to the exact dict name + count=1 so the
+    two dicts never cross-contaminate (see 2026-05-30 bugfix).
+    """
     import re
 
     config_path = "config.py"
     with open(config_path, encoding="utf-8") as fh:
         src = fh.read()
 
-    # Format new weights as Python list with 6 dp
     formatted = "[" + ", ".join(f"{w:.6f}" for w in new_weights) + "]"
 
-    # Replace ONLY the "with_lyrics" line inside the RECO_SONG_WEIGHTS dict.
-    # BUGFIX (2026-05-30): the old pattern matched EVERY "with_lyrics": [...] line
-    # and re.subn replaced all of them — corrupting RECO_SONG_WEIGHTS_MERT (8-value)
-    # with this 7-signal array. Anchor to the exact dict name + count=1 so the
-    # 8-signal MERT config is never touched by the 7-signal optimizer.
-    pattern = r'(RECO_SONG_WEIGHTS = \{[^}]*?"with_lyrics"\s*:\s*)\[.*?\]'
+    # \b prevents 'RECO_SONG_WEIGHTS' from also matching 'RECO_SONG_WEIGHTS_MERT'.
+    pattern = r'(' + re.escape(dict_name) + r'\b = \{[^}]*?"with_lyrics"\s*:\s*)\[.*?\]'
     replacement = r'\g<1>' + formatted
     new_src, n = re.subn(pattern, replacement, src, count=1, flags=re.DOTALL)
     if n == 0:
-        print("[optimize] WARNING: could not find RECO_SONG_WEIGHTS 'with_lyrics' pattern in config.py — not updated")
+        print(f"[optimize] WARNING: could not find {dict_name} 'with_lyrics' pattern in config.py — not updated")
         return
 
     with open(config_path, "w", encoding="utf-8") as fh:
         fh.write(new_src)
-    print(f"[optimize] config.py: RECO_SONG_WEIGHTS['with_lyrics'] = {formatted}")
+    print(f"[optimize] config.py: {dict_name}['with_lyrics'] = {formatted}")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -3091,6 +3096,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_opt.add_argument("--max-opt-queries", type=int, default=30,
                        dest="max_opt_queries",
                        help="max queries used inside SLSQP loop (default: 200)")
+    p_opt.add_argument("--mert", action="store_true",
+                       help="E1b: optimize the 8-signal RECO_SONG_WEIGHTS_MERT (production path)")
     p_opt.set_defaults(func=cmd_optimize_weights)
 
     p_cmp = sub.add_parser("compare", help="compare two iterations")

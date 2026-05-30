@@ -104,6 +104,7 @@ def optimize_weights(
     top_k: int = 10,
     max_opt_queries: int = 200,
     verbose: bool = True,
+    mert: bool = False,
 ) -> WeightOptResult:
     """SLSQP weight optimization.
 
@@ -151,8 +152,10 @@ def optimize_weights(
         print(f"[weight_opt] ILD constraint: ILD_lyrics >= {ild_threshold:.6f} "
               f"(= {baseline_ild:.6f} × 0.95)")
 
-    # --- Initial weights ---
-    x0 = np.array(cfg.RECO_SONG_WEIGHTS["with_lyrics"], dtype=float)
+    # --- Initial weights --- (E1b: optimize the 8-signal MERT config when mert=True)
+    signals = (SIGNALS + ["mert"]) if mert else SIGNALS
+    src_dict = cfg.RECO_SONG_WEIGHTS_MERT if mert else cfg.RECO_SONG_WEIGHTS
+    x0 = np.array(src_dict["with_lyrics"], dtype=float)
     x0 /= x0.sum()
 
     call_count = [0]
@@ -186,7 +189,7 @@ def optimize_weights(
         {"type": "eq",   "fun": con_sum},
         {"type": "ineq", "fun": con_ild},
     ]
-    bounds = [(0.0, 0.5)] * 7
+    bounds = [(0.0, 0.5)] * len(x0)
 
     # NDCG is a discrete metric — default finite-difference eps (1.5e-8) produces
     # zero gradients (tiny perturbations never change rankings).
@@ -199,9 +202,13 @@ def optimize_weights(
     if verbose:
         print(f"\n[weight_opt] Running SLSQP (maxiter=15, ftol=1e-4, eps=0.05)…")
 
-    # Multi-start: baseline weights + lyrics-upweighted init.
+    # Multi-start: baseline weights + lyrics-upweighted init (length-matched).
     starts = [x0]
-    x1 = np.array([0.08, 0.07, 0.06, 0.50, 0.12, 0.12, 0.05], dtype=float)
+    if mert:
+        # 8-dim: lyrics up, MERT kept meaningful, emotion-triple down.
+        x1 = np.array([0.06, 0.06, 0.04, 0.42, 0.05, 0.08, 0.04, 0.25], dtype=float)
+    else:
+        x1 = np.array([0.08, 0.07, 0.06, 0.50, 0.12, 0.12, 0.05], dtype=float)
     x1 /= x1.sum()
     starts.append(x1)
 
@@ -281,7 +288,7 @@ def optimize_weights(
     return WeightOptResult(
         optimal_weights=w_opt.tolist(),
         baseline_weights=x0.tolist(),
-        signals=SIGNALS,
+        signals=signals,
         opt_split={
             "n_playlists": len(opt_pls),
             "n_queries": len(opt_gt),
