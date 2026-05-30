@@ -89,15 +89,14 @@ function initColorPicker() {
     _selectedColors = [];
 
     // Render palette presets
+    // V12: 3-colour "mood blends" (union aggregation gives a rich mixed-mood playlist)
     const palettes = [
-        { name: '🌅 Hoàng hôn', colors: ['#ff6b35','#f7c59f','#ef5350','#ff9800','#ffc107'] },
-        { name: '🌊 Đại dương', colors: ['#0077b6','#00b4d8','#90e0ef','#023e8a','#48cae4'] },
-        { name: '🌿 Rừng xanh', colors: ['#2d6a4f','#52b788','#95d5b2','#1b4332','#40916c'] },
-        { name: '🌌 Thiên hà', colors: ['#7b2cbf','#9d4edd','#c77dff','#3c096c','#e0aaff'] },
-        { name: '🌸 Lãng mạn', colors: ['#ff758f','#ff7eb3','#ff85a1','#fbb1bd','#f9bec7'] },
-        { name: '🔥 Rực cháy', colors: ['#ef4444','#f97316','#eab308','#dc2626','#fb923c'] },
-        { name: '❄️ Băng giá', colors: ['#e0f2fe','#bae6fd','#7dd3fc','#38bdf8','#0ea5e9'] },
-        { name: '🎭 Vintage', colors: ['#bc6c25','#dda15e','#606c38','#283618','#fefae0'] },
+        { name: '🌅 Hoàng hôn',   colors: ['#f97316','#ef4444','#fde047'] },
+        { name: '🌊 Trầm lặng',   colors: ['#3b5998','#2c3e66','#99e2d0'] },
+        { name: '🌿 An yên',      colors: ['#86efac','#99e2d0','#9ca3af'] },
+        { name: '🔥 Bùng cháy',   colors: ['#ef4444','#f97316','#a21caf'] },
+        { name: '🌸 Ngọt ngào',   colors: ['#f9a8d4','#fde047','#f5f5f4'] },
+        { name: '🌙 Cô đơn',      colors: ['#2c3e66','#171717','#3b5998'] },
     ];
     window._colorPalettes = palettes;
 
@@ -132,10 +131,26 @@ function initColorPicker() {
 function _rgbToHex(r, g, b) { return '#' + [r,g,b].map(c => c.toString(16).padStart(2,'0')).join(''); }
 
 function addSelectedColor(hex) {
-    if (_selectedColors.length >= 5) { app.toast('Tối đa 5 màu', 'info'); return; }
+    // V12: cap 3 (research validates 1 colour→1 emotion; >3 averaged = mush).
+    if (_selectedColors.length >= 3) { app.toast('Tối đa 3 màu', 'info'); return; }
     if (_selectedColors.includes(hex)) return;
     _selectedColors.push(hex);
     _updateColorPickerUI();
+}
+
+// V12: tap a colour card → select AND run immediately ("chạy ngay", friendly).
+// Tapping a colour already selected toggles it off. Adding more re-runs.
+function pickColor(hex) {
+    if (_selectedColors.includes(hex)) {
+        removeSelectedColor(_selectedColors.indexOf(hex));
+    } else if (_selectedColors.length < 3) {
+        _selectedColors.push(hex);
+        _updateColorPickerUI();
+    } else {
+        app.toast('Tối đa 3 màu', 'info');
+        return;
+    }
+    if (_selectedColors.length > 0) getColorRecommendations();
 }
 
 function removeSelectedColor(idx) {
@@ -152,16 +167,17 @@ function clearSelectedColors() {
 function selectPalette(paletteIdx) {
     const p = window._colorPalettes?.[paletteIdx];
     if (!p) return;
-    _selectedColors = [...p.colors];
+    _selectedColors = [...p.colors].slice(0, 3);   // V12: cap 3
     _updateColorPickerUI();
     document.querySelectorAll('.color-palette-btn').forEach((b, i) => b.classList.toggle('active', i === paletteIdx));
+    getColorRecommendations();   // run immediately
 }
 
 function _updateColorPickerUI() {
     const dotsEl = document.getElementById('color-selected-dots');
     const countEl = document.getElementById('color-selected-count');
     const clearBtn = document.getElementById('btn-clear-colors');
-    if (countEl) countEl.textContent = `${_selectedColors.length}/5`;
+    if (countEl) countEl.textContent = `${_selectedColors.length}/3`;
     if (clearBtn) clearBtn.style.display = _selectedColors.length > 0 ? 'inline' : 'none';
     if (dotsEl) {
         dotsEl.innerHTML = _selectedColors.length === 0
@@ -185,6 +201,22 @@ async function getColorRecommendations() {
     try {
         const data = await API.recommendByColor(_selectedColors, count);
         renderAiResults(results, data.results, `Nhạc phù hợp với ${_selectedColors.join(', ')}`, 'color');
+        // V12: emotion bridge chip — make the colour→emotion→music link visible
+        // (Palmer/PLOS: emotion mediates the colour↔music correspondence).
+        const bridge = data.query?.bridge;
+        if (Array.isArray(bridge) && bridge.length) {
+            const items = bridge.map(b => `
+                <span class="color-bridge-item" title="Valence ${b.valence} · Arousal ${b.arousal}">
+                    <span class="color-bridge-dot" style="background:${b.hex}"></span>
+                    ${b.emotion_vi}
+                </span>`).join('<span class="color-bridge-sep">·</span>');
+            results.insertAdjacentHTML('afterbegin', `
+                <div class="color-bridge">
+                    <span class="color-bridge-label">🎨 AI cảm nhận màu của bạn là</span>
+                    ${items}
+                    <span class="color-bridge-arrow">→ nhạc bên dưới</span>
+                </div>`);
+        }
     } catch (e) {
         results.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">Lỗi</div></div>';
         app.toast(e.message, 'error');

@@ -230,114 +230,116 @@ const pages = {
                         <div class="color-wheel-subtitle">Chọn màu bạn đang cảm thấy — hoặc thả một tấm ảnh — AI bắt "vibe" rồi tìm nhạc phù hợp</div>
                     </div>
 
-                    <!-- Emotion Color Grid (Jonauskaite et al. 2020: 12 universal colors) -->
+                    <!-- Emotion Color Grid V12 — swatches tuned so each colour's HSL
+                         lands in its intended Russell quadrant (Whiteford 2018);
+                         labels = the actual top emotion the engine infers (UI=engine). -->
                     <div class="color-emotion-grid color-emotion-grid-v2">
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#ef4444')" data-color="#ef4444" data-va="0.65,0.85">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#ef4444')" data-color="#ef4444" data-va="0.67,0.78">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:linear-gradient(135deg,#ef4444,#b91c1c)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Đỏ</span>
-                                <span class="cev2-emotions">Đam mê · Tức giận · Tình yêu</span>
+                                <span class="cev2-emotions">Phấn khích · Đam mê</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#f97316')" data-color="#f97316" data-va="0.80,0.75">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#f97316')" data-color="#f97316" data-va="0.71,0.82">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:linear-gradient(135deg,#f97316,#c2410c)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Cam</span>
-                                <span class="cev2-emotions">Phấn khích · Vui tươi · Sáng tạo</span>
+                                <span class="cev2-emotions">Phấn khích · Vui tươi</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#eab308')" data-color="#eab308" data-va="0.90,0.70">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#fde047')" data-color="#fde047" data-va="0.81,0.75">
                             <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#eab308,#a16207)"></span>
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#fde047,#eab308)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Vàng</span>
-                                <span class="cev2-emotions">Hạnh phúc · Lạc quan · Niềm vui</span>
+                                <span class="cev2-emotions">Vui vẻ · Lạc quan</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#22c55e')" data-color="#22c55e" data-va="0.65,0.35">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#f9a8d4')" data-color="#f9a8d4" data-va="0.65,0.70">
                             <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#22c55e,#15803d)"></span>
-                            </div>
-                            <div class="cev2-info">
-                                <span class="cev2-name">Xanh lá</span>
-                                <span class="cev2-emotions">Bình yên · Hy vọng · An lành</span>
-                            </div>
-                        </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#06b6d4')" data-color="#06b6d4" data-va="0.55,0.25">
-                            <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#06b6d4,#0e7490)"></span>
-                            </div>
-                            <div class="cev2-info">
-                                <span class="cev2-name">Cyan</span>
-                                <span class="cev2-emotions">Thư thái · Tĩnh lặng · Nhẹ nhàng</span>
-                            </div>
-                        </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#3b82f6')" data-color="#3b82f6" data-va="0.25,0.25">
-                            <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8)"></span>
-                            </div>
-                            <div class="cev2-info">
-                                <span class="cev2-name">Xanh dương</span>
-                                <span class="cev2-emotions">Nỗi buồn · U sầu · Suy tư</span>
-                            </div>
-                        </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#8b5cf6')" data-color="#8b5cf6" data-va="0.45,0.40">
-                            <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)"></span>
-                            </div>
-                            <div class="cev2-info">
-                                <span class="cev2-name">Tím</span>
-                                <span class="cev2-emotions">Huyền bí · Lãng mạn · Ngưỡng mộ</span>
-                            </div>
-                        </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#ec4899')" data-color="#ec4899" data-va="0.72,0.45">
-                            <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#ec4899,#be185d)"></span>
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#f9a8d4,#ec4899)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Hồng</span>
-                                <span class="cev2-emotions">Dịu dàng · Yêu thương · Ngọt ngào</span>
+                                <span class="cev2-emotions">Vui vẻ · Ngọt ngào</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#a16207')" data-color="#a16207" data-va="0.40,0.30">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#86efac')" data-color="#86efac" data-va="0.65,0.39">
                             <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#a16207,#78350f)"></span>
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#86efac,#22c55e)"></span>
                             </div>
                             <div class="cev2-info">
-                                <span class="cev2-name">Nâu</span>
-                                <span class="cev2-emotions">Hoài niệm · Vintage · Ấm áp</span>
+                                <span class="cev2-name">Xanh lá</span>
+                                <span class="cev2-emotions">Thư thái · An lành</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#6b7280')" data-color="#6b7280" data-va="0.30,0.20">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#99e2d0')" data-color="#99e2d0" data-va="0.56,0.28">
                             <div class="cev2-swatch-wrap">
-                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#6b7280,#374151)"></span>
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#99e2d0,#5eead4)"></span>
+                            </div>
+                            <div class="cev2-info">
+                                <span class="cev2-name">Ngọc</span>
+                                <span class="cev2-emotions">Bình yên · Tĩnh lặng</span>
+                            </div>
+                        </button>
+                        <button class="color-emotion-card-v2" onclick="pickColor('#9ca3af')" data-color="#9ca3af" data-va="0.71,0.27">
+                            <div class="cev2-swatch-wrap">
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#9ca3af,#6b7280)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Xám</span>
-                                <span class="cev2-emotions">Cô đơn · Trống rỗng · Trầm lắng</span>
+                                <span class="cev2-emotions">Thư thái · Trầm lắng</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#f5f5f4')" data-color="#f5f5f4" data-va="0.60,0.15">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#f5f5f4')" data-color="#f5f5f4" data-va="0.88,0.16">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:linear-gradient(135deg,#f5f5f4,#d6d3d1);border:1px solid rgba(255,255,255,0.1)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Trắng</span>
-                                <span class="cev2-emotions">Thanh thoát · Thuần khiết · Nhẹ nhõm</span>
+                                <span class="cev2-emotions">Bình yên · Thanh thoát</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="addSelectedColor('#171717')" data-color="#171717" data-va="0.15,0.55">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#3b5998')" data-color="#3b5998" data-va="0.23,0.36">
+                            <div class="cev2-swatch-wrap">
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#3b5998,#2c4470)"></span>
+                            </div>
+                            <div class="cev2-info">
+                                <span class="cev2-name">Xanh dương</span>
+                                <span class="cev2-emotions">U sầu · Suy tư</span>
+                            </div>
+                        </button>
+                        <button class="color-emotion-card-v2" onclick="pickColor('#2c3e66')" data-color="#2c3e66" data-va="0.16,0.38">
+                            <div class="cev2-swatch-wrap">
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#2c3e66,#1e293b)"></span>
+                            </div>
+                            <div class="cev2-info">
+                                <span class="cev2-name">Lam thẫm</span>
+                                <span class="cev2-emotions">Buồn · Cô đơn</span>
+                            </div>
+                        </button>
+                        <button class="color-emotion-card-v2" onclick="pickColor('#a21caf')" data-color="#a21caf" data-va="0.31,0.69">
+                            <div class="cev2-swatch-wrap">
+                                <span class="cev2-swatch" style="background:linear-gradient(135deg,#a21caf,#7c3aed)"></span>
+                            </div>
+                            <div class="cev2-info">
+                                <span class="cev2-name">Tím</span>
+                                <span class="cev2-emotions">Căng thẳng · Mãnh liệt</span>
+                            </div>
+                        </button>
+                        <button class="color-emotion-card-v2" onclick="pickColor('#171717')" data-color="#171717" data-va="0.40,0.47">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:linear-gradient(135deg,#171717,#000000)"></span>
                             </div>
                             <div class="cev2-info">
                                 <span class="cev2-name">Đen</span>
-                                <span class="cev2-emotions">Sợ hãi · Bí ẩn · Quyền lực</span>
+                                <span class="cev2-emotions">Trầm lắng · U sầu</span>
                             </div>
                         </button>
                     </div>
@@ -357,7 +359,7 @@ const pages = {
                     <div class="color-selected-section">
                         <div class="color-selected-header">
                             <span class="color-selected-label">Màu đã chọn</span>
-                            <span class="color-selected-count" id="color-selected-count">0/5</span>
+                            <span class="color-selected-count" id="color-selected-count">0/3</span>
                             <button class="btn-clear-colors" id="btn-clear-colors" onclick="clearSelectedColors()" style="display:none">Xóa hết</button>
                         </div>
                         <div class="color-selected-dots" id="color-selected-dots">
