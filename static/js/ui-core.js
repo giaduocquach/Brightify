@@ -319,10 +319,6 @@ const app = {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.4"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.4"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
                 <span>Phát bài tương tự</span>
             </div>
-            <div class="context-menu-item" data-action="audio-radio">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0118 0v6"/><path d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"/></svg>
-                <span>🎧 Radio chất âm (giống âm sắc)</span>
-            </div>
             <div class="context-menu-divider"></div>
             <div class="context-menu-item" data-action="like">
                 <svg viewBox="0 0 24 24" fill="${isLiked ? 'var(--danger)' : 'none'}" stroke="${isLiked ? 'var(--danger)' : 'currentColor'}" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
@@ -362,10 +358,6 @@ const app = {
                     menu.remove();
                     this._startSongRadio(song);
                     break;
-                case 'audio-radio':
-                    menu.remove();
-                    this._startAudioRadio(song);
-                    break;
                 case 'like':
                     menu.remove();
                     toggleSongLike(song);
@@ -387,18 +379,6 @@ const app = {
 
     async _startSongRadio(song) {
         await player.startSongRadio(song);
-    },
-
-    // F7 — Audio Radio: queue of pure-MERT sound-alikes, seeded by this song.
-    async _startAudioRadio(song) {
-        try {
-            app.toast('🎧 Radio chất âm — tìm bài cùng âm sắc...', 'info');
-            const data = await API.getAudioRadio(song.track_id, 20);
-            if (!data.songs?.length) { app.toast('Không tạo được radio chất âm', 'error'); return; }
-            const songs = data.songs.map(s => _normalizeSong(s));
-            await _checkAudioBatch(songs);
-            player.loadQueue([song, ...songs], 0, 'audio-radio');
-        } catch (e) { app.toast(e.message || 'Lỗi tạo radio chất âm', 'error'); }
     },
 
 };

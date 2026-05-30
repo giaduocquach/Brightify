@@ -662,7 +662,16 @@ class MusicRecommender:
                                max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
 
     def recommend_by_audio(self, song_id_or_name, top_k=DEFAULT_TOP_K):
-        """F7 — "Audio Radio": nearest neighbours by ACOUSTIC content alone.
+        """Pure-MERT acoustic nearest neighbours.
+
+        NOTE (2026-05-30): the user-facing "Audio Radio" surface was REMOVED — an
+        A/B-free measurement showed its top-10 overlaps only ~1.1/10 with
+        recommend_by_song (i.e. genuinely different, but "different ≠ proven
+        better"; niche need + UX redundancy). This method is kept DORMANT, reserved
+        for a possible "Tổng thể ⟷ Thuần chất âm" control inside Similar Song (V11
+        option B). Not wired to any endpoint currently.
+
+        Nearest neighbours by ACOUSTIC content alone.
 
         Pure k-NN on MERT embeddings (Li et al. 2023) — timbre/production/sound —
         independent of artist, lyrics, mood or metadata. This is the "tính nhạc"

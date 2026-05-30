@@ -652,39 +652,6 @@ async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, l
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/song/{song_id}/audio-radio")
-async def get_audio_radio(song_id: str, count: int = Query(default=20, ge=1, le=40)):
-    """F7 — Audio Radio: songs that SOUND alike via pure MERT k-NN (acoustic
-    content only — timbre/production), independent of artist, lyrics or mood."""
-    try:
-        df = _recommender.df
-        if not song_id.isdigit():
-            if 'track_id' not in df.columns:
-                raise HTTPException(status_code=404, detail="Song not found")
-            matches = df.index[df['track_id'] == song_id].tolist()
-            if not matches:
-                raise HTTPException(status_code=404, detail="Song not found")
-            resolved_idx = int(matches[0])
-        else:
-            resolved_idx = int(song_id)
-
-        results = _recommender.recommend_by_audio(resolved_idx, top_k=count)
-        if results is None or len(results) == 0:
-            raise HTTPException(status_code=503, detail="Audio embeddings unavailable")
-
-        songs = []
-        for idx, row in results.iterrows():
-            s = _song_to_dict(row, row.get('original_index', idx))
-            s['similarity_score'] = round(float(row.get('similarity_score', 0)), 4)
-            songs.append(s)
-        return {"success": True, "songs": songs, "count": len(songs), "source_song_id": song_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.getLogger(__name__).exception("audio-radio failed")
-        raise HTTPException(status_code=500, detail="Audio radio failed")
-
-
 @router.get("/track/info/{song_index}")
 async def get_track_info(song_index: str):
     """Get track info with local audio availability. Accepts track_id or integer index."""

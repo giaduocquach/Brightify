@@ -13,7 +13,7 @@
 | Feature | Câu hỏi cốt lõi | Tín hiệu NÊN dùng | MERT? |
 |---|---|---|---|
 | **Similar songs** (`recommend_by_song`) | "Giống về nhạc?" | **MERT (chính)** + lyrics-PhoBERT (chủ đề, *khác modality*) + V-A/mood (cảm xúc) | ✅ **CHÍNH** |
-| **Audio Radio** (`recommend_by_audio`) | "Giống chất âm thuần?" | **MERT thuần** | ✅ **DUY NHẤT** |
+| ~~**Audio Radio**~~ (`recommend_by_audio`) | "Giống chất âm thuần?" | MERT thuần | ❌ **ĐÃ GỠ** (2026-05-30) — trùng Similar chỉ 1.1/10 nhưng *khác ≠ tốt hơn* + niche + rối UX; code giữ dormant |
 | **KG content** (F6) | "Đồ thị tương đồng nội dung" | MERT + mood_tags + instrument_tags (±audio) | ✅ (xương sống) |
 | **Color → music** | "Hợp cảm xúc của màu?" | **Màu→V-A (CIEDE2000/Jonauskaite) + V-A + emotion** | ❌ (không phải cầu nối; chỉ re-rank phụ, gated) |
 | **Image → music** | "Hợp cảm xúc của ảnh?" | **CLIP→emotion/V-A + V-A + emotion** | ❌ (như color) |
@@ -82,8 +82,9 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
   2. Giữ lyrics + V-A/mood như *signal bổ sung khác-modality*, không gộp vào audio.
 - **MERT: ✅ CHÍNH.**
 
-### F-AUDIO. Audio Radio `recommend_by_audio` — ✅ đã làm (F7)
-- MERT thuần — đúng theo S1. **Không thêm gì** (đó là điểm mạnh: một lăng kính thuần chất âm). Đã hợp lý.
+### F-AUDIO. Audio Radio `recommend_by_audio` — ❌ ĐÃ GỠ surface (2026-05-30)
+- MERT thuần — đúng modality về lý thuyết. **NHƯNG đã gỡ feature** sau kiểm chứng: top-10 của Audio Radio **chỉ trùng ~1.1/10** với Similar Song (≈89% khác) → *không trùng*, nhưng **"khác ≠ chứng minh được tốt hơn"** + nhu cầu **niche** (pure sound-alike, bỏ qua cảm xúc/lời → dễ ghép lạ) + **rối UX** (2 cửa "tìm tương tự" + chôn trong chuột phải).
+- **Quyết định:** gỡ context-menu + endpoint + `getAudioRadio`. **Giữ `recommend_by_audio` DORMANT** (code) — để dành cho **phương án núm trượt "Tổng thể ⟷ Thuần chất âm"** trong Similar Song (option B) *nếu* sau này đo được nhu cầu. Đúng triết lý "đừng giữ feature chưa chứng minh giá trị".
 
 ### F-KG. KG content embeddings (F6) — đã làm
 - **Hiện tại:** MERT 0.5 ⊕ mood_tags 0.2 ⊕ instrument_tags 0.2 ⊕ audio 0.1 → SVD 64.
@@ -193,7 +194,7 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 ## 4. MERT — TỔNG KẾT "DÙNG / KHÔNG DÙNG"
 
 **✅ Nên dùng MERT (câu hỏi về chất âm):**
-- Similar songs (chính) · Audio Radio (thuần) · KG content (xương sống) · *Journey-smoothness* (thử).
+- Similar songs (chính) · ~~Audio Radio~~ (đã gỡ surface 2026-05-30, code dormant) · KG content (xương sống) · *Journey-smoothness* (thử).
 
 **❌ Không nên dùng MERT làm tín hiệu chính (sai câu hỏi):**
 - Color→music · Image→music · Lyrics/Vibe search (text) · Context activity-fit (dùng thuộc tính diễn giải).
