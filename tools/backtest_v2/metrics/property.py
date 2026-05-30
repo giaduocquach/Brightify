@@ -383,6 +383,25 @@ def serendipity_proxy(recs: Sequence[int], seed_idx: int, catalog: Any) -> float
         return float(np.mean(dists))
 
 
+def same_artist_at_k(recs: Sequence[int], seed_idx: int, catalog: Any) -> float:
+    """GT-3 — fraction of top-K recs that share the SEED's artist.
+
+    Similar-song bias metric: high = the recommender mostly returns the same
+    artist (the artist-bias symptom F6 fixed). Distinct from artist_gini (global
+    exposure equity) — this is "same-as-this-seed". Lower is generally healthier
+    for content similarity, though a stylistically consistent artist legitimately
+    yields some same-artist neighbours (see §6.3.1).
+    """
+    if catalog.artist_col is None or len(recs) == 0:
+        return 0.0
+    col = catalog.df[catalog.artist_col]
+    seed_artist = str(col.iloc[seed_idx])
+    if not seed_artist or seed_artist.lower() in ('', 'nan', 'unknown'):
+        return 0.0
+    same = sum(1 for idx in recs if str(col.iloc[idx]) == seed_artist)
+    return float(same) / float(len(recs))
+
+
 # ---------------------------------------------------------------------------
 # Convenience: compute all per-query metrics at once
 # ---------------------------------------------------------------------------
@@ -403,4 +422,5 @@ def compute_all(
         'color_coherence': color_coherence(recs, catalog),
         'calibration_error': calibration_error(recs, seed_idx, catalog),
         'serendipity_proxy': serendipity_proxy(recs, seed_idx, catalog),
+        'same_artist_at_k': same_artist_at_k(recs, seed_idx, catalog),  # GT-3
     }

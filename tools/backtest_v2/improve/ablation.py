@@ -86,10 +86,11 @@ def run_ablation(
     baseline_ndcg = _eval_ndcg(baseline_sys, ground_truth, top_k=top_k, gt_name=gt_name)
 
     queries = stratified_sample(catalog.df, n=n_queries, seed=seed)
-    baseline_ild, baseline_mood = _eval_property(baseline_sys, queries, catalog, top_k)
+    baseline_ild, baseline_mood, baseline_sameart = _eval_property(baseline_sys, queries, catalog, top_k)
 
     print(f"[ablation] Baseline: NDCG@10={baseline_ndcg:.6f}  "
-          f"ILD_lyrics={baseline_ild:.6f}  MoodCoher={baseline_mood:.6f}")
+          f"ILD_lyrics={baseline_ild:.6f}  MoodCoher={baseline_mood:.6f}  "
+          f"SameArtist@10={baseline_sameart:.6f}")
 
     # --- Per-signal ablation ---
     results: List[Dict[str, Any]] = []
@@ -101,11 +102,12 @@ def run_ablation(
         ablated_sys = BrightifyBaseline(catalog, weights=w)
 
         ndcg = _eval_ndcg(ablated_sys, ground_truth, top_k=top_k, gt_name=gt_name)
-        ild, mood = _eval_property(ablated_sys, queries, catalog, top_k)
+        ild, mood, sameart = _eval_property(ablated_sys, queries, catalog, top_k)
 
         delta_ndcg = ndcg - baseline_ndcg
         delta_ild = ild - baseline_ild
         delta_mood = mood - baseline_mood
+        delta_sameart = sameart - baseline_sameart
 
         pillar_info = SIGNAL_TO_PILLAR[signal]
         results.append({
@@ -118,6 +120,8 @@ def run_ablation(
             "delta_ild_lyrics": round(delta_ild, 6),
             "mood_coherence": round(mood, 6),
             "delta_mood_coherence": round(delta_mood, 6),
+            "same_artist_at_10": round(sameart, 6),
+            "delta_same_artist_at_10": round(delta_sameart, 6),
             "importance_abs_ndcg": round(abs(delta_ndcg), 6),
             "pillar": pillar_info["pillar"],
             "pillar_name": pillar_info["name"],
@@ -126,7 +130,7 @@ def run_ablation(
             "validity": "external",
         })
         print(f"[ablation]    ΔNDCG@10={delta_ndcg:+.6f}  "
-              f"ΔILD={delta_ild:+.6f}  ΔMood={delta_mood:+.6f}")
+              f"ΔILD={delta_ild:+.6f}  ΔMood={delta_mood:+.6f}  ΔSameArtist={delta_sameart:+.6f}")
 
     # Sort by |ΔNDCG@10| descending — most important first
     results_sorted = sorted(results, key=lambda r: r["importance_abs_ndcg"], reverse=True)
@@ -142,6 +146,7 @@ def run_ablation(
             "baseline_ndcg_at_10": round(baseline_ndcg, 6),
             "baseline_ild_lyrics": round(baseline_ild, 6),
             "baseline_mood_coherence": round(baseline_mood, 6),
+            "baseline_same_artist_at_10": round(baseline_sameart, 6),
             "n_gt_queries": len(ground_truth),
             "n_property_queries": n_queries,
             "top_k": top_k,
@@ -194,11 +199,12 @@ def _eval_property(
     catalog: Any,
     top_k: int,
 ) -> tuple:
-    """Return (mean_ild_lyrics, mean_mood_coherence) over sampled queries."""
+    """Return (mean_ild_lyrics, mean_mood_coherence, mean_same_artist_at_k)."""
     from tools.backtest_v2.metrics.property import compute_all
 
     ild_values: List[float] = []
     mood_values: List[float] = []
+    same_artist_values: List[float] = []  # GT-3 — similar-song bias
 
     for seed_idx in queries:
         recs = system.recommend(seed_idx, top_k=top_k)
@@ -209,10 +215,13 @@ def _eval_property(
             ild_values.append(row["ild_lyrics"])
         if "mood_coherence" in row:
             mood_values.append(row["mood_coherence"])
+        if "same_artist_at_k" in row:
+            same_artist_values.append(row["same_artist_at_k"])
 
     ild = float(np.mean(ild_values)) if ild_values else 0.0
     mood = float(np.mean(mood_values)) if mood_values else 0.0
-    return ild, mood
+    same_artist = float(np.mean(same_artist_values)) if same_artist_values else 0.0
+    return ild, mood, same_artist
 
 
 def _build_pillar_priority(results_sorted: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
