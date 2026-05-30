@@ -89,7 +89,7 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 ### F-KG. KG content embeddings (F6) — đã làm
 - **Hiện tại:** MERT 0.5 ⊕ mood_tags 0.2 ⊕ instrument_tags 0.2 ⊕ audio 0.1 → SVD 64.
 - **Theo bằng chứng:** MERT xương sống đúng. mood_tags/instrument_tags là **nhãn ngữ nghĩa** (khác modality MERT) → bổ sung hợp lý. Thành phần **audio 0.1 nghi ngờ dư thừa** với MERT (1.2).
-- **HÀNH ĐỘNG:** ablation bỏ `audio 0.1` (giữ MERT+mood+instrument) → nếu chất lượng/`%same-artist` không đổi thì bỏ cho gọn.
+- ✅ **E2 XONG (2026-05-30):** ablation 1050 GT queries → **tất cả 6 metric (NDCG/Prec/Recall/MRR/ILD/SameArtist) thay đổi ≤ 0.0001** — không phân biệt được với nhiễu. MERT đã capture audio shape; scalar block là dư thừa. → Đã xoá `audio` khỏi `MODALITY_WEIGHTS`, redistribute mood 0.20→0.25, instrument 0.20→0.25, rebuild KG (5548×64).
 
 ### F-COLOR. Color → music `recommend_by_colors`
 - **Câu hỏi:** đồng điệu cảm xúc của màu. **Cầu nối = V-A/emotion** (1.5).
