@@ -218,13 +218,14 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 3. **E7 — Color bỏ/hạ CIEDE2000-1-màu** *(M)*: chuyển sang **đa-màu→V-A** (saturation→arousal, lightness→valence); đo color-path.
 4. **E8 — Vibe search: bỏ centroid-γ** *(S)* + **thêm term emotion/V-A** cho query mood (gate); đo (cần GT chủ đề-lời).
 
-**E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30) → KẾT LUẬN: GIỮ (soft-prune), KHÔNG hard-remove.**
-Câu hỏi: optimizer đã hạ tonal (0.013)/rhythmic (0.020)/V-A (0.058) về gần 0 — có nên *xoá hẳn* (zero/bỏ tính) cho gọn không? Cân đo theo bằng chứng:
-- **Chi phí GIỮ ≈ 0:** mọi tín hiệu **vẫn được tính** rồi mới nhân trọng số (zero-weight KHÔNG bỏ qua tính toán); muốn tiết kiệm phải bỏ *phép tính*, mà các cosine này rất rẻ (vectorized 5548). → hard-remove **gần như không tiết kiệm gì**.
-- **Lý do GIỮ — quyết định nhất (cold-start/fallback):** bài **KHÔNG có lyrics** chạy path `audio_only` (không có tín hiệu lyrics) → khi đó tonal/rhythmic/V-A/emotion **là xương sống**. Lyrics chỉ áp đảo *khi có mặt*; bỏ các tín hiệu kia = **phá path no-lyrics + mất graceful degradation** (auxiliary features có giá trị cold-start — arXiv 2102.12369; MDPI 11/9608).
-- **Handcrafted không hoàn toàn thừa:** "nuanced, not simple redundancy" — bổ trợ một phần + interpretability ([arXiv 2601.19109], [2106.00110]). Cheap-scalar của ta *phần lớn* trùng MERT nhưng vẫn là fallback.
-- **Optimizer đã "prune mềm" dưới ràng buộc diversity** → cấu hình small-but-nonzero là **bản CI-confirmed**; hard-zero là **lệch chưa kiểm chứng**, lợi ích biên ≈ 0 ([pruning chỉ "minor degradation" — arXiv 2101.07577]).
-- → **GIỮ ở trọng số đã tối ưu.** Nếu sau muốn xoá-cho-gọn, phải chạy ablation riêng (zero-3-tín-hiệu vs optimized) đo đủ họ metric + diversity + path no-lyrics; **chỉ bỏ nếu tất cả không xấu đi**. Mặc định: không động.
+**E1c — "Giữ hay BỎ HẲN tín hiệu near-zero?" (nghiên cứu 2026-05-30; ĐÍNH CHÍNH 2026-05-30 sau phản hồi user).**
+Câu hỏi: optimizer đã hạ tonal (0.013)/rhythmic (0.020)/V-A (0.058) gần 0 — xoá hẳn cho gọn?
+- ❌ **ĐÍNH CHÍNH — lập luận "fallback no-lyrics" trước đó SAI:** `has_lyrics` trong `recommend_by_song` là check **TOÀN CỤC** (embedding matrix có nạp không), KHÔNG per-song; ma trận luôn nạp + **100% bài có lyrics** (data đã sạch) → nhánh `audio_only` **KHÔNG BAO GIỜ chạy**. Vậy không có "bài no-lyrics dùng các signal kia làm xương sống". Lý do fallback **không hợp lệ**.
+- **Lý do GIỮ còn lại (yếu hơn):** (a) chi phí xoá ≈ 0 (signal vẫn được tính bất kể trọng số; cosine rẻ); (b) optimizer soft-prune dưới ràng buộc diversity → bản **CI-confirmed**, hard-zero là lệch chưa đo; (c) đóng góp chút diversity/mood-coherence; (d) handcrafted "nuanced, not pure redundancy" + interpretability ([arXiv 2601.19109]).
+- → **Kết luận điều chỉnh:** GIỮ ở trọng số tối ưu là *đủ ổn* (bản validated, cost≈0) NHƯNG không còn lý do "bắt buộc"; hard-remove cũng chấp nhận được nếu ablation xác nhận không xấu đi. Đây là **wash**, nghiêng giữ-tạm vì là cấu hình đã đo.
+
+**E1d — DEAD CODE: nhánh `with_lyrics`/`audio_only` thừa (user phát hiện 2026-05-30).**
+Vì `has_lyrics` toàn-cục-luôn-True + mọi bài có lyrics, **path `audio_only` (cả 2 dict) là dead code**. → Ứng viên **đơn giản hoá**: bỏ nhánh `audio_only` + config `audio_only` trong `recommend_by_song` (và rà các method khác có cùng kiểu chia, vd `recommend_by_colors` use_lyrics). *Lưu ý:* nếu sau này muốn fallback no-lyrics THẬT thì phải làm **per-song** (hiện không có) — nhưng với cam kết data luôn-có-lyrics, không cần. Effort S; không ảnh hưởng kết quả (nhánh chết).
 
 **Nhóm B — Thêm tín hiệu THIẾU có bằng chứng (giá trị cao):**
 5. **E9 — Context: session/sequence + repeat/skip + day-of-week** *(L, giá trị cao nhất mảng context)*: chuyển scorer pointwise → có ngữ cảnh phiên (Deezer RecSys'24). Hạ weather (ứng viên ablate) + giảm season cho VN.
