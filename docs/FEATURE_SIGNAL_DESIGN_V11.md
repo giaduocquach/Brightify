@@ -209,7 +209,8 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 > Mọi thay đổi trọng số mặc định phải qua harness backtest (Bonferroni/CI) trước khi bật.
 
 **Nhóm A — Cắt dư thừa (rủi ro thấp, củng cố triết lý; đo bằng backtest):**
-1. **E1 — `recommend_by_song`: cắt dư thừa + học trọng số** *(M, CAO NHẤT)*: (a) **gộp cảm xúc về 1** (bỏ V-A-riêng + mood-quadrant, giữ emotion-vector); (b) **bỏ tonal trước** (case mạnh nhất), rồi timbral/rhythmic, tăng MERT; (c) **học/tune trọng số fusion** thay tổng đều. Đo NDCG — kỳ vọng *không giảm* mà gọn + nhanh hơn.
+1. **E1 — `recommend_by_song`: cắt dư thừa + học trọng số** *(M, CAO NHẤT)*: (a) **gộp cảm xúc về 1**; (b) **bỏ tonal/timbral/rhythmic**, tăng MERT; (c) **học trọng số** (SLSQP, ràng buộc sàn diversity).
+   - ✅ **ĐÃ ĐO — drop-one-signal ablation (2026-05-30, editorial GT, baseline NDCG@10=0.0930):** ΔNDCG khi bỏ: **lyrics −0.0164** (quan trọng nhất, GIỮ) · **va +0.0072** (V-A *hơi hại* relevance) · tonal +0.0010 · emotion +0.0006 · timbral −0.0002 · mood +0.0001 · rhythmic +0.0001. → **Xác nhận:** lyrics áp đảo; cảm xúc-3-lần + thủ công-3 **không cải thiện relevance** (V-A hơi hại). *Caveat:* GT editorial (genre-playlist) thiên lyrics/topic; bỏ các tín hiệu này **giảm ILD/diversity** + V-A giữ mood-coherence (ΔMood −0.05) → có trade-off. (c) **`optimize-weights`** (SLSQP, sàn ILD≥95%) đang chạy để ra trọng số tối ưu *bằng dữ liệu*. **Áp dụng có gate:** chỉ đổi mặc định nếu nDCG ≥ baseline & ILD không thủng sàn.
 2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
 3. **E7 — Color bỏ/hạ CIEDE2000-1-màu** *(M)*: chuyển sang **đa-màu→V-A** (saturation→arousal, lightness→valence); đo color-path.
 4. **E8 — Vibe search: bỏ centroid-γ** *(S)* + **thêm term emotion/V-A** cho query mood (gate); đo (cần GT chủ đề-lời).
