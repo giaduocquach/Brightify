@@ -99,19 +99,18 @@ WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search
 #   with_lyrics: timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert
 #   audio_only:  timbral, rhythmic, tonal, va, emotion, mood, mert
 RECO_SONG_WEIGHTS = {
+    # E1d (2026-05-30): audio_only removed — all songs have lyrics (data contract).
     "with_lyrics": [0.124683, 0.189409, 0.044438, 0.494559, 0.012768, 0.078309, 0.055834],
-    "audio_only":  [0.20, 0.15, 0.10, 0.25, 0.18, 0.12],
 }
 
 # 8-signal weights when ENABLE_MERT=True (Li et al. 2023 — reduce timbral/rhythmic
 # because MERT already captures those sub-spaces via RVQ+CQT dual teacher).
 # Σ = 1.00 in both variants.
 RECO_SONG_WEIGHTS_MERT = {
-    # NOTE: 8 weights (…, mert). The optimize-weights writer corrupted this with a
-    # 7-value array (2026-05-30); restored. E1 optimized the 7-signal config only;
-    # the 8-signal MERT path is NOT yet re-optimized (see E1b). Production uses this.
+    # 8-signal (timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert).
+    # E1/E1b CI-confirmed optimal weights (2026-05-30).
+    # E1d: audio_only removed — all songs have lyrics (data contract).
     "with_lyrics": [0.124244, 0.020001, 0.013334, 0.356358, 0.057698, 0.075104, 0.083410, 0.269850],
-    "audio_only":  [0.12, 0.10, 0.06, 0.22, 0.15, 0.10, 0.25],
 }
 
 # ============================================================================

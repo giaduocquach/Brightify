@@ -448,16 +448,11 @@ class MusicRecommender:
         audio_sim = cosine_similarity(query_audio_centroid.reshape(1, -1), self.audio_matrix)[0]
         audio_sim = np.clip(audio_sim, 0, 1)
 
-        # 4. Lyrics semantic similarity (NEW - Kim et al. 2024)
-        if query_lyrics_centroid is not None and self.embeddings_normalized is not None:
-            lyrics_sim = self.embeddings_normalized @ query_lyrics_centroid
-            # Normalize to [0, 1]
-            lyrics_sim = (lyrics_sim + 1) / 2
-            lyrics_sim = np.clip(lyrics_sim, 0, 1)
-            use_lyrics = True
-        else:
-            lyrics_sim = np.ones(self.n_songs) * 0.5  # Neutral if no lyrics
-            use_lyrics = False
+        # 4. Lyrics semantic similarity (Kim et al. 2024)
+        # All songs have lyrics; embeddings always loaded.
+        lyrics_sim = self.embeddings_normalized @ query_lyrics_centroid
+        lyrics_sim = (lyrics_sim + 1) / 2
+        lyrics_sim = np.clip(lyrics_sim, 0, 1)
 
         # 5. Emotion-based boost/penalty (vectorized — Pillar C)
         emotion_boost = np.zeros(self.n_songs)
@@ -476,34 +471,19 @@ class MusicRecommender:
         # ===== WEIGHTED FUSION (Research-based) =====
         # Zhang et al. (2024): Optimal multimodal fusion for music recommendation
         # Kim et al. (2024): Lyrics improve recommendation by 18%
-        if use_lyrics:
-            # Multimodal fusion with lyrics
-            final_scores = (
-                0.25 * audio_sim +      # Audio features (25%)
-                0.35 * lyrics_sim +     # Lyrics semantic similarity (35%) - NEW!
-                0.20 * va_sim +         # Valence-Arousal (20%)
-                0.20 * emotion_sim +    # Emotion vector (20%)
-                emotion_boost           # Emotion matching boost
-            )
-        else:
-            # Fallback without lyrics (original weights)
-            final_scores = (
-                0.25 * audio_sim +      # Audio features
-                0.35 * va_sim +         # Valence-Arousal distance (most important)
-                0.25 * emotion_sim +    # Emotion vector similarity
-                emotion_boost           # Emotion matching boost
-            )
-
-        # Ensure scores are positive
+        final_scores = (
+            0.25 * audio_sim +
+            0.35 * lyrics_sim +
+            0.20 * va_sim +
+            0.20 * emotion_sim +
+            emotion_boost
+        )
         final_scores = np.clip(final_scores, 0, 1)
 
         # RRF candidate reduction (Cormack et al. 2009) — Pillar C
         candidates = None
         if ENABLE_RRF:
-            _rrf_sigs = [va_sim, emotion_sim]
-            if use_lyrics:
-                _rrf_sigs.append(lyrics_sim)
-            candidates = self._rrf_candidates(_rrf_sigs)
+            candidates = self._rrf_candidates([va_sim, emotion_sim, lyrics_sim])
 
         return self._fast_rank(final_scores, top_k, diversity_penalty, restrict_to=candidates)
 
@@ -575,13 +555,10 @@ class MusicRecommender:
         tonal_sim = cosine_similarity(q_ton.reshape(1, -1), self._tonal_matrix)[0]
 
         # === Signal 4: Lyrics semantic similarity (Hu & Downie 2010) ===
-        lyrics_sim = np.zeros(self.n_songs)
-        has_lyrics = False
-        if self.embeddings_normalized is not None:
-            query_lyrics = self.embeddings_normalized[song_idx]
-            lyrics_sim = self.embeddings_normalized @ query_lyrics
-            lyrics_sim = (lyrics_sim + 1) / 2
-            has_lyrics = True
+        # All songs guaranteed to have lyrics (data contract); embeddings always loaded.
+        query_lyrics = self.embeddings_normalized[song_idx]
+        lyrics_sim = self.embeddings_normalized @ query_lyrics
+        lyrics_sim = (lyrics_sim + 1) / 2
 
         # === Signal 5: V-A proximity (Russell 1980 Circumplex) ===
         # Gaussian RBF with adaptive σ based on local V-A density
@@ -614,29 +591,17 @@ class MusicRecommender:
         else:
             w_dict = RECO_SONG_WEIGHTS
 
-        if has_lyrics:
-            w = weights if weights is not None else w_dict["with_lyrics"]
-            base = (
-                w[0] * timbral_sim +
-                w[1] * rhythmic_sim +
-                w[2] * tonal_sim +
-                w[3] * lyrics_sim +
-                w[4] * va_sim +
-                w[5] * emotion_sim +
-                w[6] * mood_match
-            )
-            final_scores = base + (w[7] * mert_sim if use_mert and len(w) > 7 else 0)
-        else:
-            w = weights if weights is not None else w_dict["audio_only"]
-            base = (
-                w[0] * timbral_sim +
-                w[1] * rhythmic_sim +
-                w[2] * tonal_sim +
-                w[3] * va_sim +
-                w[4] * emotion_sim +
-                w[5] * mood_match
-            )
-            final_scores = base + (w[6] * mert_sim if use_mert and len(w) > 6 else 0)
+        w = weights if weights is not None else w_dict["with_lyrics"]
+        base = (
+            w[0] * timbral_sim +
+            w[1] * rhythmic_sim +
+            w[2] * tonal_sim +
+            w[3] * lyrics_sim +
+            w[4] * va_sim +
+            w[5] * emotion_sim +
+            w[6] * mood_match
+        )
+        final_scores = base + (w[7] * mert_sim if use_mert and len(w) > 7 else 0)
 
         # Pillar F — KG content-similarity proximity (musical-neighbourhood signal).
         # KG v2 is content-based (MERT+mood+instrument+audio), NOT artist identity,
@@ -834,35 +799,25 @@ class MusicRecommender:
         audio_sim = np.clip(audio_sim, 0, 1)
         
         # === 5. Lyrics Semantic Matching ===
-        lyrics_sim = np.ones(self.n_songs) * 0.5
-        use_lyrics = False
-        
-        if self.embeddings_normalized is not None and 'fused_emotion' in self.df.columns:
-            # Find representative lyrics based on target emotions
-            # Get top 2 emotions from image analysis
-            top_emotions = sorted(emotion_scores.items(), key=lambda x: -x[1])[:2]
-            query_lyrics_vecs = []
-            
+        # Build a query embedding from top-2 target emotions; all songs have lyrics.
+        lyrics_sim = np.ones(self.n_songs) * 0.5  # neutral fallback if no target emotion found
+        top_emotions = sorted(emotion_scores.items(), key=lambda x: -x[1])[:2]
+        query_lyrics_vecs = []
+        if 'fused_emotion' in self.df.columns:
             for emo_name, emo_score in top_emotions:
                 mapped_emo = clip_to_labels.get(emo_name)
                 if mapped_emo:
-                    # Find songs with this fused_emotion
                     mask = self.df['fused_emotion'].str.lower().str.contains(mapped_emo, na=False)
                     if mask.sum() > 0:
-                        indices = np.where(mask)[0]
-                        sample = indices[:min(8, len(indices))]
+                        sample = np.where(mask)[0][:min(8, mask.sum())]
                         avg_emb = self.embeddings_normalized[sample].mean(axis=0)
                         query_lyrics_vecs.append(avg_emb * emo_score)
-            
-            if query_lyrics_vecs:
-                query_lyrics = np.mean(query_lyrics_vecs, axis=0)
-                norm = np.linalg.norm(query_lyrics)
-                if norm > 0:
-                    query_lyrics = query_lyrics / norm
-                    lyrics_sim = self.embeddings_normalized @ query_lyrics
-                    lyrics_sim = (lyrics_sim + 1) / 2
-                    lyrics_sim = np.clip(lyrics_sim, 0, 1)
-                    use_lyrics = True
+        if query_lyrics_vecs:
+            q = np.mean(query_lyrics_vecs, axis=0)
+            norm = np.linalg.norm(q)
+            if norm > 0:
+                lyrics_sim = self.embeddings_normalized @ (q / norm)
+                lyrics_sim = np.clip((lyrics_sim + 1) / 2, 0, 1)
         
         # === 6. Emotion-based Boost/Penalty ===
         emotion_boost = np.zeros(self.n_songs)
@@ -896,32 +851,20 @@ class MusicRecommender:
                     emotion_boost[idx] = -0.06
         
         # === WEIGHTED FUSION ===
-        # Image recommendation uses more signals → distribute weights accordingly
-        if use_lyrics:
-            final_scores = (
-                0.20 * audio_sim +       # Audio features (20%)
-                0.25 * lyrics_sim +      # Lyrics semantic (25%)
-                0.20 * va_sim +          # Valence-Arousal (20%)
-                0.15 * emotion_sim +     # Emotion alignment (15%)
-                0.20 * color_sim +       # Color palette matching (20%)
-                emotion_boost            # Emotion boost/penalty
-            )
-        else:
-            final_scores = (
-                0.25 * audio_sim +       # Audio features
-                0.25 * va_sim +          # Valence-Arousal
-                0.20 * emotion_sim +     # Emotion alignment
-                0.30 * color_sim +       # Color palette matching (higher without lyrics)
-                emotion_boost
-            )
-        
+        final_scores = (
+            0.20 * audio_sim +
+            0.25 * lyrics_sim +
+            0.20 * va_sim +
+            0.15 * emotion_sim +
+            0.20 * color_sim +
+            emotion_boost
+        )
         final_scores = np.clip(final_scores, 0, 1)
-        
+
         if self.verbose:
             top_idx = np.argmax(final_scores)
             print(f"   V-A target: ({query_valence:.2f}, {query_arousal:.2f})")
             print(f"   Top score: {final_scores[top_idx]:.3f}")
-            print(f"   Using lyrics: {use_lyrics}")
         
         return self._fast_rank(final_scores, top_k, diversity_penalty)
 
