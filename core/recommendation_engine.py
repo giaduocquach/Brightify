@@ -277,7 +277,29 @@ class MusicRecommender:
         Called twice: once during _precompute_all_features (fused_emotion may
         not yet exist → defaults to 'happy') and once after CLAP/lexicon load
         to use real emotion labels.
+
+        E-RELABEL (2026-05-31): when the v2 emotion file provides per-song valence/
+        arousal (lyrics-valence + rank-normalised audio-arousal), use those DIRECTLY
+        — they are the trusted per-song mood estimate, avoid the label→centroid
+        quantisation loss, and put song_va on the same scale as GT-COLOR.
         """
+        if globals().get('USE_RELABELED_EMOTIONS', False):
+            import json as _json
+            _f = globals().get('RELABELED_EMOTIONS_FILE', '')
+            if _f and os.path.exists(_f):
+                try:
+                    with open(_f) as _fh:
+                        _v2 = _json.load(_fh)
+                    tids = self.df.get('track_id',
+                                       pd.Series(range(self.n_songs))).astype(str).values
+                    val = np.array([float(_v2.get(t, {}).get('valence', 0.5)) for t in tids])
+                    aro = np.array([float(_v2.get(t, {}).get('arousal', 0.5)) for t in tids])
+                    self.song_va[:, 0] = np.clip(val, 0.0, 1.0)
+                    self.song_va[:, 1] = np.clip(aro, 0.0, 1.0)
+                    return
+                except (ValueError, KeyError, OSError):
+                    pass  # fall through to the label-derived computation
+
         _RUSSELL_V = {"happy": 0.90, "excited": 0.70, "peaceful": 0.78, "calm": 0.72,
                       "melancholic": 0.30, "sad": 0.15, "tense": 0.35, "angry": 0.15}
         _RUSSELL_A = {"happy": 0.75, "excited": 0.90, "peaceful": 0.20, "calm": 0.15,

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 GT_COLOR_FILE = "var/runtime/backtest/ground_truth/color_va_gt_v1.json"
 
@@ -67,140 +68,63 @@ RUSSELL_CENTROIDS: Dict[str, Tuple[float, float]] = {
 # Saturation→Arousal r_s=0.720; Lightness→Valence r_s=0.484
 # ------------------------------------------------------------------
 def _hsl_to_va(hex_color: str) -> Tuple[float, float]:
-    """Map a hex color to (valence, arousal) in [0, 1]² via Whiteford 2018.
-
-    Structural formula (physical properties of light → V-A), culturally
-    portable unlike named-color lookups (Jonauskaite uses 30 countries;
-    Vietnam is not in the sample; red = festive in VN ≠ global mean).
-
-    Whiteford regressions (Spearman):
-      Arousal = 0.40×S + 0.35×hue_warmth + 0.25×(1−L)
-      Valence = 0.45×L + 0.35×hue_yellow_bias + 0.20×(1−S)
-
-    Returns (valence, arousal) both in [0, 1].
+    """Map a hex color to (valence, arousal) via the SAME formula the engine uses
+    (AdvancedColorMapper.hsl_to_va — Whiteford-2018-exact). Single source of truth
+    so GT and production agree on what "the colour's mood" means (2026-05-31).
     """
-    hex_color = hex_color.lstrip("#")
-    r, g, b = int(hex_color[0:2], 16)/255, int(hex_color[2:4], 16)/255, int(hex_color[4:6], 16)/255
-    h, l, s = colorsys.rgb_to_hls(r, g, b)   # h in [0,1], l in [0,1], s in [0,1]
-    h_deg = h * 360
-
-    # Hue warmth: warm (red/orange/yellow) = high arousal, high valence
-    # Cool (blue/green) = lower arousal. Maps hue to [0, 1] warmth proxy.
-    # Warm zone: 0–60° and 330–360° (red→yellow); cold zone: 180–300° (blue→purple)
-    if h_deg <= 60 or h_deg >= 330:
-        hue_warmth = 1.0
-    elif h_deg <= 120:
-        hue_warmth = 1.0 - (h_deg - 60) / 60
-    elif h_deg <= 180:
-        hue_warmth = 0.0
-    elif h_deg <= 240:
-        hue_warmth = 0.0
-    elif h_deg <= 300:
-        hue_warmth = (h_deg - 240) / 60 * 0.5
-    else:
-        hue_warmth = 0.5 + (h_deg - 300) / 30 * 0.5
-
-    # Yellow bias for valence: yellow=high V, blue=low V
-    # Yellow: ~55–70°, Blue: ~220–250°
-    if 40 <= h_deg <= 80:
-        hue_yb = 1.0
-    elif 200 <= h_deg <= 260:
-        hue_yb = 0.0
-    else:
-        hue_yb = 0.5
-
-    arousal = 0.40 * s + 0.35 * hue_warmth + 0.25 * (1.0 - l)
-    valence = 0.45 * l + 0.35 * hue_yb + 0.20 * (1.0 - s)
-    return float(np.clip(valence, 0.0, 1.0)), float(np.clip(arousal, 0.0, 1.0))
+    from core.advanced_color_mapping import get_advanced_color_mapper
+    return get_advanced_color_mapper().hsl_to_va(hex_color)
 
 
 # ------------------------------------------------------------------
 # Song V-A proxy — multi-signal fusion (all from existing system)
 # ------------------------------------------------------------------
 def _song_va_proxy(catalog: "Catalog") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (valence, arousal, confidence) arrays over the catalog.
+    """Return (valence, arousal, confidence) per song.
 
-    Three signals, each grounded:
-    Arousal (more reliable — arXiv:2302.13321; Eerola 2026):
-        60% Essentia audio (energy/tempo/arousal col, R²≈0.69)
-        40% CLAP Russell centroid arousal
-    Valence (needs lyrics — arXiv:2302.13321):
-        40% PhoBERT cosine to valence-anchor embeddings
-        30% CLAP Russell centroid valence
-        30% Essentia audio valence estimate
-    Confidence: high = CLAP quadrant matches computed quadrant
+    E-RELABEL rebuild (2026-05-31): use the trusted E-RELABEL v2 per-song V-A
+    (Valence ← lyrics lexicon, Arousal ← rank-normalised audio — see
+    tools/relabel_emotions.py) directly as the song-mood proxy, replacing the
+    old CLAP-blended proxy. CLAP labels were shown to be badly biased (74% happy,
+    ~0 arousal correlation), so any GT built on them is unreliable.
+
+    This is a "best current mood estimate" proxy GT for RELATIVE A/B comparison,
+    not a gold standard. It is semi-independent of the engine: the v2 file V-A is
+    computed by a different formula than the engine's song_va (which blends label→
+    Russell centroid with Essentia), so it is a related-but-distinct yardstick.
+
+    Fallback (no v2 file): Essentia energy (arousal) + audio valence (valence).
     """
+    import json
+    import os
+
     df = catalog.df
     n = len(df)
 
-    # ── CLAP Russell V-A centroids ──────────────────────────────────
-    def _clap_va():
-        emo = df["fused_emotion"].fillna("happy").str.lower().values
-        clap_v = np.array([RUSSELL_CENTROIDS.get(e, (0.0, 0.0))[0] for e in emo])
-        clap_a = np.array([RUSSELL_CENTROIDS.get(e, (0.0, 0.0))[1] for e in emo])
-        # Normalize from [-1, 1] → [0, 1]
-        clap_v = (clap_v + 1.0) / 2.0
-        clap_a = (clap_a + 1.0) / 2.0
-        return clap_v, clap_a
-
-    clap_v, clap_a = _clap_va()
-
-    # ── Essentia audio signals ────────────────────────────────────────
     def _ess(col, default=0.5):
         if col in df.columns:
             vals = df[col].fillna(default).astype(float).values
-            # Normalize to [0, 1]
             mn, mx = vals.min(), vals.max()
             if mx - mn > 1e-6:
                 return (vals - mn) / (mx - mn)
         return np.full(n, default)
 
-    # Arousal-related audio: energy (primary), arousal col if present, tempo
-    ess_arousal = (
-        0.50 * _ess("energy") +
-        0.30 * _ess("arousal", 0.5) +
-        0.20 * _ess("tempo", 0.5)
-    )
-    # Valence from audio: very weak but non-zero signal
-    ess_valence = _ess("valence_estimated", 0.5)
+    v2_path = "data/emotion_labels_v2.json"
+    if os.path.exists(v2_path):
+        with open(v2_path) as fh:
+            v2 = json.load(fh)
+        tids = df.get("track_id", pd.Series(range(n))).astype(str).values
+        valence = np.array([float(v2.get(t, {}).get("valence", 0.5)) for t in tids])
+        arousal = np.array([float(v2.get(t, {}).get("arousal", 0.5)) for t in tids])
+        # confidence: songs with lexicon-derived label get full weight (all here)
+        confidence = np.ones(n)
+    else:
+        # Fallback to raw audio if v2 not generated yet
+        arousal = 0.6 * _ess("energy") + 0.4 * _ess("arousal", 0.5)
+        valence = _ess("valence", 0.5)
+        confidence = np.full(n, 0.5)
 
-    # ── PhoBERT lyrics → valence anchor ──────────────────────────────
-    # Compute cosine similarity to high-valence / low-valence anchor centroids
-    # built from songs already labeled happy vs sad (CLAP ground truth).
-    pho_valence = np.full(n, 0.5)
-    if catalog.embeddings_normalized is not None:
-        happy_mask = np.isin(df["fused_emotion"].values, ["happy", "excited"])
-        sad_mask = np.isin(df["fused_emotion"].values, ["sad", "melancholic"])
-        if happy_mask.sum() >= 5 and sad_mask.sum() >= 5:
-            pos_anchor = catalog.embeddings_normalized[happy_mask].mean(axis=0)
-            neg_anchor = catalog.embeddings_normalized[sad_mask].mean(axis=0)
-            pos_anchor /= (np.linalg.norm(pos_anchor) + 1e-9)
-            neg_anchor /= (np.linalg.norm(neg_anchor) + 1e-9)
-            # Valence proxy: how much song leans toward happy vs sad in lyrics space
-            pos_sim = catalog.embeddings_normalized @ pos_anchor
-            neg_sim = catalog.embeddings_normalized @ neg_anchor
-            pho_valence = (pos_sim - neg_sim + 2.0) / 4.0   # → [0, 1] approx
-            pho_valence = np.clip(pho_valence, 0.0, 1.0)
-
-    # ── Fuse ─────────────────────────────────────────────────────────
-    # Arousal: 60% Essentia audio (culturally stable) + 40% CLAP Russell
-    arousal = 0.60 * ess_arousal + 0.40 * clap_a
-
-    # Valence: 40% PhoBERT lyrics (strongest for VN text) + 30% CLAP + 30% Essentia
-    valence = 0.40 * pho_valence + 0.30 * clap_v + 0.30 * ess_valence
-
-    arousal = np.clip(arousal, 0.0, 1.0)
-    valence = np.clip(valence, 0.0, 1.0)
-
-    # ── Confidence: quadrant agreement between CLAP and proxy ────────
-    def _quadrant(v, a):
-        return (v >= 0.5).astype(int) * 2 + (a >= 0.5).astype(int)
-
-    clap_q = _quadrant(clap_v, clap_a)
-    proxy_q = _quadrant(valence, arousal)
-    confidence = (clap_q == proxy_q).astype(float)   # 1.0 = high confidence
-
-    return valence, arousal, confidence
+    return np.clip(valence, 0, 1), np.clip(arousal, 0, 1), confidence
 
 
 # ------------------------------------------------------------------
