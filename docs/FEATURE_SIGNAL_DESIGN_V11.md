@@ -217,6 +217,18 @@ Feature nhiễu/dư thừa **làm giảm** hiệu năng & khái quát hóa; "sid
 2. **E2 — KG bỏ thành phần `audio 0.1`** *(S)*: giữ MERT+mood+instrument; đo chất lượng + %same-artist (KG vốn một phần vòng lặp).
 3. **E7** ✅ **(2026-05-30):** Color bỏ `audio_sim` (25%): màu→audio formulaic hoàn toàn tương quan với va_sim/emotion_sim (cùng pipeline màu→V-A→audio), Δ V-A proximity = 0.0000 trên 12 màu test. Redistribute: lyrics 40%, va 30%, emotion 30%. **Bonus fix:** null-centroid bug crashing matmul từ E1d.
 
+**E-RELABEL — Sửa nhãn cảm xúc bài hát (2026-05-31):** Phát hiện `fused_emotion` (CLAP audio
+zero-shot) bị thiên kiến nặng: 74% happy/excited, arousal Essentia ~0.33 cho MỌI nhãn (ρ với
+arousal thật chỉ +0.24), bài tên buồn bị gán happy gấp 3 lần. → Catalog "lệch" là **lỗi nhãn,
+không phải data** (Essentia cho thấy V-pop thật sự thiên ballad/low-arousal). Tool
+`tools/relabel_emotions.py` tái suy nhãn: **Valence ← lyrics** (lexicon VN, arXiv:2302.13321) +
+audio backstop, **Arousal ← audio** (Essentia, rank-normalised). Backtest **không vòng tròn**
+(3 tín hiệu độc lập): valence ρ vs lyric-sentiment **+0.077 → +0.422** (5.5×); sad-title→negative
+**28% → 75%** (balanced-acc 53%→61.5%); phân bố cân bằng cả 8 mood (happy 1261, melancholic 1074,
+sad 908…). Wired qua `config.USE_RELABELED_EMOTIONS` (mặc định True) — cải thiện đồng thời mọi
+feature dùng `fused_emotion`/`song_va`. Chạy `python -m tools.relabel_emotions` để sinh
+`data/emotion_labels_v2.json` (gitignored). Xem [[project_clap_label_bias]].
+
 **E7-CHAIN — Đại tu chain màu→cảm xúc→nhạc (2026-05-31):** Phát hiện và sửa 5 lỗi cốt lõi khi kiểm tra triết lý feature:
 1. ✅ `song_va` = màu album art thay vì âm nhạc (valence r=0.22→0.93 sau fix audio+lyrics).
 2. ✅ `hex_to_hsl` hoán vị S↔L (colorsys trả h,l,s nhưng code unpack h,s,l → mọi HSL sai).

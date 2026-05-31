@@ -101,8 +101,12 @@ class MusicRecommender:
         else:
             self.colors = None
 
-        # Pillar E — load pre-computed CLAP emotion labels (overrides lexicon fallback)
-        if ENABLE_CLAP_EMOTION and os.path.exists(CLAP_EMOTIONS_FILE) \
+        # Pillar E — load pre-computed emotion labels (E-RELABEL v2 preferred over CLAP)
+        _emo_file = (RELABELED_EMOTIONS_FILE
+                     if globals().get('USE_RELABELED_EMOTIONS', False)
+                     and os.path.exists(globals().get('RELABELED_EMOTIONS_FILE', ''))
+                     else CLAP_EMOTIONS_FILE)
+        if ENABLE_CLAP_EMOTION and os.path.exists(_emo_file) \
                 and 'fused_emotion' not in self.df.columns:
             self._load_clap_emotions()
 
@@ -346,18 +350,30 @@ class MusicRecommender:
             logger.debug(f"Emotion distribution (top 5): {top5}")
 
     def _load_clap_emotions(self) -> None:
-        """Load pre-computed CLAP emotion labels and merge into self.df."""
+        """Load pre-computed emotion labels and merge into self.df.
+
+        E-RELABEL: prefer the re-derived labels (lyrics-valence + audio-arousal) over
+        the biased CLAP audio zero-shot labels when available (config flag). The v2
+        file maps track_id → {label, valence, arousal}; CLAP file maps track_id → label.
+        """
         import json
-        with open(CLAP_EMOTIONS_FILE) as fh:
-            clap_map: dict = json.load(fh)
+        use_v2 = (globals().get('USE_RELABELED_EMOTIONS', False)
+                  and os.path.exists(globals().get('RELABELED_EMOTIONS_FILE', '')))
+        src = RELABELED_EMOTIONS_FILE if use_v2 else CLAP_EMOTIONS_FILE
+        tag = "RELABEL-v2" if use_v2 else "CLAP"
+        with open(src) as fh:
+            emo_map: dict = json.load(fh)
+
+        def _label(entry):
+            return entry.get('label') if isinstance(entry, dict) else entry
 
         track_ids = self.df.get("track_id", pd.Series(range(self.n_songs))).astype(str).values
-        labels = np.array([clap_map.get(tid) for tid in track_ids], dtype=object)
+        labels = np.array([_label(emo_map.get(tid)) for tid in track_ids], dtype=object)
         self.df["fused_emotion"] = labels
 
         n_labeled = pd.notna(pd.Series(labels)).sum()
         coverage = n_labeled / self.n_songs * 100
-        logger.info(f"[CLAP] Loaded {n_labeled}/{self.n_songs} emotion labels ({coverage:.1f}%)")
+        logger.info(f"[{tag}] Loaded {n_labeled}/{self.n_songs} emotion labels ({coverage:.1f}%)")
 
         # For un-labelled songs fall back to heuristic V-A mapping
         missing_mask = pd.isna(self.df["fused_emotion"])

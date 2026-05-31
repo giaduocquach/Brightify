@@ -300,6 +300,14 @@ CLAP_MODEL = "laion/larger_clap_music_and_speech"
 CLAP_EMOTIONS_FILE = "data/clap_emotions.json"
 CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
 
+# E-RELABEL (2026-05-31) — CLAP audio zero-shot labels are biased (74% happy/excited,
+# ~0 arousal correlation; see tools/relabel_emotions.py + memory project_clap_label_bias).
+# Prefer the re-derived labels (lyrics-valence + audio-arousal) which score far better
+# on independent metrics: valence-vs-lyric-sentiment ρ 0.077→0.422, sad-title 28%→75%.
+# Set USE_RELABELED_EMOTIONS=False to revert to raw CLAP.
+USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "True"
+RELABELED_EMOTIONS_FILE = "data/emotion_labels_v2.json"
+
 # ============================================================================
 # System Settings
 # ============================================================================
