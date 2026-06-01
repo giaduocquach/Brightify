@@ -115,6 +115,53 @@ def train() -> None:
           f">=0.5: {(pred>=0.5).mean()*100:.0f}%  (broken DEAM-arousal: std 0.06, 1.8%)")
 
 
+def _rank01(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, float)
+    return np.argsort(np.argsort(x)) / (len(x) - 1 + 1e-9)
+
+
+def fuse(w_mert: float = 0.6) -> None:
+    """Produce the true audio+lyrics labels (v4): valence ← LLM-lyrics,
+    arousal ← w_mert·MERT-audio (rank-normalised, catalog-relative) + (1-w)·LLM-lyrics.
+    label = quadrant(valence, arousal). Everything (song_va, fused_emotion, mood_quadrant)
+    then derives from ONE consistent audio+lyrics V-A.
+    """
+    import pandas as pd
+    from collections import Counter
+    from core.emotion_analysis import get_emotion_analyzer
+    _, _, fusion = get_emotion_analyzer()
+
+    v3 = json.load(open("data/emotion_labels_v3.json"))
+    ma = json.load(open(OUT_AROUSAL))
+    tids = list(v3.keys())
+    mert_a = np.array([ma.get(t, 0.5) for t in tids])
+    # Use MERT's NATURAL prediction (the honest audio arousal), only de-compress its
+    # spread to ~std 0.16 around its own mean — preserves ordering AND the real
+    # high/low fraction (NOT rank-norm, which forces 50/50 and re-creates fake-angry).
+    mu, sd = mert_a.mean(), mert_a.std() + 1e-9
+    mert_s = np.clip(mu + (mert_a - mu) / sd * 0.16, 0, 1)
+
+    out = {}
+    for i, t in enumerate(tids):
+        lv = float(v3[t].get("valence", 0.5))
+        la = float(v3[t].get("arousal", 0.5))
+        a = float(np.clip(w_mert * mert_s[i] + (1 - w_mert) * la, 0, 1))
+        out[t] = {"valence": round(lv, 4), "arousal": round(a, 4),
+                  "label": fusion.get_emotion_label(lv, a),
+                  "arousal_mert": round(float(mert_a[i]), 4),
+                  "arousal_llm": round(la, 4), "src": "fused_v4"}
+    json.dump(out, open("data/emotion_labels_v4.json", "w"), ensure_ascii=False)
+    dist = Counter(v["label"] for v in out.values())
+    tot = sum(dist.values())
+    print(f"[fuse] arousal = {w_mert}·MERT(audio,rank) + {1-w_mert:.1f}·LLM(lyrics) → "
+          f"data/emotion_labels_v4.json")
+    for k in ['happy', 'excited', 'peaceful', 'calm', 'melancholic', 'sad', 'tense', 'angry']:
+        print(f"  {k:12} {dist.get(k,0):5} ({dist.get(k,0)*100//tot}%)")
+    Q = {'Q1': dist['happy']+dist['excited'], 'Q2': dist['angry']+dist['tense'],
+         'Q3': dist['sad']+dist['melancholic'], 'Q4': dist['peaceful']+dist['calm']}
+    print('  Quadrants:', {k: f'{v}({v*100//tot}%)' for k, v in Q.items()})
+
+
 def main(argv=None) -> int:
     argv = argv or sys.argv[1:]
     cmd = argv[0] if argv else ""
@@ -122,6 +169,8 @@ def main(argv=None) -> int:
         extract_deam()
     elif cmd == "train":
         train()
+    elif cmd == "fuse":
+        fuse(float(argv[1]) if len(argv) > 1 else 0.6)
     else:
         print(__doc__)
         return 1

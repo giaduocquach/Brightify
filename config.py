@@ -306,10 +306,15 @@ CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
 # on independent metrics: valence-vs-lyric-sentiment ρ 0.077→0.422, sad-title 28%→75%.
 # Set USE_RELABELED_EMOTIONS=False to revert to raw CLAP.
 USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "True"
-# v3 = LLM (qwen3:8b) scores valence+arousal from lyrics — best on independent title
-# accuracy (sad-detection 96% vs v2 75%, balanced 65% vs 62%). Audio features are
-# degenerate (see project_arousal_miscalibration) so labels come from lyrics, not audio.
-RELABELED_EMOTIONS_FILE = "data/emotion_labels_v3.json"
+# v4 = the system's intended audio+lyrics fusion:
+#   valence ← LLM-from-lyrics (emotional content of the words)
+#   arousal ← MERT audio probe (0.6, real acoustic energy; CV R²=0.58 on DEAM)
+#             + LLM-lyrics arousal (0.4) as support
+#   label   ← Russell quadrant of (valence, arousal)
+# Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
+# when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
+# v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
+RELABELED_EMOTIONS_FILE = "data/emotion_labels_v4.json"
 
 # ============================================================================
 # System Settings

@@ -477,8 +477,11 @@ class MultimodalEmotionFusion:
             else:
                 return 'happy'
         elif valence < 0.5 and energy >= 0.5:
-            # Q2: Angry/Tense
-            if valence < 0.35:
+            # Q2: Tense/Angry. "angry" only for genuinely extreme negative+high-energy;
+            # most low-valence high-arousal songs are intense/dramatic ("tense"), not
+            # angry (angry music is rare in V-pop) — avoids over-labelling sad-intense
+            # ballads as angry.
+            if valence < 0.30 and energy > 0.68:
                 return 'angry'
             else:
                 return 'tense'
