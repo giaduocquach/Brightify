@@ -121,6 +121,12 @@ class MusicRecommender:
         if self.colors is not None and 'fused_emotion' in self.df.columns:
             self._recompute_song_va()
 
+        # Re-derive mood_quadrant from the trusted emotion labels (the CSV's
+        # mood_quadrant was built from the broken raw-arousal column + a fixed 0.5
+        # cut → 98% collapsed to Q3/Q4). Browse-by-mood / /api/moods read this column.
+        if 'fused_emotion' in self.df.columns:
+            self._derive_mood_quadrant()
+
         # Artist column for diversity
         self.artist_col = detect_artist_column(self.df)
         if self.artist_col:
@@ -331,6 +337,22 @@ class MusicRecommender:
         if 'fused_valence' in self.df.columns:
             fused_va = self.df[['fused_valence', 'fused_energy']].fillna(0.5).values
             self.song_va = np.clip(fused_va, 0.0, 1.0)
+
+    # 8 CLAP emotion labels → Russell mood quadrant string (format the API expects:
+    # "QN: Name", consumed via startswith('QN') in /api/moods and contains() in filter)
+    _EMO_QUADRANT = {
+        'happy': 'Q1: Happy/Excited', 'excited': 'Q1: Happy/Excited',
+        'angry': 'Q2: Angry/Tense', 'tense': 'Q2: Angry/Tense',
+        'sad': 'Q3: Sad/Melancholic', 'melancholic': 'Q3: Sad/Melancholic',
+        'calm': 'Q4: Calm/Peaceful', 'peaceful': 'Q4: Calm/Peaceful',
+    }
+
+    def _derive_mood_quadrant(self) -> None:
+        """Overwrite mood_quadrant from fused_emotion (trusted labels) instead of the
+        broken raw-arousal column. Fixes browse-by-mood returning ~nothing for Q1/Q2."""
+        emo = self.df['fused_emotion'].fillna('').str.lower()
+        self.df['mood_quadrant'] = emo.map(self._EMO_QUADRANT).fillna(
+            self.df.get('mood_quadrant', 'Q3: Sad/Melancholic'))
 
     def _analyze_lyrics_emotions(self):
         """One-time lyrics emotion analysis"""
