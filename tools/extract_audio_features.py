@@ -452,6 +452,21 @@ def _extract_tf_features(audio: np.ndarray) -> dict:
         log.debug(f"  EffNet-Discogs embedding extraction failed: {e}")
 
     # ── Step 2: Run EffNet classification heads (need 1280-dim embeddings) ──
+    # ⚠️ KNOWN BUG (verified 2026-06-01, see memory project_arousal_miscalibration):
+    #   These heads read `avg[1]` as the "positive" class WITHOUT loading each model's
+    #   documented class order from its Essentia metadata .json. Class order is often
+    #   NOT [negative, positive] (e.g. danceability = [danceable, not_danceable];
+    #   mood_acoustic = [acoustic, non_acoustic]) → several outputs are INVERTED.
+    #   Worse: across the catalog these features are near-constant / mutually
+    #   uncorrelated (danceability flat ~0.27 across all tempo bands; acousticness
+    #   ~0.80 for a pop/rap catalog) → the embeddings feeding the heads look
+    #   non-discriminative (likely an audio-preprocessing / clip-selection issue).
+    #   BEFORE re-extracting: (1) load `classes` from each model's .json metadata and
+    #   index the correct class; (2) verify the EffNet/MusiCNN input preprocessing
+    #   (16kHz mono, representative segment) so embeddings actually vary per song;
+    #   (3) calibrate DEAM V-A per-dimension (the shared /2.0 below compresses arousal).
+    #   Emotion labels are currently sourced from LLM-on-lyrics (E-RELABEL v3), which
+    #   bypasses these broken audio features entirely.
     if effnet_embeddings_1280 is not None:
         # Danceability
         try:
