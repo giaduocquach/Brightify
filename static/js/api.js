@@ -22,10 +22,6 @@ async getRandomSongs(count = 10) {
         return this._get(`/api/songs/random?count=${count}`);
     },
 
-    async getTimeOfDaySongs(period, count = 14) {
-        return this._get(`/api/songs/time-of-day?period=${encodeURIComponent(period)}&count=${count}`);
-    },
-
     async searchSongs(query, limit = 20) {
         return this._get(`/api/songs/search?q=${encodeURIComponent(query)}&limit=${limit}`);
     },

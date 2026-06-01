@@ -259,69 +259,6 @@ async def new_releases(count: int = Query(default=12, ge=1, le=50)):
     return result
 
 
-@router.get("/songs/time-of-day")
-async def time_of_day_songs(period: str = Query(...), count: int = Query(default=14, ge=1, le=50)):
-    """Get songs suited for a time of day based on audio features.
-    
-    Periods: early_morning (5-8h), morning (8-11h), midday (11-13h),
-    afternoon (13-17h), evening (17-21h), night (21-5h)
-    """
-    df = _recommender.df.copy()
-
-    profiles = {
-        'early_morning': {
-            'energy': (0.1, 0.45), 'valence': (0.25, 0.6), 'acousticness': (0.4, 1.0),
-            'danceability': (0.2, 0.55), 'tempo': (60, 110),
-        },
-        'morning': {
-            'energy': (0.45, 0.85), 'valence': (0.5, 1.0), 'acousticness': (0.1, 0.6),
-            'danceability': (0.45, 0.9), 'tempo': (90, 140),
-        },
-        'midday': {
-            'energy': (0.25, 0.55), 'valence': (0.35, 0.7), 'acousticness': (0.3, 0.8),
-            'danceability': (0.3, 0.65), 'tempo': (75, 120),
-        },
-        'afternoon': {
-            'energy': (0.5, 0.95), 'valence': (0.4, 0.9), 'acousticness': (0.0, 0.5),
-            'danceability': (0.5, 0.95), 'tempo': (100, 160),
-        },
-        'evening': {
-            'energy': (0.2, 0.55), 'valence': (0.3, 0.7), 'acousticness': (0.25, 0.75),
-            'danceability': (0.3, 0.6), 'tempo': (70, 115),
-        },
-        'night': {
-            'energy': (0.05, 0.4), 'valence': (0.1, 0.5), 'acousticness': (0.35, 1.0),
-            'danceability': (0.15, 0.5), 'tempo': (55, 105),
-        },
-    }
-
-    profile = profiles.get(period)
-    if not profile:
-        raise HTTPException(status_code=400, detail=f"Invalid period: {period}")
-
-    df['_score'] = 0.0
-    for feature, (lo, hi) in profile.items():
-        if feature == 'tempo':
-            col = df[feature].fillna(120)
-            normalized = (col - 40) / 160
-            lo_n, hi_n = (lo - 40) / 160, (hi - 40) / 160
-        else:
-            normalized = df[feature].fillna(0.5)
-            lo_n, hi_n = lo, hi
-
-        mid = (lo_n + hi_n) / 2
-        spread = (hi_n - lo_n) / 2
-        distance = ((normalized - mid) / max(spread, 0.01)).abs()
-        df['_score'] += np.exp(-0.5 * distance ** 2)
-
-    df = df.sort_values('_score', ascending=False)
-    pool = df.head(count * 4)
-    selected = pool.sample(n=min(count, len(pool)))
-
-    songs = [_song_to_dict(row, idx) for idx, row in selected.iterrows()]
-    return {"success": True, "songs": songs, "period": period}
-
-
 @router.get("/songs/random")
 async def random_songs(count: int = Query(default=10, ge=1, le=50)):
     """Get random songs for discovery"""

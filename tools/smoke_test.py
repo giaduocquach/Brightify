@@ -78,7 +78,6 @@ def main():
     get("/api/songs/featured", expect_list_key="songs")
     get("/api/songs/new-releases", expect_list_key="songs")
     get("/api/songs/random", expect_list_key="songs")
-    get("/api/songs/time-of-day", expect_list_key="songs", period="evening")
     get("/api/artists", expect_list_key="artists")
     get("/api/image/status")
 

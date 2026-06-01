@@ -52,17 +52,6 @@ async function _checkAudioBatch(songs) {
     } catch(e) {}
 }
 
-async function playTimePeriod(period, name) {
-    try {
-        app.toast(`Đang tải nhạc ${name}...`, 'info');
-        const data = await API.getTimeOfDaySongs(period, 20);
-        if (data.songs?.length) {
-            await _checkAudioBatch(data.songs);
-            player.loadQueue(data.songs, 0, 'time-of-day');
-        }
-    } catch(e) { app.toast('Lỗi tải nhạc', 'error'); }
-}
-
 // Cached coordinates — synchronous, instant, no permission prompt. The Home
 // shelf reads this so it can render immediately; null until a fix is cached.
 function _getCachedGeo() {
