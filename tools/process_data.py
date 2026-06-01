@@ -415,16 +415,9 @@ def _encode_batch_mean_pool(tokenizer, model, texts, device, max_length=256):
 
 
 def generate_embeddings(df, output_embeddings, output_metadata,
-                        enable_pillar_b: bool = False,
                         hf_cache_dir: str = "var/volumes/hf_cache"):
-    """Generate lyrics embeddings.
-
-    enable_pillar_b=False (default): PhoBERT + ViTokenizer, unchanged.
-    enable_pillar_b=True: routes to ViDeBERTa (standard) / ViSoBERT (social).
-    Models are loaded sequentially to keep peak RAM low.
-    """
-    pb_encoder = getattr(app_config, 'PILLAR_B_ENCODER', 'simcse')
-    mode = f"Pillar B ({app_config.LYRICS_MODEL_MAP.get(pb_encoder, pb_encoder)})" if enable_pillar_b else "PhoBERT"
+    """Generate lyrics embeddings with PhoBERT + ViTokenizer."""
+    mode = "PhoBERT"
     print(f"\n{'='*60}")
     print(f"[7/7] Generating embeddings — {mode}")
     print(f"{'='*60}")
@@ -432,7 +425,7 @@ def generate_embeddings(df, output_embeddings, output_metadata,
     has_lyrics_mask = df.get('has_lyrics', df['plain_lyrics'].notna() & (df['plain_lyrics'].str.strip() != ''))
     idx_with = df.index[has_lyrics_mask].tolist()
     idx_without = df.index[~has_lyrics_mask].tolist()
-    enc_label = f"Pillar B ({pb_encoder})" if enable_pillar_b else "PhoBERT"
+    enc_label = "PhoBERT"
     print(f"   Tracks with lyrics: {len(idx_with):,} → {enc_label}")
     print(f"   Tracks without lyrics: {len(idx_without):,} → audio-feature fallback")
 
@@ -458,10 +451,8 @@ def generate_embeddings(df, output_embeddings, output_metadata,
             text = ViTokenizer.tokenize(text)
         return text
 
-    if not idx_with:
-        pass
-    elif not enable_pillar_b:
-        # --- Default: PhoBERT ---
+    if idx_with:
+        # --- PhoBERT ---
         print(f"   Loading model: {PHOBERT_MODEL}...")
         try:
             from transformers import AutoModel, AutoTokenizer
@@ -490,48 +481,6 @@ def generate_embeddings(df, output_embeddings, output_metadata,
                 print(f"\n   ⚠️ Error in batch {i}: {e}")
 
         del model, tokenizer
-
-    else:
-        # --- Pillar B: SimCSE fine-tuned Vietnamese sentence encoder ---
-        # dangvantuan/vietnamese-embedding: PhoBERT + 4-stage contrastive training
-        # (SimCSE → MNR → SBERT → Augmented SBERT), STS Spearman 88.20.
-        # Uses PhoBERT BPE tokenizer → needs ViTokenizer pre-segmentation.
-        os.makedirs(hf_cache_dir, exist_ok=True)
-        os.environ.setdefault("HF_HOME", hf_cache_dir)
-
-        model_id = app_config.LYRICS_MODEL_MAP.get(pb_encoder, app_config.LYRICS_MODEL_MAP["simcse"])
-
-        # SimCSE/Vietnamese-embedding: ViTokenizer required (PhoBERT tokenizer)
-        lyrics_texts = [
-            _clean(t, segment_vi=True)
-            for t in df.loc[idx_with, lyrics_col].fillna('').tolist()
-        ]
-
-        from transformers import AutoModel, AutoTokenizer
-        print(f"\n   Loading {pb_encoder}: {model_id}  ({len(lyrics_texts):,} tracks)...")
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=hf_cache_dir)
-            model = AutoModel.from_pretrained(model_id, cache_dir=hf_cache_dir)
-            model.eval()
-            model.to(device)
-            print(f"   ✅ {pb_encoder} ({sum(p.numel() for p in model.parameters())/1e6:.1f}M params)")
-        except Exception as e:
-            print(f"   ❌ Could not load {pb_encoder} ({model_id}): {e}")
-            return
-
-        print(f"\n   Encoding {len(lyrics_texts):,} tracks with {pb_encoder}...")
-        for b_start in tqdm(range(0, len(lyrics_texts), BATCH_SIZE), desc=f"   {pb_encoder}"):
-            batch = [t or "không có lời" for t in lyrics_texts[b_start:b_start + BATCH_SIZE]]
-            try:
-                embs = _encode_batch_mean_pool(tokenizer, model, batch, device, MAX_SEQUENCE_LENGTH)
-                for j, emb in enumerate(embs):
-                    all_embeddings[idx_with[b_start + j]] = emb
-            except Exception as e:
-                print(f"\n   ⚠️ Error in batch {b_start}: {e}")
-
-        del model, tokenizer
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
 
     # --- Fallback embeddings for no-lyrics tracks ---
     # Option A: Weighted average of 10 most similar tracks (by audio features)
@@ -598,16 +547,11 @@ def generate_embeddings(df, output_embeddings, output_metadata,
     print(f"   Shape: {all_embeddings.shape}")
     print(f"   PhoBERT: {len(idx_with):,} / Fallback: {len(idx_without):,}")
     
-    if enable_pillar_b:
-        encoder_model = app_config.LYRICS_MODEL_MAP.get(pb_encoder, pb_encoder)
-    else:
-        encoder_model = PHOBERT_MODEL
+    encoder_model = PHOBERT_MODEL
     print(f"   Encoder: {encoder_model}")
     metadata = {
         'created_at': datetime.now().isoformat(),
         'model': encoder_model,
-        'pillar_b': enable_pillar_b,
-        'pillar_b_encoder': pb_encoder if enable_pillar_b else None,
         'num_songs': len(df),
         'embedding_dim': EMBEDDING_DIM,
         'encoded_count': len(idx_with),
@@ -687,9 +631,6 @@ def main():
     parser.add_argument('--metadata', '-m', default=DEFAULT_METADATA_FILE, help='Metadata output file')
     parser.add_argument('--skip-embeddings', action='store_true', help='Skip embedding generation')
     parser.add_argument('--force', '-f', action='store_true', help='Overwrite existing files')
-    parser.add_argument('--pillar-b', action='store_true',
-                        help='Generate Pillar B embeddings (ViDeBERTa/ViSoBERT routing) '
-                             'from existing processed CSV; skips full pipeline')
     parser.add_argument('--hf-cache', default='var/volumes/hf_cache',
                         help='HuggingFace model cache dir (default: var/volumes/hf_cache)')
 
@@ -701,24 +642,6 @@ def main():
     print("=" * 60)
     
     try:
-        if getattr(args, 'pillar_b', False):
-            # Pillar B shortcut: load existing processed CSV, only regenerate embeddings
-            import config as _cfg
-            pillar_b_emb = _cfg.EMBEDDINGS_FILE_PILLAR_B
-            pillar_b_meta = _cfg.EMBEDDINGS_META_FILE_PILLAR_B
-            print(f"\n[Pillar B] Loading existing processed CSV: {args.output}...")
-            if not os.path.exists(args.output):
-                print(f"❌ Processed CSV not found: {args.output}")
-                print("   Run without --pillar-b first to generate the processed dataset.")
-                sys.exit(1)
-            df = pd.read_csv(args.output)
-            print(f"   Loaded {len(df):,} tracks")
-            generate_embeddings(df, pillar_b_emb, pillar_b_meta,
-                                enable_pillar_b=True,
-                                hf_cache_dir=getattr(args, 'hf_cache', 'var/volumes/hf_cache'))
-            print(f"\n✅ Pillar B embeddings saved: {pillar_b_emb}")
-            return
-
         # Check if output exists (for full pipeline only)
         if os.path.exists(args.output) and not args.force:
             print(f"\n⚠️ Output file already exists: {args.output}")
@@ -755,7 +678,6 @@ def main():
         # Generate embeddings
         if not args.skip_embeddings:
             generate_embeddings(df, args.embeddings, args.metadata,
-                                enable_pillar_b=False,
                                 hf_cache_dir=getattr(args, 'hf_cache', 'var/volumes/hf_cache'))
         else:
             print("\n⏭️ Skipped embedding generation (--skip-embeddings)")

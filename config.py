@@ -223,23 +223,15 @@ MERT_LAYER = 8           # 0-indexed hidden state layer (of 12) — best for MIR
 MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
 
 # ============================================================================
-# Pillar B — Vietnamese NLP Upgrade (ViDeBERTa / ViSoBERT)
-# ============================================================================
-# ENABLE_PILLAR_B = False keeps the default PhoBERT behavior (safe rollback).
-# Set True to activate dual-encoder routing in process_data.py.
-# The backtest reads EMBEDDINGS_FILE_PILLAR_B when this is True.
+# Pillar B (alt Vietnamese encoders: SimCSE/ViDeBERTa) — REMOVED 2026-06-01.
+# Experiment FAILED in backtest (PhoBERT + lyrics signal already optimal; dropping
+# lyrics hurt NDCG most, alt encoders gave no gain). The pipeline routing and
+# core/lyrics_router.py were deleted. These two constants are kept ONLY inert
+# (ENABLE_PILLAR_B permanently False) for backward-compat with the backtest A/B
+# toggle in tools/backtest_v2 — they never select a real Pillar B file.
 ENABLE_PILLAR_B = False
-
-LYRICS_ENCODER = os.environ.get("LYRICS_ENCODER", "phobert")  # phobert | simcse | videberta | visobert
-PILLAR_B_ENCODER = os.environ.get("PILLAR_B_ENCODER", "simcse")  # simcse | videberta
-LYRICS_MODEL_MAP = {
-    "phobert":   "vinai/phobert-base-v2",
-    "simcse":    "dangvantuan/vietnamese-embedding",   # PhoBERT + 4-stage SimCSE, STS Spearman 88.20
-    "videberta": "Fsoft-AIC/videberta-base",
-    "visobert":  "uitnlp/visobert",
-}
-EMBEDDINGS_FILE_PILLAR_B = 'data/vietnamese_music_embeddings_pillar_b.npy'
-EMBEDDINGS_META_FILE_PILLAR_B = 'data/embeddings_metadata_pillar_b.json'
+EMBEDDINGS_FILE_PILLAR_B = EMBEDDINGS_FILE  # inert: never used while ENABLE_PILLAR_B=False
+EMBEDDINGS_META_FILE_PILLAR_B = EMBEDDINGS_META_FILE
 HF_CACHE_DIR = os.environ.get("HF_CACHE_DIR", "var/volumes/hf_cache")
 
 # ============================================================================
