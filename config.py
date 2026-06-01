@@ -272,7 +272,12 @@ KG_EMBEDDINGS_FILE = "data/kg_embeddings.npy"
 KG_DIM = 64
 # Weight of the KG content signal in recommend_by_song fusion. Replaces the old
 # hardcoded +0.05 artist bonus; tunable/ablatable. 0 disables the term.
-KG_SIM_WEIGHT = float(os.environ.get("KG_SIM_WEIGHT", "0.08"))
+# E-KG-CLEAN (2026-06-01): set to 0. The KG embedding was 50% MERT + 50% degenerate
+# Essentia tags (mood/instrument, 99% corporate/trumpet). Cluster-bootstrap on 1050
+# editorial queries: KG-on vs KG-off NDCG@10 statistically indistinguishable
+# (Δ+0.0038, CI95[-0.018,+0.015]) — KG contributes ~nothing. Dropped to remove the
+# degenerate-tag dependency + a MERT-redundant signal. Set >0 to re-enable.
+KG_SIM_WEIGHT = float(os.environ.get("KG_SIM_WEIGHT", "0.0"))
 # Optional same-artist cap for similar-song results. DEFAULT 0 = NO CAP:
 # fix the *cause* (artist bias in the KG signal) not the *symptom*. With the
 # content-based KG, same-artist songs only rank high when they are genuinely the
