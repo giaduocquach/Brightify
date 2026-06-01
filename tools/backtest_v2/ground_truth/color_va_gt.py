@@ -109,9 +109,15 @@ def _song_va_proxy(catalog: "Catalog") -> Tuple[np.ndarray, np.ndarray, np.ndarr
                 return (vals - mn) / (mx - mn)
         return np.full(n, default)
 
-    v2_path = "data/emotion_labels_v2.json"
-    if os.path.exists(v2_path):
-        with open(v2_path) as fh:
+    # Read the CURRENT production label file (v4 = audio+lyrics), not a hardcoded one,
+    # so the GT proxy stays in sync with what the engine actually uses.
+    try:
+        import config as _cfg
+        labels_path = getattr(_cfg, "RELABELED_EMOTIONS_FILE", "data/emotion_labels_v2.json")
+    except Exception:
+        labels_path = "data/emotion_labels_v2.json"
+    if os.path.exists(labels_path):
+        with open(labels_path) as fh:
             v2 = json.load(fh)
         tids = df.get("track_id", pd.Series(range(n))).astype(str).values
         valence = np.array([float(v2.get(t, {}).get("valence", 0.5)) for t in tids])

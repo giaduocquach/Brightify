@@ -147,7 +147,7 @@ Dựa trên tổng hợp từ: nghiên cứu UX (Schedl et al. 2018, Lee & Kim 2
 | **P4.2** Thiếu insight cảm xúc | Musical DNA emotion distribution | ⚠️ Cơ bản | Có nhưng chưa theo thời gian/trend |
 | **P4.3** Gu không phát triển | — | ❌ Không có | Chưa có cơ chế gentle push ra ngoài comfort zone |
 | **P5.1** Sad spiral | Emotion Journey (chủ động kéo mood lên) | ✅ **Xuất sắc** | Exact solution cho vấn đề này |
-| **P5.2** Emotional transition | Emotion Journey (Bézier curve V-A trajectory) | ✅ **Xuất sắc** | Iso Principle + smooth 10-15% shift/step |
+| **P5.2** Emotional transition | Emotion Journey (Bézier curve V-A trajectory) | ✅ **Xuất sắc** | Iso Principle (Altshuler 1948; Davis & Thaut 1989); per-step shift = heuristic (the "10–15%" figure was unverified — not from Saari 2016, which is about mood tagging) |
 | **P5.3** Music as therapy | Emotion Journey + Musical DNA awareness | ✅ Tốt | Therapeutic approach, nhưng chưa branded rõ |
 | **P5.4** Choice paralysis | Smart Context (auto-recommend), Color (1-click) | ✅ Khá | Giảm effort chọn, nhưng có thể tốt hơn |
 | **P6.1** NLP tiếng Việt yếu | PhoBERT + Vietnamese Emotion Lexicon (732+ words) | ✅ **Xuất sắc** | **USP cốt lõi** — không app quốc tế nào có |
