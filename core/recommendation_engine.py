@@ -1319,6 +1319,166 @@ class MusicRecommender:
     #    - Emotion profile consistency (10%)
     #    - Diversity & freshness (10%)
 
+    def _rrf_candidates(
+        self,
+        score_arrays: list,
+        weights=None,
+        n: int = None,
+    ) -> np.ndarray:
+        """
+        RRF candidate reduction (Cormack et al. 2009) — Pillar C.
+
+        Fuses multiple cheap per-song score arrays into a single ranked
+        candidate pool of size n using Reciprocal Rank Fusion.
+
+        Args:
+            score_arrays: list of (n_songs,) similarity arrays.
+            weights: per-array RRF weights (default: uniform).
+            n: candidate pool size (default: RRF_CANDIDATE_SIZE).
+
+        Returns:
+            (≤n,) int64 array of candidate song indices, RRF order.
+        """
+        from core.retrieval import reciprocal_rank_fusion, scores_to_rank_list
+        if n is None:
+            n = RRF_CANDIDATE_SIZE
+        rank_lists = [scores_to_rank_list(s, top_n=n * 2) for s in score_arrays]
+        fused = reciprocal_rank_fusion(rank_lists, k=RRF_K, weights=weights, top_n=n)
+        return np.array(fused, dtype=np.int64)
+
+    def _cap_per_artist(self, indices, max_per_artist, top_k):
+        """Keep at most `max_per_artist` songs per artist, preserving the input
+        order, until `top_k` are collected. Works regardless of DIVERSITY_METHOD.
+        Backfills from the surplus if the cap leaves the list short."""
+        if self.artists is None or not max_per_artist:
+            return list(indices)[:top_k]
+        out, counts, seen = [], {}, set()
+        for idx in indices:
+            artist = self.artists[idx]
+            if artist and counts.get(artist, 0) >= max_per_artist:
+                continue
+            out.append(idx); seen.add(idx)
+            if artist:
+                counts[artist] = counts.get(artist, 0) + 1
+            if len(out) >= top_k:
+                return out
+        for idx in indices:  # backfill if cap left us short
+            if idx not in seen:
+                out.append(idx)
+                if len(out) >= top_k:
+                    break
+        return out
+
+    def _fast_rank(self, scores, top_k, diversity_penalty, restrict_to=None, max_per_artist=None):
+        """
+        Diversity-aware ranking. Dispatches to MMR, DPP, or greedy based on
+        config.DIVERSITY_METHOD (default "mmr").
+
+        MMR  — Carbonell & Goldstein 1998: λ·relevance − (1−λ)·max_sim_to_selected
+        DPP  — Chen et al. 2018 fast greedy MAP
+        greedy — original artist-penalty heuristic (kept for backward-compat)
+
+        restrict_to: optional array of candidate indices from RRF (Pillar C).
+            When supplied, only those indices are considered; argsort runs on
+            the restricted subset — O(|restrict_to|) instead of O(n_songs).
+        max_per_artist: optional hard cap on songs per artist in the result.
+            Applied in BOTH the MMR/DPP and greedy paths (MMR/DPP diversify by
+            embedding distance, not artist, so the cap is what actually limits
+            same-artist domination in recommend_by_song).
+        """
+        if restrict_to is not None and len(restrict_to) > 0:
+            cand_arr = np.asarray(restrict_to, dtype=np.int64)
+            cand_scores = scores[cand_arr]
+            n = min(top_k * 4, len(cand_arr))
+            top_local = np.argsort(cand_scores)[::-1][:n]
+            top_indices = cand_arr[top_local]
+        else:
+            n_candidates = min(top_k * 4, self.n_songs)
+            top_indices = np.argsort(scores)[::-1][:n_candidates]
+
+        # Filter by minimum threshold
+        valid = scores[top_indices] >= MIN_SIMILARITY_THRESHOLD
+        top_indices = top_indices[valid]
+
+        if len(top_indices) == 0:
+            return pd.DataFrame()
+
+        # --- MMR / DPP path ---
+        if DIVERSITY_METHOD in ("mmr", "dpp") and self.embeddings_normalized is not None:
+            from core.diversity import mmr_rerank, dpp_greedy_map
+            candidates = top_indices.tolist()
+            # Over-fetch when an artist cap is set, so trimming still yields top_k.
+            fetch_k = top_k if not max_per_artist else min(top_k * 3, len(candidates))
+            if DIVERSITY_METHOD == "mmr":
+                chosen = mmr_rerank(
+                    candidates, scores, self.embeddings_normalized,
+                    top_k=fetch_k, lambda_=DIVERSITY_LAMBDA,
+                )
+            else:
+                chosen = dpp_greedy_map(
+                    candidates, scores, self.embeddings_normalized, top_k=fetch_k,
+                )
+            if max_per_artist:
+                chosen = self._cap_per_artist(chosen, max_per_artist, top_k)
+            indices = chosen
+            final_scores_list = [float(scores[i]) for i in indices]
+
+        # --- Greedy path (original behaviour) ---
+        else:
+            selected = []
+            selected_artists = {}
+            selected_moods = set()
+
+            for idx in top_indices:
+                if len(selected) >= top_k:
+                    break
+                score = float(scores[idx])
+
+                if self.artists is not None:
+                    artist = self.artists[idx]
+                    if artist:
+                        count = selected_artists.get(artist, 0)
+                        if max_per_artist and count >= max_per_artist:
+                            continue
+                        if count > 0:
+                            score *= (1 - diversity_penalty) ** count
+                            if score < MIN_SIMILARITY_THRESHOLD:
+                                continue
+
+                mood = self._mood_labels[idx] if hasattr(self, '_mood_labels') else ''
+                if mood and mood not in selected_moods:
+                    score *= 1.03
+
+                selected.append((int(idx), score))
+
+                if self.artists is not None:
+                    art = self.artists[idx]
+                    if art:
+                        selected_artists[art] = selected_artists.get(art, 0) + 1
+                if mood:
+                    selected_moods.add(mood)
+
+            if not selected:
+                return pd.DataFrame()
+            indices, final_scores_list = zip(*selected)
+            indices = list(indices)
+
+        results = self.df.iloc[indices].copy()
+        results['similarity_score'] = list(final_scores_list)
+        results['original_index'] = indices
+
+        cols = ['track_name']
+        if self.artist_col and self.artist_col in results.columns:
+            cols.append(self.artist_col)
+
+        optional = ['similarity_score', 'valence', 'energy', 'arousal', 'fused_valence',
+                   'fused_energy', 'fused_emotion', 'color_hex', 'track_url', 'preview_url', 'track_id',
+                   'original_index', 'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
+                   'mood_quadrant', 'album_name', 'artist_ids']
+        cols.extend([c for c in optional if c in results.columns])
+
+        return results[cols].reset_index(drop=True)
+
     def recommend_by_lyrics_keywords(self, keywords, top_k=10, weights=None, diversity_penalty=0.15):
         """
         Hybrid lyrics search: keyword matching + PhoBERT semantic similarity.
