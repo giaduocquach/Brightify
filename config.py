@@ -110,7 +110,11 @@ RECO_SONG_WEIGHTS_MERT = {
     # 8-signal (timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert).
     # E1/E1b CI-confirmed optimal weights (2026-05-30).
     # E1d: audio_only removed — all songs have lyrics (data contract).
-    "with_lyrics": [0.124244, 0.020001, 0.013334, 0.356358, 0.057698, 0.075104, 0.083410, 0.269850],
+    # E-AUDIO-CLEAN (2026-06-01): dropped timbral/rhythmic/tonal (Essentia scalars are
+    # degenerate — project_arousal_miscalibration). Re-optimized 5 signals; paired
+    # cluster-bootstrap on 1050 editorial queries: NDCG@10 0.0999→0.1052, Δ+0.0046
+    # CI95[+0.0015,+0.0070] (entirely positive). MERT(0.335)+lyrics(0.499) carry audio+text.
+    "with_lyrics": [0.0, 0.0, 0.0, 0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
 }
 
 # ============================================================================

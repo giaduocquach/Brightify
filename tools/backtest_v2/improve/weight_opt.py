@@ -105,6 +105,7 @@ def optimize_weights(
     max_opt_queries: int = 200,
     verbose: bool = True,
     mert: bool = False,
+    freeze_idx: list = None,
 ) -> WeightOptResult:
     """SLSQP weight optimization.
 
@@ -190,6 +191,17 @@ def optimize_weights(
         {"type": "ineq", "fun": con_ild},
     ]
     bounds = [(0.0, 0.5)] * len(x0)
+    # E-AUDIO-CLEAN: freeze given signal weights to 0 (drop them) and optimize the rest.
+    freeze_idx = freeze_idx or []
+    for i in freeze_idx:
+        bounds[i] = (0.0, 0.0)
+
+    def _zero_renorm(v):
+        v = np.array(v, dtype=float)
+        for i in freeze_idx:
+            v[i] = 0.0
+        s = v.sum()
+        return v / s if s > 0 else v
 
     # NDCG is a discrete metric — default finite-difference eps (1.5e-8) produces
     # zero gradients (tiny perturbations never change rankings).
@@ -211,6 +223,8 @@ def optimize_weights(
         x1 = np.array([0.08, 0.07, 0.06, 0.50, 0.12, 0.12, 0.05], dtype=float)
     x1 /= x1.sum()
     starts.append(x1)
+    if freeze_idx:
+        starts = [_zero_renorm(s) for s in starts]
 
     best_val = np.inf
     best_res = None
