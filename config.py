@@ -279,7 +279,7 @@ KG_SIM_WEIGHT = float(os.environ.get("KG_SIM_WEIGHT", "0.0"))
 MAX_PER_ARTIST_SIMILAR = int(os.environ.get("MAX_PER_ARTIST_SIMILAR", "0"))
 
 # Context: applies valence/arousal shifts based on VN holidays + time-of-day.
-ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "True") == "True"
+ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "False") == "True"  # context feature removed; off → deterministic color demo
 
 # Weather context — requires OpenWeatherMap free-tier key (1000 calls/day).
 # Set OWM_API_KEY env var or leave blank to silently skip weather shifts.

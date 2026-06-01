@@ -112,8 +112,6 @@ def main():
     post("lyrics", "/api/recommend/lyrics", {"keywords": "cô đơn trong đêm", "top_k": 5})
     post("emotion-journey", "/api/recommend/emotion-journey",
          {"end_valence": 0.85, "end_arousal": 0.75, "steps": 8}, expect_key="songs")
-    post("context-mix", "/api/recommend/context-mix",
-         {"hour": 22, "activity": "relax", "count": 8}, expect_key="songs")
 
     # ---- Image (tiny generated PNG) ----
     try:

@@ -122,24 +122,8 @@ async getRandomSongs(count = 10) {
         });
     },
 
-    // ── Smart Context Engine ────────────────────────────────────────────
-    async getContextMix({ hour, dayOfWeek, activity, season, weather,
-                          userHistory, userLiked, count, lat, lon } = {}) {
-        return this._post('/api/recommend/context-mix', {
-            hour: hour ?? null,
-            day_of_week: dayOfWeek ?? null,
-            activity: activity || null,
-            season: season || null,
-            weather: weather || null,
-            user_history: userHistory || null,
-            user_liked: userLiked || null,
-            count: count || 15,
-            lat: lat ?? null,
-            lon: lon ?? null,
-        });
-    },
 
-    // ── Internal ─────────────────────────────────────────────────────────
+        // ── Internal ─────────────────────────────────────────────────────────
     async _get(url) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`API ${res.status}: ${url}`);

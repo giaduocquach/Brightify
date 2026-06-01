@@ -60,17 +60,6 @@ const pages = {
                 `).join('')}
             </div>` : ''}
 
-            <div class="carousel-container" id="time-songs-section">
-                <div class="section-header">
-                    <div><div class="section-title" id="time-songs-title">🌤️ Ngay bây giờ</div><div class="section-subtitle" id="time-songs-subtitle">Tự động theo thời điểm, lễ Việt & thời tiết</div></div>
-                    <div style="display:flex;gap:6px">
-                        <button class="btn btn-ghost btn-sm" id="btn-play-time-songs" style="display:none" onclick="playCurrentTimeSongs()"><svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Phát tất cả</button>
-                        <button class="btn btn-ghost btn-sm" id="btn-shuffle-time-songs" style="display:none" onclick="shuffleCurrentTimeSongs()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg> Trộn</button>
-                    </div>
-                </div>
-                <div class="carousel" id="home-time-songs"></div>
-            </div>
-
             <div class="carousel-container">
                 <div class="section-header">
                     <div><div class="section-title">🎭 Đổi tâm trạng</div><div class="section-subtitle">Chọn nơi muốn đến — AI dẫn bạn tới đó qua từng bài, bắt đầu từ bài đang nghe (Iso Principle)</div></div>
@@ -115,9 +104,6 @@ const pages = {
             API.getRandomSongs(14).catch(() => ({ songs: [] })),
             API.getArtists(20).catch(() => ({ artists: [] })),
         ]);
-
-        // "Ngay bây giờ" context shelf — auto by time + VN holiday + live weather (F1)
-        _loadContextShelf();
 
         // Featured
         const featEl = document.getElementById('home-featured');

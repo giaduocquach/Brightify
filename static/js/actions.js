@@ -85,60 +85,12 @@ function _refreshGeo() {
 // Uses the smart context engine (circadian + activity + season) now also wired to
 // the VN holiday calendar + live weather via vn_context. Time/day auto-resolve
 // server-side; the browser's current coordinates are passed for local weather.
-async function _loadContextShelf() {
-    const section = document.getElementById('time-songs-section');
-    const carousel = document.getElementById('home-time-songs');
-    const titleEl = document.getElementById('time-songs-title');
-    const subEl = document.getElementById('time-songs-subtitle');
-    const playBtn = document.getElementById('btn-play-time-songs');
-    const shuffleBtn = document.getElementById('btn-shuffle-time-songs');
-    if (!section || !carousel) return;
-
-    try {
-        // Render instantly from cached coords (or none → server default city);
-        // refresh location in the background for next time — never block here.
-        const geo = _getCachedGeo();
-        _refreshGeo();
-        const data = await API.getContextMix({ count: 14, lat: geo?.lat, lon: geo?.lon });
-        if (!data.success || !data.songs?.length) return;
-        const ctx = data.context || {};
-
-        const periodLabels = {
-            early_morning: '🌅 Sáng sớm', morning: '☀️ Buổi sáng', midday: '🌞 Giữa trưa',
-            afternoon: '🌤️ Buổi chiều', evening: '🌆 Buổi tối', night: '🌙 Buổi tối',
-            late_night: '🌌 Đêm khuya',
-        };
-        const hh = String(ctx.hour ?? new Date().getHours()).padStart(2, '0');
-        const parts = [`${periodLabels[ctx.period] || '🎵 Bây giờ'} · ${hh}:00`];
-        if (ctx.vn_context_label) parts.push(ctx.vn_context_label);
-
-        if (titleEl) titleEl.textContent = ctx.is_holiday ? '🎊 Ngay bây giờ' : '🌤️ Ngay bây giờ';
-        if (subEl) subEl.textContent = parts.join('  ·  ');
-        carousel.innerHTML = data.songs.map(s => songCardHTML(s)).join('');
-        section.style.display = '';
-        if (playBtn) playBtn.style.display = '';
-        if (shuffleBtn) shuffleBtn.style.display = '';
-        window._currentTimeSongs = data.songs;
-        app._checkAudio(data.songs);
-    } catch(e) {}
-}
-
 // F3 — play a whole search-result group (matches / related) from the search page.
 function playSearchResults(which) {
     const songs = which === 'related' ? window._searchRelated : window._searchMatches;
     if (songs?.length) player.loadQueue([...songs], 0, 'search');
 }
 
-function playCurrentTimeSongs() {
-    if (window._currentTimeSongs?.length) player.loadQueue(window._currentTimeSongs, 0, 'time-of-day');
-}
-
-function shuffleCurrentTimeSongs() {
-    if (window._currentTimeSongs?.length) {
-        const shuffled = [...window._currentTimeSongs].sort(() => Math.random() - 0.5);
-        player.loadQueue(shuffled, 0, 'time-of-day');
-    }
-}
 
 async function playArtist(name) {
     try {
