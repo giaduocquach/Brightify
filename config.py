@@ -306,7 +306,10 @@ CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
 # on independent metrics: valence-vs-lyric-sentiment ρ 0.077→0.422, sad-title 28%→75%.
 # Set USE_RELABELED_EMOTIONS=False to revert to raw CLAP.
 USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "True"
-RELABELED_EMOTIONS_FILE = "data/emotion_labels_v2.json"
+# v3 = LLM (qwen3:8b) scores valence+arousal from lyrics — best on independent title
+# accuracy (sad-detection 96% vs v2 75%, balanced 65% vs 62%). Audio features are
+# degenerate (see project_arousal_miscalibration) so labels come from lyrics, not audio.
+RELABELED_EMOTIONS_FILE = "data/emotion_labels_v3.json"
 
 # ============================================================================
 # System Settings
