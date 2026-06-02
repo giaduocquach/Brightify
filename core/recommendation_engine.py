@@ -729,19 +729,35 @@ class MusicRecommender:
             artist = song.get(self.artist_col, 'Unknown') if self.artist_col else 'Unknown'
             print(f"🎵 Finding songs similar to: {song['track_name']} - {artist}")
 
+        # Resolve fusion weights up-front so zero-weighted signals can be SKIPPED
+        # (perf): timbral/rhythmic/tonal are 0 in production (E-AUDIO-CLEAN) — computing
+        # their cosine/Manhattan sims every query was wasted work. Guarding on w[i]
+        # keeps ablation correct (it zeros the signal under test → skipped → contributes
+        # 0, identical to before; non-zero → computed as usual).
+        use_mert = self.mert_matrix is not None
+        w_dict = RECO_SONG_WEIGHTS_MERT if use_mert else RECO_SONG_WEIGHTS
+        w = weights if weights is not None else w_dict["with_lyrics"]
+
         # === Signal 1: Timbral similarity (Berenzweig et al. 2004) ===
-        q_tim = self._timbral_matrix[song_idx]
-        timbral_sim = cosine_similarity(q_tim.reshape(1, -1), self._timbral_matrix)[0]
+        if w[0]:
+            q_tim = self._timbral_matrix[song_idx]
+            timbral_sim = cosine_similarity(q_tim.reshape(1, -1), self._timbral_matrix)[0]
+        else:
+            timbral_sim = 0.0
 
         # === Signal 2: Rhythmic similarity ===
-        q_rhy = self._rhythmic_matrix[song_idx]
-        rhy_diff = np.abs(self._rhythmic_matrix - q_rhy)
-        # Manhattan distance normalised to [0,1] per dimension, then averaged
-        rhythmic_sim = 1.0 - rhy_diff.mean(axis=1)
+        if w[1]:
+            q_rhy = self._rhythmic_matrix[song_idx]
+            rhythmic_sim = 1.0 - np.abs(self._rhythmic_matrix - q_rhy).mean(axis=1)
+        else:
+            rhythmic_sim = 0.0
 
         # === Signal 3: Tonal similarity ===
-        q_ton = self._tonal_matrix[song_idx]
-        tonal_sim = cosine_similarity(q_ton.reshape(1, -1), self._tonal_matrix)[0]
+        if w[2]:
+            q_ton = self._tonal_matrix[song_idx]
+            tonal_sim = cosine_similarity(q_ton.reshape(1, -1), self._tonal_matrix)[0]
+        else:
+            tonal_sim = 0.0
 
         # === Signal 4: Lyrics semantic similarity (Hu & Downie 2010) ===
         # All songs guaranteed to have lyrics (data contract); embeddings always loaded.
@@ -768,19 +784,11 @@ class MusicRecommender:
             mood_match = (self._mood_labels == query_mood).astype(float)
 
         # === Signal 8: MERT audio embedding (Li et al. 2023) — Pillar A ===
-        use_mert = self.mert_matrix is not None
         if use_mert:
             mert_sim = self.mert_matrix @ self.mert_matrix[song_idx]  # (n_songs,)
             mert_sim = (mert_sim + 1.0) / 2.0                         # [-1,1] → [0,1]
 
-        # === Adaptive fusion (Laurier et al. 2009) ===
-        # Weights live in config; `weights` arg overrides (used by ablation / optimizer).
-        if use_mert:
-            w_dict = RECO_SONG_WEIGHTS_MERT
-        else:
-            w_dict = RECO_SONG_WEIGHTS
-
-        w = weights if weights is not None else w_dict["with_lyrics"]
+        # === Adaptive fusion (Laurier et al. 2009) — weights resolved above ===
         base = (
             w[0] * timbral_sim +
             w[1] * rhythmic_sim +
