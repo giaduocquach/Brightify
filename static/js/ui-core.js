@@ -443,14 +443,28 @@ function songRowHTML(song, num, _likedSet) {
     }
     const isLiked = _likedSet.has(song.track_id);
 
+    // E6 — "why this song" chip (colour query only). Keep `why` out of the embedded
+    // JSON so play/context-menu payloads stay lean; render it as a small caption.
+    const why = song.why;
+    const songData = why ? (({ why, ...rest }) => rest)(song) : song;
+    const songJson = JSON.stringify(songData).replace(/"/g, '&quot;');
+    let whyHTML = '';
+    if (why && why.reason) {
+        const pct = Math.round((why.mood_match ?? 0) * 100);
+        const dot = why.color_hex ? `<span class="why-dot" style="background:${safeColor(why.color_hex)}"></span>` : '';
+        const detail = `Bài: V ${why.song_va?.[0]} · A ${why.song_va?.[1]} | Màu: V ${why.color_va?.[0]} · A ${why.color_va?.[1]}`;
+        whyHTML = `<div class="song-row-why" title="${esc(detail)}">${dot}${esc(why.reason)} · khớp ${pct}%</div>`;
+    }
+
     return `
-        <div class="song-row" data-idx="${song.track_id}" data-song-index="${song.track_id}" data-song-json="${JSON.stringify(song).replace(/"/g, '&quot;')}" onclick="playSong(${JSON.stringify(song).replace(/"/g, '&quot;')}, event)"
-             oncontextmenu="app.showContextMenu(event, ${JSON.stringify(song).replace(/"/g, '&quot;')})">
+        <div class="song-row" data-idx="${song.track_id}" data-song-index="${song.track_id}" data-song-json="${songJson}" onclick="playSong(${songJson}, event)"
+             oncontextmenu="app.showContextMenu(event, ${songJson})">
             <div class="song-row-num">${num}</div>
             <div class="song-row-art">${art}</div>
             <div class="song-row-info">
                 <div class="song-row-title">${esc(song.track_name)}</div>
                 <div class="song-row-artist">${esc(song.artist)}</div>
+                ${whyHTML}
             </div>
 
             <div class="song-row-actions">

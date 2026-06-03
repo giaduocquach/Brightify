@@ -225,34 +225,73 @@ class AdvancedColorMapper:
         hex_color = self.hsl_to_hex(hue, sat, light)
         return hex_color, confidence * 0.8
 
-    def color_to_emotion_probs(self, hex_color: str) -> Dict[str, float]:
-        """Color → emotion probability distribution via V-A Gaussian soft-assignment.
+    # Emotion-label order for the embedded ICEAS table below.
+    _EMO8 = ('happy', 'excited', 'peaceful', 'calm',
+             'melancholic', 'sad', 'tense', 'angry')
 
-        Chain: colour → V-A (Whiteford 2018 HSL formula) → Gaussian over
-        Russell circumplex centroids of the 8 CLAP emotion labels.
+    # EMPIRICAL colour→emotion distribution from ICEAS/Jonauskaite 2020 (8615 ppl/colour,
+    # 37 nations). Each row is the colour's DISTINCTIVE 8-emotion profile (human ratings,
+    # per-emotion baseline removed so it captures what the colour is specifically
+    # associated with). Replaces the synthetic Russell-centroid Gaussian, which matched
+    # the human top-emotion only 1/12. Values in _EMO8 order, sum≈1. See color_norms.py
+    # (the aggregation that produced these) and docs/PLAN_COLOR_BACKTEST_V15.md.
+    _ICEAS_EMOTION = {
+        "#FF0000": [0.1242, 0.2850, 0.0211, 0.0299, 0.1368, 0.0070, 0.1029, 0.2931],  # red
+        "#FF8000": [0.3333, 0.2358, 0.0416, 0.1009, 0.1076, 0.0078, 0.1008, 0.0721],  # orange
+        "#FFFF00": [0.3130, 0.2162, 0.0401, 0.1052, 0.1239, 0.0108, 0.1193, 0.0714],  # yellow
+        "#008000": [0.2104, 0.2318, 0.0627, 0.2069, 0.0992, 0.0109, 0.1435, 0.0346],  # green
+        "#40E0D0": [0.2628, 0.2786, 0.0631, 0.2087, 0.0854, 0.0250, 0.0539, 0.0225],  # turquoise
+        "#0000FF": [0.1377, 0.2504, 0.0738, 0.1777, 0.1684, 0.0883, 0.0754, 0.0283],  # blue
+        "#800080": [0.1421, 0.2580, 0.0648, 0.0753, 0.2118, 0.0547, 0.1300, 0.0633],  # purple
+        "#FFC0CB": [0.3012, 0.3452, 0.0763, 0.1110, 0.0844, 0.0077, 0.0532, 0.0211],  # pink
+        "#8B4513": [0.0281, 0.0648, 0.0405, 0.0541, 0.3203, 0.0449, 0.3697, 0.0777],  # brown
+        "#FFFFFF": [0.1197, 0.2691, 0.1154, 0.2264, 0.1273, 0.0376, 0.0755, 0.0291],  # white
+        "#808080": [0.0133, 0.0422, 0.0321, 0.0326, 0.4702, 0.1324, 0.2087, 0.0684],  # grey
+        "#000000": [0.0127, 0.0547, 0.0191, 0.0146, 0.3123, 0.1096, 0.2705, 0.2064],  # black
+    }
+    _iceas_anchors = None  # lazily built list of (feat3, probs[8])
 
-        This is more principled than HSL-profile matching: the profile approach
-        collapses to near-uniform (all 8 centroids equidistant from most inputs)
-        because the hue Gaussians overlap heavily. The V-A intermediate is the
-        validated bridge (Palmer 2013 PNAS: r=0.89–0.99).
+    def _anchor_feat(self, hex_color: str) -> np.ndarray:
+        """Perceptual locator [cos h·s, sin h·s, l] — chroma-scaled hue + lightness.
 
-        References:
-          Whiteford 2018 (PMC6240980): sat→arousal r_s=0.720, light→valence r_s=0.484
-          Wilms & Oberfeld 2018: chroma > lightness > hue in effect size
-          Palmer 2013: emotion mediates colour-music correspondence
-          Russell 1980: circumplex V-A positions of emotion labels
+        Achromatic anchors (s≈0) collapse onto the lightness axis, so grey/black/white
+        interpolate by lightness while hues interpolate around the wheel. Brown (dark,
+        orange hue) stays distinct from orange (light) because lightness is included.
         """
-        valence, arousal = self.hsl_to_va(hex_color)
+        h, l, s = self.hex_to_hsl(hex_color)
+        s01, l01 = s / 100.0, l / 100.0
+        hr = np.deg2rad(h)
+        return np.array([np.cos(hr) * s01, np.sin(hr) * s01, l01])
 
-        sigma = 0.22
-        scores = {
-            emo: float(np.exp(-((valence-cv)**2 + (arousal-ca)**2) / (2*sigma**2)))
-            for emo, (cv, ca) in self.RUSSELL_CENTROIDS.items()
-        }
-        total = sum(scores.values())
-        return {k: v/total for k, v in scores.items()} if total > 0 else scores
+    def color_to_emotion_probs(self, hex_color: str) -> Dict[str, float]:
+        """Color → emotion distribution by interpolating the empirical ICEAS table.
 
-    # Russell-circumplex V-A centroids for the 8 CLAP emotion labels (normalised 0–1)
+        Inverse-distance weighting (power 2) over the 12 human-rated anchor colours in
+        the perceptual locator space of _anchor_feat(). This is the human colour→emotion
+        mapping itself (reproduces all 12 anchors' top emotion), not a synthetic proxy.
+
+        References: Jonauskaite et al. 2020 (Psych Science); Palmer 2013 (emotion mediates
+        colour↔music); Wilms & Oberfeld 2018 (chroma dominates).
+        """
+        if self._iceas_anchors is None:
+            self.__class__._iceas_anchors = [
+                (self._anchor_feat(hx), np.asarray(pr, dtype=float))
+                for hx, pr in self._ICEAS_EMOTION.items()
+            ]
+        f = self._anchor_feat(hex_color)
+        acc = np.zeros(8)
+        tot = 0.0
+        for af, pr in self._iceas_anchors:
+            w = 1.0 / (float(np.sum((f - af) ** 2)) + 1e-6)  # 1/dist² (power 2)
+            acc += w * pr
+            tot += w
+        p = acc / tot
+        p = p / p.sum()
+        return {emo: float(p[i]) for i, emo in enumerate(self._EMO8)}
+
+    # Russell-circumplex V-A centroids for the 8 CLAP emotion labels (normalised 0–1).
+    # LEGACY: was used by the old color_to_emotion_probs (now empirical-ICEAS); retained
+    # for any external reference and for V-A↔emotion sanity checks.
     RUSSELL_CENTROIDS = {
         'happy':       (0.88, 0.70),
         'excited':     (0.72, 0.92),
@@ -265,34 +304,40 @@ class AdvancedColorMapper:
     }
 
     def hsl_to_va(self, hex_color: str) -> Tuple[float, float]:
-        """Color → (valence, arousal) in [0,1], Whiteford-2018-exact weighting.
+        """Color → (valence, arousal) in [0,1].
 
         Single source of truth for the colour→V-A bridge (used by
-        color_to_emotion_probs AND the recommender). Weights are the normalised
-        Spearman correlations reported in Whiteford et al. 2018 (PMC6240980):
+        color_to_emotion_probs AND the recommender).
 
-          Arousal ← redness r_s=.755, saturation .720, darkness −.549
-                    → normalised 0.37 / 0.36 / 0.27
-          Valence ← lightness r_s=.484, yellowness .466  (saturation does NOT predict
-                    valence → excluded)  → normalised 0.52 / 0.48
+        AROUSAL — Whiteford et al. 2018 (PMC6240980) normalised Spearman weights:
+          redness r_s=.755, saturation .720, darkness −.549 → 0.37 / 0.36 / 0.27.
+          Validated externally: ICEAS/Jonauskaite 2020 arousal Pearson +0.64. Kept as-is.
 
-        Perceptual axes from hue (cosine of the colour wheel):
-          redness    = (1+cos h)/2       → red=1, cyan=0   (a* proxy)
-          yellowness = (1+cos(h-60))/2   → yellow=1, blue=0 (b* proxy)
+        VALENCE — recalibrated 2026-06 against ICEAS/Jonauskaite 2020 human norms
+          (8615 ppl/colour, 37 nations). The old `0.52·L + 0.48·yellowness` correlated
+          only r=0.26 with humans (made blue/purple too negative, grey too positive,
+          and ignored chroma). Refit on the 12 ICEAS colours:
+            chromatic:   v = 0.05 + 0.40·L + 0.55·S − 0.19·redness
+            achromatic:  v = 0.20 + 0.41·L
+          Saturation (chroma) is the strongest valence predictor (Wilms & Oberfeld 2018);
+          redness's small negative term reflects deep-red→anger. In-sample Pearson 0.85,
+          leave-one-out CV 0.77 (vs 0.26 before). See docs/PLAN_COLOR_BACKTEST_V15.md.
+
+        Perceptual axis from hue: redness = (1+cos h)/2 → red=1, cyan=0 (a* proxy).
         """
         h, l, s = self.hex_to_hsl(hex_color)   # (hue°, lightness%, saturation%)
         s01, l01 = s / 100.0, l / 100.0
 
         if s01 < 0.12:
             # Achromatic (grey/white/black): hue meaningless → lightness drives both.
-            # Bright→peaceful (high V, low A); dark→sad/tense (low V, higher A).
-            valence = float(np.clip(0.35 + 0.55 * l01, 0, 1))
+            # Valence: ICEAS-fit (grey/black low even when light, only white rises).
+            # Arousal: bright→peaceful (low A); dark→sad/tense (higher A).
+            valence = float(np.clip(0.20 + 0.41 * l01, 0, 1))
             arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
         else:
             h_rad = np.deg2rad(h)
             redness = (1 + np.cos(h_rad)) / 2
-            yellowness = (1 + np.cos(np.deg2rad(h - 60))) / 2
-            valence = float(np.clip(0.52*l01 + 0.48*yellowness, 0, 1))
+            valence = float(np.clip(0.05 + 0.40*l01 + 0.55*s01 - 0.19*redness, 0, 1))
             arousal = float(np.clip(0.37*redness + 0.36*s01 + 0.27*(1-l01), 0, 1))
         return valence, arousal
 

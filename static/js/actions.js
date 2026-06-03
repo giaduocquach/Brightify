@@ -27,6 +27,7 @@ function _normalizeSong(r) {
         thumbnail_url: r.thumbnail_url || null,
         has_artist_image: r.has_artist_image || false,
         artist_image_url: r.artist_image_url || null,
+        why: r.why || null,   // E6: colour "why this song" explanation (colour query only)
     };
 }
 

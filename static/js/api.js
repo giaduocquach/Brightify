@@ -58,9 +58,9 @@ async getRandomSongs(count = 10) {
     },
 
     // ── AI Recommendations ──────────────────────────────────────────────
-    async recommendByColor(colors, topK = 10, diversityPenalty = 0.15) {
+    async recommendByColor(colors, topK = 10, diversityPenalty = 0.15, novelty = 0.5) {
         return this._post('/api/recommend/color', {
-            colors, top_k: topK, diversity_penalty: diversityPenalty,
+            colors, top_k: topK, diversity_penalty: diversityPenalty, novelty,
         });
     },
 

@@ -41,8 +41,10 @@ class MusicRecommender:
 
         logger.info("Initializing Music Recommender v6.0 (Multimodal + Lyrics)...")
 
-        # Load modules
-        self.color_mapper = get_color_mapper()
+        # Load modules — V17 fix B4: vietnamese=False (pure-global colour↔emotion per
+        # project decision; cultural_adjustments only affected the reverse song→colour
+        # path anyway, but keep it off for clarity).
+        self.color_mapper = get_color_mapper(vietnamese=False)
         self.emotion_lexicon, self.emotion_classifier, self.emotion_fusion = get_emotion_analyzer()
 
         if self.verbose:
@@ -263,6 +265,9 @@ class MusicRecommender:
         # McFee & Lanckriet (2011): Genre/mood coherence boosts perceived similarity
         self._mood_labels = self.df.get('fused_emotion', pd.Series([''] * self.n_songs)).fillna('').values
 
+        # Anti-skew density weights (precomputed once; used in _color_score).
+        self._density_weights = self._precompute_density_weights()
+
     def _recompute_song_va(self) -> None:
         """Compute song_va from AUDIO+LYRICS signals (not album-art color).
 
@@ -438,7 +443,8 @@ class MusicRecommender:
                            color_hexes,
                            top_k=DEFAULT_TOP_K,
                            weights=None,
-                           diversity_penalty=DIVERSITY_PENALTY):
+                           diversity_penalty=DIVERSITY_PENALTY,
+                           novelty=COLOR_NOVELTY_DEFAULT):
 
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
@@ -451,69 +457,28 @@ class MusicRecommender:
         if self.verbose:
             logger.debug(f"Recommending by colors: {color_hexes}")
 
-        # Extract query features (E7: audio removed — see fusion comment below).
-        # V12: keep PER-COLOUR V-A and emotion vectors for UNION aggregation
-        # (a song is relevant if it matches ANY chosen colour's mood).
+        # F3-cleanup (V19): scorer is pure V-A heteroscedastic — lyric encoding and
+        # emotion vectors are no longer used in _color_score. Build only what is needed:
+        # per-colour V-A point + emotion vec (for _build_color_why label and display).
+        # PhoBERT keyword encoding removed (was ~150ms/query, confirmed dead by F2 ablation).
         per_color_va = []          # [[v, a], ...]
-        per_color_emotion = []     # [emotion_vec, ...]  (len = n emotion labels)
-        per_color_lyrics = []      # [normalised PhoBERT centroid | None, ...]
-        query_emotion = np.zeros(len(self.emotion_labels))  # sum, for bridge/quadrant
-        query_lyrics_vecs = []     # kept for back-compat (mean centroid path)
+        per_color_emotion = []     # [emotion_vec, ...] — display only (why-chip label)
+        query_emotion = np.zeros(len(self.emotion_labels))
         target_quadrant = None
 
         for color in color_hexes:
             try:
-                # Whiteford 2018 (PMC6240980) structural HSL formula — single source
-                # of truth in AdvancedColorMapper.hsl_to_va(): arousal ← redness/
-                # saturation/darkness, valence ← lightness/yellowness. Portable
-                # (Vietnam is not in Jonauskaite's sample → named-colour lookups
-                # are unreliable for VN users; the dimensional formula is).
                 q_valence, q_arousal = self.color_mapper.hsl_to_va(color)
                 per_color_va.append([q_valence, q_arousal])
-
                 emotion_probs = self.color_mapper.color_to_emotion_probs(color)
-                evec = np.array([emotion_probs.get(emo, 0.0)
-                                 for emo in self.emotion_labels])
+                evec = np.array([emotion_probs.get(emo, 0.0) for emo in self.emotion_labels])
                 per_color_emotion.append(evec)
                 query_emotion += evec
-
-                # Build lyrics query vector from emotion keywords (Vietnamese) via PhoBERT.
-                # Philosophy: colour → emotion → music theme.
-                # Old approach (broken): averaged 5 random songs with same fused_emotion
-                #   → often returned no songs (profile labels ≠ CLAP labels) + weak signal.
-                # New approach: encode the emotion's Vietnamese keywords directly with
-                #   PhoBERT → captures the semantic/lyrical theme of the colour's mood.
-                color_lyrics = None
-                if self.embeddings_normalized is not None:
-                    top_emotion = max(emotion_probs.items(), key=lambda x: x[1])[0]
-                    profile = self.color_mapper.emotion_color_profiles.get(top_emotion, {})
-                    vi_keywords = profile.get('vi_keywords', [])
-                    if vi_keywords and self.emotion_classifier.available:
-                        # Encode each keyword phrase with PhoBERT, average
-                        kw_vecs = []
-                        for kw in vi_keywords:
-                            v = self.emotion_classifier.encode_lyrics(kw)
-                            if v is not None and np.linalg.norm(v) > 0:
-                                kw_vecs.append(v / np.linalg.norm(v))
-                        if kw_vecs:
-                            color_lyrics = np.mean(kw_vecs, axis=0)
-                    elif 'fused_emotion' in self.df.columns:
-                        # Fallback: centroid of songs with matching emotion label
-                        emotion_mask = self.df['fused_emotion'] == top_emotion
-                        if emotion_mask.sum() >= 3:
-                            idxs = np.where(emotion_mask)[0][:min(20, emotion_mask.sum())]
-                            color_lyrics = self.embeddings_normalized[idxs].mean(axis=0)
-                if color_lyrics is not None:
-                    n = np.linalg.norm(color_lyrics)
-                    if n > 0:
-                        color_lyrics = color_lyrics / n
-                per_color_lyrics.append(color_lyrics)
-                query_lyrics_vecs.append(color_lyrics)
             except (ValueError, KeyError, TypeError):
                 per_color_va.append([0.5, 0.5])
-                per_color_emotion.append(np.ones(len(self.emotion_labels))
-                                         / len(self.emotion_labels))
-                per_color_lyrics.append(None)
+                per_color_emotion.append(np.ones(len(self.emotion_labels)) / len(self.emotion_labels))
+        # per_color_lyrics no longer needed; pass None sentinels for API compat downstream
+        per_color_lyrics = [None] * len(per_color_va)
 
         per_color_va = np.array(per_color_va, dtype=float)  # (C, 2)
 
@@ -529,34 +494,160 @@ class MusicRecommender:
             except Exception:
                 pass
 
-        # Centroid used only for quadrant determination / emotion_boost (display-ish)
+        return self._rank_by_color_features(
+            per_color_va, per_color_emotion, per_color_lyrics,
+            color_hexes, top_k, diversity_penalty, novelty)
+
+    def _novelty_prior(self):
+        """Per-song popularity prior in [0,1] (high = mainstream). E8.
+
+        No play-count data exists → proxy = artist frequency in the catalog
+        (prolific artist ≈ more mainstream here), log-scaled + min-max normalised.
+        Cached on first use.
+        """
+        if getattr(self, '_artist_pop_prior', None) is None:
+            col = ('primary_artist' if 'primary_artist' in self.df.columns
+                   else (self.artist_col if self.artist_col in self.df.columns else None))
+            if col:
+                s = self.df[col].fillna('')
+                counts = s.map(s.value_counts()).values.astype(float)
+                c = np.log1p(counts)
+                rng = float(c.max() - c.min())
+                self._artist_pop_prior = ((c - c.min()) / rng if rng > 0
+                                          else np.full(self.n_songs, 0.5))
+            else:
+                self._artist_pop_prior = np.full(self.n_songs, 0.5)
+        return self._artist_pop_prior
+
+    def _apply_novelty(self, scores, novelty):
+        """E8 — re-weight scores by the novelty dial (0.5 = neutral, no change)."""
+        if novelty is None or abs(float(novelty) - 0.5) < 1e-6:
+            return scores
+        pop = self._novelty_prior()
+        s = COLOR_NOVELTY_STRENGTH
+        if novelty > 0.5:                              # deep cuts: suppress mainstream
+            factor = 1.0 - s * (novelty - 0.5) * 2.0 * pop
+        else:                                          # familiar: suppress long-tail
+            factor = 1.0 - s * (0.5 - novelty) * 2.0 * (1.0 - pop)
+        return np.clip(scores * factor, 0.0, 1.0)
+
+    def _precompute_density_weights(self) -> np.ndarray:
+        """Inverse catalog density weights for anti-skew (Saerens 2002 / Steck 2018).
+
+        Approximates the V-A catalog density on a grid (COLOR_ANTISKEW_BINS × bins).
+        Returns per-song weight = 1/density, normalised to mean=1.  Songs in
+        over-represented regions (Q3 sad, 54% of catalog) get weight < 1; sparse
+        regions (Q1 happy, Q4 calm) get weight > 1, making them more accessible even
+        for queries near Q3.
+        """
+        n_bins = COLOR_ANTISKEW_BINS
+        v = self.song_va[:, 0]
+        a = self.song_va[:, 1]
+        H, v_edges, a_edges = np.histogram2d(
+            v, a, bins=n_bins, range=[[0.0, 1.0], [0.0, 1.0]])
+        # Laplace smoothing (avoids zero-density cells crashing inv)
+        H = H + 0.5
+        H_norm = H / H.sum()
+        # Map each song to its bin density
+        v_idx = np.clip((v * n_bins).astype(int), 0, n_bins - 1)
+        a_idx = np.clip((a * n_bins).astype(int), 0, n_bins - 1)
+        density = H_norm[v_idx, a_idx].astype(np.float32)
+        inv_d = 1.0 / density
+        # Normalise to mean=1 so overall score scale is preserved
+        inv_d = inv_d / (inv_d.mean() + 1e-12)
+        return inv_d.astype(np.float32)
+
+    def _antiskew_balance(self, res, color_va, all_scores, top_k):
+        """Post-rank quadrant balancing (Steck 2018 calibrated recommendations).
+
+        If the result list is ≥80% Q3-sad AND the query colour is NOT strongly Q3
+        (i.e. color_V > 0.30), swap out some Q3 songs for the best available songs
+        from the query's intended quadrant and adjacent ones.  This addresses the
+        case where all nearby catalog songs happen to be sad — the density correction
+        alone cannot help when the local neighborhood itself is mono-mood.
+
+        Only activated when COLOR_ANTISKEW_ENABLED=True.
+        """
+        idxs = res['original_index'].tolist()
+        if not idxs:
+            return res
+
+        # Query quadrant
+        cv, ca = float(color_va[0]), float(color_va[1])
+        if cv >= 0.5 and ca >= 0.5:   q_col = 'Q1'
+        elif cv < 0.5 and ca >= 0.5:  q_col = 'Q2'
+        elif cv < 0.5 and ca < 0.5:   q_col = 'Q3'
+        else:                          q_col = 'Q4'
+
+        def _q(i):
+            v, a = self.song_va[i, 0], self.song_va[i, 1]
+            if v >= 0.5 and a >= 0.5: return 'Q1'
+            if v <  0.5 and a >= 0.5: return 'Q2'
+            if v <  0.5 and a <  0.5: return 'Q3'
+            return 'Q4'
+
+        result_qs = [_q(i) for i in idxs]
+        q3_frac = result_qs.count('Q3') / len(result_qs)
+
+        # Only balance when result is heavily Q3 AND query is NOT strongly sad (V<0.30).
+        # Black (V=0.25) → genuinely sad, no correction.
+        # Grey (V=0.41) → borderline, correct the skew.
+        if q3_frac < 0.80 or cv < 0.30:
+            return res
+
+        # Find best non-Q3 candidates not already in results
+        in_set = set(idxs)
+        # Rank all non-Q3 songs by their anti-skew-corrected score
+        alt_scores = all_scores.copy()
+        q3_mask = (self.song_va[:, 0] < 0.5) & (self.song_va[:, 1] < 0.5)
+        alt_scores[list(in_set)] = -1.0
+        alt_scores[q3_mask] = -1.0      # exclude Q3 from alternatives
+        n_swap = min(top_k // 3, int(q3_frac * len(idxs) - 0.79 * len(idxs)) + 1)
+        n_swap = max(1, n_swap)
+        best_alts = np.argsort(alt_scores)[::-1][:n_swap].tolist()
+
+        # Replace the worst Q3 songs with the best alternatives
+        q3_positions = [i for i, q in enumerate(result_qs) if q == 'Q3']
+        # sort by score ascending (worst first)
+        q3_positions.sort(key=lambda p: float(all_scores[idxs[p]]))
+        to_replace = q3_positions[:n_swap]
+
+        new_idxs = idxs.copy()
+        for pos, alt in zip(to_replace, best_alts):
+            new_idxs[pos] = alt
+
+        # Rebuild result DataFrame with new indices
+        new_res = self.df.iloc[new_idxs].copy()
+        new_res['similarity_score'] = [float(all_scores[i]) for i in new_idxs]
+        new_res['original_index'] = new_idxs
+        id_col = 'track_id' if 'track_id' in self.df.columns else 'track_name'
+        optional = ['similarity_score', 'valence', 'energy', 'arousal', 'fused_valence',
+                    'fused_energy', 'fused_emotion', 'color_hex', 'track_url', 'preview_url',
+                    'track_id', 'original_index', 'thumbnail_url', 'danceability', 'tempo',
+                    'timbre_bright', 'mood_quadrant', 'album_name', 'artist_ids']
+        cols = ['track_name']
+        if self.artist_col and self.artist_col in new_res.columns:
+            cols.append(self.artist_col)
+        cols.extend([c for c in optional if c in new_res.columns and c not in cols])
+        return new_res[cols].reset_index(drop=True)
+
+    def _rank_by_color_features(self, per_color_va, per_color_emotion,
+                                per_color_lyrics, color_hexes, top_k,
+                                diversity_penalty, novelty=COLOR_NOVELTY_DEFAULT):
+        """Pure V-A heteroscedastic RBF scorer (F3 V19).
+
+        Matches colour V-A against song V-A using per-axis bandwidth (σ_V>σ_A —
+        valence less reliable than arousal per Eerola/Yang). F2 ablation confirmed
+        lyr-cosine and emo-cosine add no information; both removed.
+        Multi-colour: RRF union so each colour has equal representation.
+        per_color_lyrics accepted for API compat but ignored.
+        """
+        per_color_va = np.asarray(per_color_va, dtype=float)
+
+        # Centroid for quadrant display only (no penalty applied in F3).
         query_va_centroid = per_color_va.mean(axis=0)
 
-        # Normalize emotion sum vector (for quadrant/bridge reference)
-        emotion_sum = query_emotion.sum()
-        if emotion_sum > 0:
-            query_emotion /= emotion_sum
-
-        # Compute lyrics query vector (mean of per-colour centroids; skip None)
-        _lyr = [v for v in per_color_lyrics if v is not None]
-        if _lyr:
-            query_lyrics_centroid = np.mean(_lyr, axis=0)
-            query_lyrics_norm = np.linalg.norm(query_lyrics_centroid)
-            if query_lyrics_norm > 0:
-                query_lyrics_centroid = query_lyrics_centroid / query_lyrics_norm
-        else:
-            query_lyrics_centroid = None
-
-        # V12: UNION-aware preferred emotions — the top inferred emotion of EACH
-        # chosen colour (CLAP labels only). For 1 colour this is its single mood;
-        # for 2–3 colours it's the set of all chosen moods (so a mixed-colour query
-        # boosts songs of any chosen mood, consistent with the union va/emotion sim).
-        preferred_emotions = set()
-        for evec in per_color_emotion:
-            if evec.sum() > 0:
-                preferred_emotions.add(self.emotion_labels[int(np.argmax(evec))])
-
-        # Centroid quadrant — used only to gate the single-colour cross-mood penalty.
+        # Centroid quadrant — for verbose logging and why-chip display.
         valence, arousal = query_va_centroid
         if valence >= 0.5 and arousal >= 0.5:
             target_quadrant = 'Q1'  # Happy/Excited
@@ -570,78 +661,121 @@ class MusicRecommender:
         if self.verbose:
             print(f"   Query V-A: valence={valence:.2f}, arousal={arousal:.2f} ({target_quadrant})")
 
-        # ===== PER-COLOUR SCORING =====
-        # Each colour gets its OWN fused score (V-A + emotion + lyrics, all the
-        # colour↔music link per Palmer PNAS 2013 / i-Perception 2018). E7 removed the
-        # formulaic audio_sim term. The three signals below carry the link directly.
-        song_norms = np.linalg.norm(self.song_emotion_vec, axis=1)
+        # ===== PER-COLOUR SCORING (F3 V19) =====
+        # Pure V-A heteroscedastic RBF. fused_emo retained for the why-chip only.
         fused_emo = (self.df['fused_emotion'].fillna('').str.lower().values
                      if 'fused_emotion' in self.df.columns else None)
 
+        # F3 (V19) — V-A heteroscedastic RBF only.
+        # Heteroscedastic σ per axis (median heuristic, Garreau 2017):
+        _sigma_v = COLOR_SCORE_VA_SIGMA_V   # 0.20 — valence axis (wide, less reliable)
+        _sigma_a = COLOR_SCORE_VA_SIGMA_A   # 0.14 — arousal axis (narrow, more reliable)
+
+        # Anti-skew (Saerens 2002 / Steck 2018): inverse-density pre-weighting.
+        _dw = self._density_weights if COLOR_ANTISKEW_ENABLED else None
+
         def _color_score(cva, evec, lyr):
-            d = np.sqrt(np.sum((self.song_va - cva) ** 2, axis=1))
-            va_s = np.exp(-(d ** 2) / (2 * 0.20 ** 2))                 # Gaussian RBF σ=.20
-            qn = np.linalg.norm(evec)
-            emo_s = (((self.song_emotion_vec @ evec) / (song_norms * qn + 1e-10)) + 1) / 2 \
-                if qn > 0 else np.full(self.n_songs, 0.5)
-            if lyr is not None:
-                lyr_s = np.clip((self.embeddings_normalized @ lyr + 1) / 2, 0, 1)
-            else:
-                lyr_s = np.full(self.n_songs, 0.5)
-            boost = np.zeros(self.n_songs)
-            if fused_emo is not None:
-                top_emo = self.emotion_labels[int(np.argmax(evec))]
-                boost = np.where(fused_emo == top_emo, 0.12, 0.0)
-            return np.clip(0.40 * lyr_s + 0.30 * va_s + 0.30 * emo_s + boost, 0, 1), \
-                   va_s, emo_s, lyr_s
+            dv = self.song_va[:, 0] - cva[0]
+            da = self.song_va[:, 1] - cva[1]
+            va_s = np.exp(-0.5 * ((dv / _sigma_v) ** 2 + (da / _sigma_a) ** 2))
+            # Density correction only for borderline queries (0.30 ≤ V ≤ 0.70).
+            # Strongly-valenced queries (red/yellow/black) stay pure V-A; only
+            # neutral-ish colours (grey, ngoc, white) get the skew correction.
+            cv_query = float(cva[0])
+            if _dw is not None and 0.30 <= cv_query <= 0.70:
+                va_s = va_s * (_dw ** COLOR_ANTISKEW_STRENGTH)
+            emo_s = np.full(self.n_songs, 0.5)
+            lyr_s = np.full(self.n_songs, 0.5)
+            return va_s, va_s, emo_s, lyr_s
 
         # ---- Single colour: unambiguous mood → cross-mood penalty + RRF ----
         if len(per_color_va) == 1:
             final_scores, va_s, emo_s, lyr_s = _color_score(
                 per_color_va[0], per_color_emotion[0], per_color_lyrics[0])
-            if fused_emo is not None:
-                # penalise the opposite mood (sharpens the single-colour result)
-                if target_quadrant in ('Q1', 'Q4'):
-                    final_scores = np.where(np.isin(fused_emo, ('sad', 'melancholic')),
-                                            final_scores - 0.08, final_scores)
-                elif target_quadrant == 'Q3':
-                    final_scores = np.where(np.isin(fused_emo, ('happy', 'excited')),
-                                            final_scores - 0.08, final_scores)
-                elif target_quadrant == 'Q2':
-                    final_scores = np.where(np.isin(fused_emo, ('peaceful', 'calm')),
-                                            final_scores - 0.08, final_scores)
-                final_scores = np.clip(final_scores, 0, 1)
+            # F3: cross-mood penalty removed — the heteroscedastic V-A RBF already
+            # makes large mood-distance songs score near-zero without explicit rules.
+            final_scores = self._apply_novelty(final_scores, novelty)   # E8
             candidates = (self._rrf_candidates([va_s, emo_s, lyr_s])
                           if ENABLE_RRF else None)
-            return self._fast_rank(final_scores, top_k, diversity_penalty,
-                                   restrict_to=candidates)
+            res = self._fast_rank(final_scores, top_k, diversity_penalty,
+                                  restrict_to=candidates)
+            if not res.empty and 'original_index' in res.columns:
+                res = res.copy()
+                if COLOR_ANTISKEW_ENABLED:
+                    res = self._antiskew_balance(res, per_color_va[0], final_scores, top_k)
+                res['why'] = self._build_color_why(
+                    res['original_index'].tolist(), per_color_va[0],
+                    va_s, emo_s, lyr_s, color_hexes[0])
+            return res
 
-        # ---- Multi-colour: round-robin interleave so EACH colour contributes ----
-        # A "mixed-mood" playlist where every chosen colour is represented, instead of
-        # the global-argmax collapsing to the catalog's majority mood.
-        per_color_rank = []
-        for cva, evec, lyr in zip(per_color_va, per_color_emotion, per_color_lyrics):
-            sc, *_ = _color_score(cva, evec, lyr)
-            per_color_rank.append(self._fast_rank(sc, top_k, diversity_penalty))
+        # ---- Multi-colour (2–3): score each colour, RECIPROCAL-RANK-FUSE the lists. ----
+        # TRUE union with EQUAL representation: RRF is rank-based / scale-free (Cormack
+        # 2009), so a skewed catalog can't let one colour's larger pool dominate every
+        # slot (which CombMAX/averaging both do). Songs ranked high by EITHER colour
+        # surface; songs good for BOTH rank highest. Replaces V-A averaging (muddy middle).
+        per_color = []   # (score, va_s, emo_s, lyr_s, cva, hex)
+        for ci, (cva, evec, lyr) in enumerate(
+                zip(per_color_va, per_color_emotion, per_color_lyrics)):
+            sc, va_s, emo_s, lyr_s = _color_score(cva, evec, lyr)
+            sc = self._apply_novelty(sc, novelty)   # E8
+            per_color.append((sc, va_s, emo_s, lyr_s, cva,
+                              color_hexes[ci] if ci < len(color_hexes) else None))
+        score_stack = np.vstack([p[0] for p in per_color])     # (C, n_songs)
+        rrf = np.zeros(self.n_songs)
+        for sc in score_stack:
+            ranks = np.empty(self.n_songs, dtype=float)
+            ranks[np.argsort(sc)[::-1]] = np.arange(self.n_songs)   # 0-based desc rank
+            rrf += 1.0 / (RRF_K + ranks + 1.0)
+        rrf_norm = rrf / (rrf.max() + 1e-12)                   # → [0,1] so _fast_rank keeps top
+        res = self._fast_rank(rrf_norm, top_k, diversity_penalty)
+        if not res.empty and 'original_index' in res.columns:
+            res = res.copy()
+            best_color = score_stack.argmax(axis=0)            # colour that likes each song most
+            whys = []
+            for oi in res['original_index'].tolist():
+                _sc, va_s, emo_s, lyr_s, cva, hexc = per_color[int(best_color[int(oi)])]
+                whys.append(self._build_color_why(
+                    [int(oi)], cva, va_s, emo_s, lyr_s, hexc)[0])
+            res['why'] = whys
+        return res
 
-        id_col = ('track_id' if 'track_id' in self.df.columns else
-                  ('id' if 'id' in self.df.columns else 'track_name'))
-        merged, seen = [], set()
-        maxlen = max((len(d) for d in per_color_rank), default=0)
-        for pos in range(maxlen):
-            for d in per_color_rank:
-                if pos < len(d):
-                    row = d.iloc[pos]
-                    key = row.get(id_col, row.get('track_name'))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    merged.append(row)
-                    if len(merged) >= top_k:
-                        break
-            if len(merged) >= top_k:
-                break
-        return pd.DataFrame(merged).reset_index(drop=True) if merged else pd.DataFrame()
+    def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s,
+                         src_hex=None):
+        """E6 (V16) — per-recommendation "why this song".
+
+        Verbalises the REAL signal deltas behind each pick (no fabrication): the
+        song's V-A vs the colour's V-A (mood closeness), the dominant contributing
+        signal (mood / lyric-theme / categorical emotion), and the song's own mood
+        label. Norman's reflective level / explainability — earns trust vs a
+        black-box mood button. Values are JSON-safe primitives.
+        """
+        # F3: V-A-only scorer — "why" is purely the V-A closeness.
+        cval, caro = float(cva[0]), float(cva[1])
+        _has_fe = 'fused_emotion' in self.df.columns
+        out = []
+        for i in original_indices:
+            i = int(i)
+            sv, sa = float(self.song_va[i, 0]), float(self.song_va[i, 1])
+            song_emo = ''
+            if _has_fe:
+                _fe = self.df['fused_emotion'].iloc[i]
+                song_emo = '' if pd.isna(_fe) else str(_fe).lower()
+            va_match = round(float(va_s[i]), 3)
+            song_emo_vi = self._EMO_VI.get(song_emo, song_emo)
+            reason = 'Cùng vùng cảm xúc (Valence–Arousal) với màu bạn chọn'
+            if song_emo_vi:
+                reason = f"Tâm trạng bài ({song_emo_vi}) khớp vùng V-A của màu"
+            out.append({
+                'reason': reason,
+                'top_signal': 'mood',
+                'mood_match': va_match,
+                'song_va': [round(sv, 3), round(sa, 3)],
+                'color_va': [round(cval, 3), round(caro, 3)],
+                'song_emotion': song_emo,
+                'song_emotion_vi': song_emo_vi,
+                **({'color_hex': src_hex} if src_hex else {}),
+            })
+        return out
 
     # Vietnamese display names for the 8 CLAP emotion labels (for the bridge chip)
     _EMO_VI = {
@@ -872,8 +1006,10 @@ class MusicRecommender:
         if dominant_colors and self.colors is not None:
             for color_hex, weight in zip(dominant_colors, color_weights):
                 try:
-                    # Get V-A from this color
-                    color_va = self.color_mapper.color_to_valence_arousal(color_hex)
+                    # V-A from this color — V17 fix B2: use the recalibrated hsl_to_va
+                    # (ICEAS-fit, Pearson 0.85) for consistency with recommend_by_colors,
+                    # instead of the older Palmer color_to_valence_arousal.
+                    color_va = self.color_mapper.hsl_to_va(color_hex)
                     color_emotion = self.color_mapper.color_to_emotion_probs(color_hex)
                     
                     # V-A distance from this color

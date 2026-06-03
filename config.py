@@ -174,6 +174,61 @@ DIVERSITY_LAMBDA = 0.7   # MMR λ: relevance weight (0=pure diversity, 1=pure re
 WEIGHTS_COLOR_QUERY_WITH_LYRICS = [0.25, 0.35, 0.20, 0.20]  # [audio, lyrics, VA, emotion]
 WEIGHTS_COLOR_QUERY_NO_LYRICS = [0.25, 0.35, 0.25, 0.15]    # Fallback without lyrics
 
+# ----------------------------------------------------------------------------
+# recommend_by_colors() — _color_score signal weights (V16 E2)
+# ----------------------------------------------------------------------------
+# The ACTUAL weights used by core.recommendation_engine._color_score, replacing
+# values previously hardcoded in business logic (project rule: config-only).
+# Signals carry the colour↔music link directly (Palmer 2013 PNAS; i-Perception
+# 2018): PhoBERT lyric-centroid cosine + V-A Gaussian RBF + song-mood↔colour-mood.
+# E2 (2026-06): emotion signal moved off album-art colour (≈random for musical
+# mood, r=0.22) to the song's content emotion. Tuned on the non-circular L2-LLM
+# NDCG (paired bootstrap); see docs/PLAN_COLOR_UPGRADE_EXEC_V16.md.
+# Tuned 2026-06 (tools.color_weight_opt) on L2-LLM NDCG@10, paired bootstrap over 12
+# colours: 0.35/0.55/0.10 → NDCG 0.654 vs default 0.40/0.30/0.30 → 0.498 (Δ+0.155,
+# 95% CI [+0.024, …]); L3 discriminant still 4/4 opposite-colour pairs separated
+# (Cohen's d stronger on 3/4). emotion kept low (one-hot fused_emotion adds little
+# over song_va, which is already v4 lyrics-valence + MERT-arousal) but non-zero as a
+# categorical hedge vs the tuner argmax (0.40/0.60/0.00). Editorial GT insensitive here.
+# F3 (V19 2026-06): V-A-only heteroscedastic — F2 ablation confirmed dropping lyrics
+# cosine (encoder near-noise, Li 2020 anisotropy) and emotion cosine (double-counts V-A,
+# Russell 1980) improves editorial Qprec 0.900→0.930 and monotonicity 0.867→0.979.
+# Scores: pure heteroscedastic V-A RBF (no lyric or emotion matching term).
+# Science anchor: Whiteford 2018 — colour↔music mediation is FULLY through V-A;
+# direct perceptual correspondences vanish after partialling emotion.
+COLOR_SCORE_WEIGHTS = {
+    'lyrics':  0.00,   # removed — no validated colour→lyric-theme channel (Palmer/Whiteford)
+    'va':      1.00,   # V-A heteroscedastic RBF — the only matching signal
+    'emotion': 0.00,   # removed — double-counts V-A (Russell 1980 circumplex)
+}
+# Heteroscedastic σ per axis (F3, median heuristic Garreau 2017 on song-V-A):
+#   σ_V=0.20  (valence: larger spread, less reliable ~17% audio-predictable)
+#   σ_A=0.14  (arousal: tighter spread, more reliable ~80% audio-predictable)
+# Whiteford 2018: saturation (→arousal) explains 72% colour variance; trust arousal.
+COLOR_SCORE_VA_SIGMA_V = 0.20          # Gaussian RBF bandwidth — valence axis (wide)
+COLOR_SCORE_VA_SIGMA_A = 0.14          # Gaussian RBF bandwidth — arousal axis (narrow)
+COLOR_SCORE_VA_SIGMA   = 0.20          # kept for backwards-compat (isotropic fallback)
+
+# Anti-skew (Saerens 2002 / Steck 2018 "Calibrated Recommendations").
+# Catalog is 54% Q3-sad; a neutral color like grey returns 100% Q3 without correction.
+# Mechanism: per-song inverse catalog density weight → songs from overcrowded V-A regions
+# (Q3) are down-weighted, so sparse regions (Q1 happy, Q4 calm) become accessible.
+# strength=0 → off; strength=1 → full correction; default 0.7 (aggressive, needed given
+# catalogue skew — grey neighborhood is 100% melancholic in raw V-A).
+COLOR_ANTISKEW_ENABLED  = True
+COLOR_ANTISKEW_BINS     = 25    # grid resolution for density estimate
+COLOR_ANTISKEW_STRENGTH = 0.7   # how aggressively to correct (0 = off, 1 = full prior flip)
+COLOR_SCORE_LABEL_BOOST = 0.00         # F3: removed from affective model (was 0.12)
+COLOR_SCORE_CROSS_MOOD_PENALTY = 0.00  # F3: removed from affective model (was 0.08)
+
+# E8 (V16) — "dig deeper" / novelty dial. Fights the #1 mood-discovery complaint
+# (repetitiveness/sameness). novelty ∈ [0,1]: 0.5 = neutral (NO change — backward
+# compatible), >0.5 surfaces deep cuts (down-weights mainstream), <0.5 favours the
+# familiar. Popularity proxy = artist frequency in the catalog (no play-count data),
+# rank-normalised; long-tail debiasing (Abdollahpouri 2019; Steck 2011 popularity bias).
+COLOR_NOVELTY_DEFAULT = 0.5
+COLOR_NOVELTY_STRENGTH = 0.6           # max score attenuation at the dial extremes
+
 # ============================================================================
 # Color Distance Calculation
 # ============================================================================
@@ -316,6 +371,7 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
 RELABELED_EMOTIONS_FILE = "data/emotion_labels_v4.json"
+VALENCE_CALIBRATION_FILE = "data/valence_calibration.json"  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
 # System Settings
