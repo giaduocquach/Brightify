@@ -57,11 +57,11 @@ def test_config_sigma_heteroscedastic():
     )
 
 
-def test_config_labels_v5b():
-    """Must use v5b (Gemini valence + recalibrated arousal), not v4/v5."""
+def test_config_labels_v5x():
+    """Must use v5b or later (Gemini valence + recalibrated arousal), not v4/v5."""
     from config import RELABELED_EMOTIONS_FILE
-    assert "v5b" in RELABELED_EMOTIONS_FILE, (
-        f"Expected v5b labels, got: {RELABELED_EMOTIONS_FILE}"
+    assert any(f"v5{x}" in RELABELED_EMOTIONS_FILE for x in ["b","c","d","e"]), (
+        f"Expected v5b/v5c or later labels, got: {RELABELED_EMOTIONS_FILE}"
     )
 
 

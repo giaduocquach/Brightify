@@ -22,12 +22,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 ARO_V1 = 'data/mert_arousal.json'
 ARO_V2 = 'data/arousal_v2.json'
+ARO_V3 = 'data/arousal_v3.json'
 
 
 def run():
-    if not os.path.exists(ARO_V2):
-        print("ERROR: arousal_v2.json not found. Run: python -m tools.recalibrate_arousal")
+    # Default to v3 (B3) if available, else v2 (Phase 1)
+    use_v3 = len(sys.argv) > 1 and sys.argv[1] == 'v3'
+    aro_file = ARO_V3 if use_v3 else ARO_V2
+    if not os.path.exists(aro_file):
+        print(f"ERROR: {aro_file} not found. Run: python -m tools.recalibrate_arousal")
         sys.exit(1)
+    print(f"Validating: {aro_file}")
 
     df = pd.read_csv('data/vietnamese_music_processed_full.csv',
                      usecols=['track_id','energy','loudness_lufs','danceability',
@@ -35,7 +40,7 @@ def run():
     df['track_id'] = df['track_id'].astype(str)
 
     v1 = json.load(open(ARO_V1))
-    v2 = json.load(open(ARO_V2))
+    v2 = json.load(open(aro_file))
 
     aro_v1 = np.array([float(v1.get(tid, 0.475)) for tid in df['track_id']])
     aro_v2 = np.array([float(v2.get(tid, 0.50))  for tid in df['track_id']])
