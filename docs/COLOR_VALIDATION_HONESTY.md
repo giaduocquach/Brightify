@@ -3,6 +3,27 @@
 > Date: 2026-06-04. Mô tả đúng những gì hệ thống đã và chưa validate được,
 > theo tiêu chuẩn khoa học. Không over-claim, không under-claim.
 
+## ✅ KẾT LUẬN CUỐI (2026-06-04) — đã chạm trần offline validation, NÊN DỪNG
+**Face validity (đọc trực tiếp gợi ý) = ĐẠT:** đen→ballad buồn ("Sỏi Đá", "Chuyện đôi ta",
+lời "Nỗi đau cứ..."), vàng→bài sôi nổi ("Go Hard", "Cabinet"), đỏ→rap/rock cường độ cao.
+Người đọc sẽ gật đầu "đúng" → engine HOẠT ĐỘNG. P@k≈0 trước đó là **GT-noise + sai phạm vi
+metric**, KHÔNG phải engine sai (recommendations face-valid xác nhận điều này).
+
+**Verdict khoa học (deep research, offline-eval stopping rule):** feature đã VƯỢT điểm
+diminishing-returns của offline validation:
+- Offline metrics dự báo online KÉM (Rossetti 2016, Beel 2013, McNee 2006 "accuracy is not enough").
+- MTMM convergent validity ĐÃ BÃO HÒA — cả 7 vòng audit cùng một method family (algorithmic
+  self-eval); thêm metric = method variance, không phải validity (Campbell&Fiske 1959).
+- Criterion validity — thứ DUY NHẤT còn thiếu — theo định nghĩa CẦN hành vi người dùng
+  (Knijnenburg 2012, Netflix Gomez-Uribe 2015: A/B là "ultimate arbiter").
+- "Recommender hoàn hảo" là CATEGORY ERROR — chất lượng reco chủ quan, đa chiều, không có
+  cực đại offline đo được.
+**STOPPING RULE (cả 4 điều kiện đã thỏa):** (a) external convergent validity ở mắt xích lõi
+✅ (ICEAS r≈0.77); (b) negative-control + discriminant PASS ✅; (c) vòng audit mới chỉ còn
+method variance/lỗi vụn ✅; (d) bước còn lại là criterion validity cần người ✅.
+→ **Vòng offline tiếp theo có ROI ÂM. Việc đúng = ship sau feature-flag + log interaction,
+hoặc human study tối thiểu N=20-50 (thêm 1 METHOD MỚI, giá trị hơn audit #8/#9 cộng lại).**
+
 ## ⛔ CẢNH BÁO QUAN TRỌNG (red-team + negative-control 2026-06-04)
 **Editorial Qprec=0.854 KHÔNG phải bằng chứng end-to-end — nó TAUTOLOGICAL.**
 Negative control: shuffle ngẫu nhiên `song_va` → Qprec **vẫn = 0.855** (y hệt).
