@@ -208,6 +208,13 @@ COLOR_SCORE_WEIGHTS = {
 COLOR_SCORE_VA_SIGMA_V = 0.20          # Gaussian RBF bandwidth — valence axis (wide)
 COLOR_SCORE_VA_SIGMA_A = 0.14          # Gaussian RBF bandwidth — arousal axis (narrow)
 COLOR_SCORE_VA_SIGMA   = 0.20          # kept for backwards-compat (isotropic fallback)
+# Scale-invariant valence matching: disabled (2026-06-04 empirical revert).
+# Quantile-V theory is sound but requires adaptive σ ∝ local density — a
+# constant σ=0.20 in quantile space stretches one-σ to raw-V=0.80 for mid-
+# valence colours (brown V=0.41) on this skewed catalog (median_V=0.20,
+# 61% V<0.30), destroying ED Qprec 0.850→0.644. LLM-rubric/ensemble
+# improvement (Step 3) is monotone → raw-V RBF is already scale-invariant.
+COLOR_SCORE_VALENCE_QUANTILE = False
 
 # Anti-skew (Saerens 2002 / Steck 2018 "Calibrated Recommendations").
 # Catalog is 54% Q3-sad; a neutral color like grey returns 100% Q3 without correction.
@@ -370,7 +377,7 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
-RELABELED_EMOTIONS_FILE = "data/emotion_labels_v4.json"
+RELABELED_EMOTIONS_FILE = "data/emotion_labels_v5.json"  # C2: Gemini valence (2026-06-04)
 VALENCE_CALIBRATION_FILE = "data/valence_calibration.json"  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
