@@ -3,6 +3,19 @@
 > Date: 2026-06-04. Mô tả đúng những gì hệ thống đã và chưa validate được,
 > theo tiêu chuẩn khoa học. Không over-claim, không under-claim.
 
+## ⛔ CẢNH BÁO QUAN TRỌNG (red-team + negative-control 2026-06-04)
+**Editorial Qprec=0.854 KHÔNG phải bằng chứng end-to-end — nó TAUTOLOGICAL.**
+Negative control: shuffle ngẫu nhiên `song_va` → Qprec **vẫn = 0.855** (y hệt).
+Lý do: Qprec = "bài retrieve có cùng quadrant với màu không"; retrieval lại theo
+khoảng cách V-A → luôn cùng quadrant BẤT KỂ nhãn đúng/sai. P@k (dùng relevant set)
+≈ 0.008, cũng không vượt shuffle (0.015). → **Editorial eval hiện tại không đo được
+chất lượng nhãn bài.** Thêm: GT cho grey/black/turquoise/white bị lọc qua chính
+v5-Gemini quadrant (`patch_editorial_gt.py`) → circular (Kriegeskorte 2009 double-dipping).
+**Hệ quả:** bằng chứng external THẬT chỉ còn **L1** (màu→V-A vs ICEAS, độc lập song_va).
+Structural battery (T1/T2) + editorial Qprec = self-consistency của NN-lookup, KHÔNG
+phải proof "hệ works". L3 nửa-circular (Gemini = labeler + nửa panel) + κ=0.19 (slight).
+Xem lộ trình sửa V22 ở `COLOR_FINAL_AUDIT_V21.md` (cập nhật).
+
 ---
 
 ## CÓ THỂ claim (đã validate, có cơ sở)
