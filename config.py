@@ -222,9 +222,13 @@ COLOR_SCORE_VALENCE_QUANTILE = False
 # (Q3) are down-weighted, so sparse regions (Q1 happy, Q4 calm) become accessible.
 # strength=0 → off; strength=1 → full correction; default 0.7 (aggressive, needed given
 # catalogue skew — grey neighborhood is 100% melancholic in raw V-A).
-COLOR_ANTISKEW_ENABLED  = True
-COLOR_ANTISKEW_BINS     = 25    # grid resolution for density estimate
-COLOR_ANTISKEW_STRENGTH = 0.7   # how aggressively to correct (0 = off, 1 = full prior flip)
+# Phase 2 (2026-06-04): anti-skew DISABLED after arousal recalibration (Phase 1).
+# With corrected arousal (v5b), toggle test shows anti-skew ON hurts Macro Qprec
+# (0.812→0.854 when disabled) — signal is now correct; anti-skew was masking it.
+# Steck 2018 gate: "if disabling raises recall → signal healthy, not anti-skew."
+COLOR_ANTISKEW_ENABLED  = False
+COLOR_ANTISKEW_BINS     = 25    # grid resolution for density estimate (kept for reference)
+COLOR_ANTISKEW_STRENGTH = 0.7   # kept for reference; no effect when ENABLED=False
 COLOR_SCORE_LABEL_BOOST = 0.00         # F3: removed from affective model (was 0.12)
 COLOR_SCORE_CROSS_MOOD_PENALTY = 0.00  # F3: removed from affective model (was 0.08)
 
