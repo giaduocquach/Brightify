@@ -1,96 +1,104 @@
-"""Bước B — Patch editorial GT: sửa quadrant-mismatch + lấp grey/black coverage gap.
+"""V22 — Patch editorial GT: quadrant-mismatch fix, NO Gemini-quadrant filter.
 
-Root cause: GT gốc (color_editorial_gt_v1.json) dùng old-hex V-A để gán target_mood,
-nhưng engine chuyển sang centroid-hex (ISCC-NBS) từ V16. Kết quả:
-  - purple  #800080 old-hex: V=0.558 A=0.840 → Q1 (excited)
-  - purple  #9C4F96 centroid: V=0.265 A=0.554 → Q2 (tense)  ← thực tế engine dùng
-  - grey/black: target_mood='melancholic' nhưng pool=0 vì query crawl không tìm được
+V21 audit + negative control (2026-06-04) revealed:
+  Old patch_editorial_gt.py used `pool ∩ Q3/Q4(v5-Gemini)` to build GT
+  for grey/black/turquoise/white → circular (Kriegeskorte 2009 double-dipping).
+  Shuffle-test: Macro Qprec barely changes with random song_va → tautological.
 
-Fix:
-  - grey/black: target_mood='sad', pool từ v-pop ballad+tình cảm+bolero playlists ∩ Q3(v5)
-  - purple: target_mood='tense', dùng existing tense pool (124 songs)
-  - turquoise/white: target_mood='calm', pool từ indie việt ∩ Q4(v5)
+V22 fix:
+  - grey/black: raw playlist membership from "v-pop ballad + tình cảm + bolero"
+    WITHOUT any Gemini/V-A filter. These playlists are human-curated for sad/
+    melancholic mood by human editors. Raw membership = truly external GT.
+  - turquoise/white: NO reliable external GT exists without Gemini filter
+    (indie playlists are genre, not mood-specific). Set n_rel=0 → skip.
+    Honest > noisy circular pool.
+  - purple: keep existing tense pool (from rock/rap mood crawl in
+    color_editorial_gt.py — not v5-filtered, genuinely external).
+  - All other colours (red/orange/yellow/pink/green/blue/brown): unchanged
+    (came from color_editorial_gt.py mood-crawl, always external).
+
+Metric note (V22):
+  Qprec = retrieval-quadrant precision = TAUTOLOGICAL for V-A-based retrieval
+  (proven by shuffle-test). Qprec becomes "internal consistency diagnostic" only.
+  P@k (fraction of top-k in raw playlist GT) is the honest external metric.
 
 Chạy: python -m tools.patch_editorial_gt
-Cần: var/runtime/backtest/ground_truth/editorial_playlists_v1.json
-      var/runtime/backtest/ground_truth/color_editorial_gt_v1.json
-      data/emotion_labels_v5.json (Gemini-relabeled)
 """
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 GT_FILE       = "var/runtime/backtest/ground_truth/color_editorial_gt_v1.json"
 PLAYLIST_FILE = "var/runtime/backtest/ground_truth/editorial_playlists_v1.json"
-V5_FILE       = "data/emotion_labels_v5.json"
 CSV_FILE      = "data/vietnamese_music_processed_full.csv"
-
-
-def _quadrant(v, a):
-    if v >= 0.5 and a >= 0.5: return "Q1"
-    if v <  0.5 and a >= 0.5: return "Q2"
-    if v <  0.5 and a <  0.5: return "Q3"
-    return "Q4"
 
 
 def run():
     import pandas as pd
 
     playlists = json.load(open(PLAYLIST_FILE))
-    v5        = json.load(open(V5_FILE))
     gt        = json.load(open(GT_FILE))
     df        = pd.read_csv(CSV_FILE, usecols=["track_id", "track_name"])
     df["track_id"] = df["track_id"].astype(str)
 
-    idx_to_tid = {i: str(df.iloc[i]["track_id"]) for i in range(len(df))}
-
-    def get_va(idx):
-        tid = idx_to_tid.get(idx, "")
-        e = v5.get(tid, {})
-        return float(e.get("valence", 0.5)), float(e.get("arousal", 0.5))
-
-    def pool_from_playlists(intents, target_q):
-        """Songs appearing in named playlists AND in target quadrant per v5."""
-        raw = set()
+    def pool_raw(intents, min_playlists=1):
+        """Raw playlist membership — NO V-A/Gemini filter.
+        Optionally require song to appear in ≥ min_playlists for de-noising.
+        This is the only valid external GT: human editorial curation.
+        """
+        song_pl_count: dict[int, int] = {}
         for p in playlists:
             if p["intent"] in intents:
                 for m in p.get("matched", []):
-                    raw.add(m["catalog_idx"])
-        return sorted(idx for idx in raw if _quadrant(*get_va(idx)) == target_q)
+                    idx = m["catalog_idx"]
+                    song_pl_count[idx] = song_pl_count.get(idx, 0) + 1
+        return sorted(idx for idx, cnt in song_pl_count.items() if cnt >= min_playlists)
 
-    # Build corrected pools
-    q3_pool = pool_from_playlists(
-        ["v-pop ballad hay nhất", "nhạc tình cảm việt", "nhạc vàng bolero"], "Q3")
-    q4_pool = pool_from_playlists(["nhạc indie việt"], "Q4")
+    # SAD/MELANCHOLIC: ballad + tình cảm + bolero — human-curated sad music.
+    # Raw membership, no Gemini filter. De-noise: require ≥1 playlist (lenient,
+    # since these intents are already mood-specific not genre-general).
+    sad_pool_raw = pool_raw(
+        ["v-pop ballad hay nhất", "nhạc tình cảm việt", "nhạc vàng bolero"],
+        min_playlists=1)
 
-    # Tense pool: already good quality (crawled from rock/rap mood playlists)
+    # TENSE: take from existing GT (came from color_editorial_gt.py crawl
+    # of "nhạc rock việt" / "nhạc rap việt căng" — external, not v5-filtered).
     tense_pool = set()
     for info in gt["colors"].values():
         if info.get("target_mood") == "tense":
             tense_pool.update(info.get("relevant", []))
     tense_pool = sorted(tense_pool)
 
-    # Apply patches
-    # Keys are old-hex (as stored in GT file)
+    # Patches to apply — only colours that were previously circular or wrong
     patches = {
-        "#808080": ("sad",   q3_pool),    # grey   V=0.41/A=0.32 → Q3
-        "#000000": ("sad",   q3_pool),    # black  V=0.25/A=0.45 → Q3
-        "#800080": ("tense", tense_pool), # purple V=0.27/A=0.55 → Q2 (centroid)
-        "#40E0D0": ("calm",  q4_pool),    # turquoise V=0.51/A=0.33 → Q4 (centroid)
-        "#FFFFFF": ("calm",  q4_pool),    # white  V=0.59/A=0.17 → Q4
+        "#808080": ("sad",   sad_pool_raw),  # grey   → raw ballad pool, no Gemini filter
+        "#000000": ("sad",   sad_pool_raw),  # black  → raw ballad pool, no Gemini filter
+        "#800080": ("tense", tense_pool),    # purple → centroid Q2, external tense crawl (OK)
+        "#40E0D0": ("calm",  []),            # turquoise → n_rel=0 (no external GT without circular filter)
+        "#FFFFFF": ("calm",  []),            # white     → n_rel=0 (same reason)
     }
 
-    print("Patching editorial GT (centroid-hex quadrant correction):")
+    print("V22 — Patching editorial GT (NO Gemini-quadrant filter):")
     for hex_c, (new_mood, new_rel) in patches.items():
-        old_mood = gt["colors"][hex_c].get("target_mood", "?")
+        old_mood   = gt["colors"][hex_c].get("target_mood", "?")
+        old_n      = len(gt["colors"][hex_c].get("relevant", []))
         gt["colors"][hex_c]["target_mood"] = new_mood
         gt["colors"][hex_c]["relevant"]    = new_rel
         gt["colors"][hex_c]["n_relevant"]  = len(new_rel)
         term = gt["colors"][hex_c].get("term", "?")
-        print(f"  {hex_c} ({term:10}): {old_mood} → {new_mood}  n_rel={len(new_rel)}")
+        note = "(RAW, no Gemini filter)" if new_rel else "(n_rel=0: no clean external GT)"
+        print(f"  {hex_c} ({term:10}): {old_mood:12}→{new_mood:8} n_rel {old_n:3}→{len(new_rel):4}  {note}")
 
-    gt["validity"] = "external_denoised_v5quadrant_patchB"
+    gt["validity"] = "external_raw_playlist_v22"
+    gt["v22_note"] = (
+        "grey/black use raw human-curated playlist membership (ballad+tình_cảm+bolero), "
+        "NO Gemini-quadrant filter. turquoise/white have n_rel=0 (no clean external GT). "
+        "Qprec is tautological for V-A retrieval (proven by shuffle-test). "
+        "P@k against raw playlist GT is the honest external metric."
+    )
     json.dump(gt, open(GT_FILE, "w"), ensure_ascii=False, indent=1)
     print(f"\nSaved → {GT_FILE}")
+    print(f"  grey/black pool: {len(sad_pool_raw)} songs (raw, no Gemini filter)")
+    print(f"  turquoise/white: n_rel=0 (honest: no external GT)")
     print("Run `python -m tools.run_f1_validation` to verify.")
 
 

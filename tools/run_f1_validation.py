@@ -1,12 +1,19 @@
-"""F1 — Unified validation runner (V19).
+"""F1 — Unified validation runner (V22).
 
-Runs the full non-circular validation stack:
-  L1  Color→V-A bridge fidelity vs ICEAS human norms
-  T1  Monotonicity of V-A match
-  T2  Commensurability (scale-mismatch detector)
-  T3  Distribution audit (catalog skew + neutral-query check)
-  ED  Editorial mood playlist, artist-grouped, macro balanced
-  L3  Discriminant validity (opposite colours separate)
+V22 adds NC (Negative Control) gate after editorial eval was found tautological
+(shuffle-test 2026-06-04: Qprec unchanged under random song_va).
+
+Tests and what they actually prove (honest labels):
+  L1  Colour→V-A bridge fidelity vs ICEAS human norms — EXTERNAL, valid
+  T1  Monotonicity — internal consistency of V-A NN-lookup (not proof of quality)
+  T2  Commensurability — scale-mismatch detector (idem)
+  T3  Distribution audit — catalog skew diagnostic
+  ED  Editorial grouped eval — Qprec = internal consistency (tautological for V-A
+      retrieval, proven by shuffle). P@k = external metric but genre-playlist GT
+      is noisy (playlist songs ≠ mood-specific songs).
+  L3  Discriminant validity — PoLL panel, partly circular (Gemini = labeler+judge)
+  NC  Negative control — falsification: shuffle song_va, Qprec should DROP.
+      If not → metric is tautological (already proven; this documents it explicitly).
 
 Usage: python -m tools.run_f1_validation [top_k]
 """
@@ -27,18 +34,35 @@ def run(label, module, *args):
 def main() -> int:
     results = {}
 
-    results['L1_bridge']       = run('L1 — Bridge fidelity (colour→V-A vs ICEAS)', 'tools.color_bridge_metrics')
-    results['T1T2T3_structural']= run('T1/T2/T3 — Structural battery', 'tools.color_structural_battery', TOP_K)
-    results['ED_editorial']    = run('ED — Editorial grouped eval', 'tools.color_editorial_grouped', TOP_K)
-    results['L3_discriminant'] = run('L3 — Discriminant validity', 'tools.color_discriminant_metrics')
+    results['L1_bridge']        = run('L1 — Bridge fidelity (colour→V-A vs ICEAS)', 'tools.color_bridge_metrics')
+    results['T1T2T3_structural'] = run('T1/T2/T3 — Structural battery', 'tools.color_structural_battery', TOP_K)
+    results['ED_editorial']     = run('ED — Editorial grouped eval (Qprec=consistency diagnostic)', 'tools.color_editorial_grouped', TOP_K)
+    results['L3_discriminant']  = run('L3 — Discriminant validity (PoLL panel, partly circular)', 'tools.color_discriminant_metrics')
+    results['NC_negative_ctrl'] = run('NC — Negative control (shuffled-label falsification)', 'tools.color_negative_control', TOP_K)
 
     print(f'\n{"="*60}')
-    print('F1 VALIDATION SUMMARY')
+    print('F1 VALIDATION SUMMARY (V22)')
     print(f'{"="*60}')
+    # Labels clarifying what each test proves
+    labels = {
+        'L1_bridge':        'L1 — EXTERNAL: colour→V-A vs human ICEAS norms',
+        'T1T2T3_structural':'T1/T2/T3 — INTERNAL consistency (NN-lookup sanity)',
+        'ED_editorial':     'ED — INTERNAL: Qprec tautological (see NC below)',
+        'L3_discriminant':  'L3 — DISCRIMINANT (partly circular, κ=0.19)',
+        'NC_negative_ctrl': 'NC — FALSIFICATION: shuffle→Qprec should drop',
+    }
     for name, ok in results.items():
-        print(f'  {name:<26} {"PASS ✓" if ok else "FAIL ✗"}')
+        label = labels.get(name, name)
+        print(f'  {label:<52} {"PASS ✓" if ok else "FAIL/NOTE ✗"}')
     all_pass = all(results.values())
-    print(f'\n  Overall: {"ALL PASS ✓" if all_pass else "SOME FAIL — review above"}')
+
+    print()
+    if not results.get('NC_negative_ctrl'):
+        print('  ⚠ NC FAIL: Qprec does not drop when song_va is shuffled.')
+        print('    This confirms Qprec=tautological. L1 is the only strong external')
+        print('    evidence. Design is science-grounded; end-to-end validation')
+        print('    without human labels is not achievable with genre-based playlists.')
+    print(f'\n  L1 (external): {"PASS ✓" if results.get("L1_bridge") else "FAIL ✗"} — this is the strongest external evidence')
     print(f'{"="*60}')
 
     summary = {'tests': results, 'all_pass': all_pass}
