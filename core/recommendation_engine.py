@@ -557,6 +557,19 @@ class MusicRecommender:
         inv_d = inv_d / (inv_d.mean() + 1e-12)
         return inv_d.astype(np.float32)
 
+    def _precompute_valence_quantile(self):
+        """Empirical quantile rank of each song's valence in [0, 1].
+
+        rank/quantile matching is scale-invariant: any monotone rescale/calibration
+        of song_va[:,0] preserves order → cannot break colour↔song commensurability
+        (Cormack 2009 RRF; Bolstad 2003 quantile normalisation).
+        """
+        v = self.song_va[:, 0]
+        order = np.argsort(v)
+        ranks = np.empty(len(v), dtype=np.float32)
+        ranks[order] = np.arange(len(v), dtype=np.float32)
+        return ranks / max(len(v) - 1, 1)
+
     def _antiskew_balance(self, res, color_va, all_scores, top_k):
         """Post-rank quadrant balancing (Steck 2018 calibrated recommendations).
 
@@ -675,7 +688,14 @@ class MusicRecommender:
         _dw = self._density_weights if COLOR_ANTISKEW_ENABLED else None
 
         def _color_score(cva, evec, lyr):
-            dv = self.song_va[:, 0] - cva[0]
+            if COLOR_SCORE_VALENCE_QUANTILE:
+                # Quantile-transform valence: scale-invariant matching.
+                # colour valence → its empirical quantile in the song distribution
+                # (= fraction of songs with valence ≤ color_v).
+                color_v_q = float(np.mean(self.song_va[:, 0] <= cva[0]))
+                dv = self._song_v_quantile - color_v_q
+            else:
+                dv = self.song_va[:, 0] - cva[0]
             da = self.song_va[:, 1] - cva[1]
             va_s = np.exp(-0.5 * ((dv / _sigma_v) ** 2 + (da / _sigma_a) ** 2))
             # Density correction only for borderline queries (0.30 ≤ V ≤ 0.70).
