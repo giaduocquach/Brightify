@@ -63,16 +63,24 @@ Lời:
 
 
 def _judge(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
-    """Qwen3 judge (Ollama, offline). Returns 0-3 relevance score."""
-    prompt = PROMPT.format(mood_vi=mood_vi, title=title or "",
-                           tags=tags or "(không rõ)", lyrics=(lyrics or "")[:1200])
+    """Qwen3 judge (Ollama, offline). Returns 0-3 relevance score.
+    /no_think prefix disables Qwen3 reasoning chain (saves tokens, avoids timeout).
+    num_predict=256 enough for {"score": N} JSON.
+    """
+    import re as _re
+    prompt = "/no_think\n" + PROMPT.format(
+        mood_vi=mood_vi, title=title or "",
+        tags=tags or "(không rõ)", lyrics=(lyrics or "")[:1200])
     try:
         r = requests.post(OLLAMA, json={
             "model": MODEL, "prompt": prompt, "stream": False,
-            "format": "json", "think": False, "options": {"temperature": 0.0},
+            "format": "json", "options": {"temperature": 0.0, "num_predict": 256},
         }, timeout=120)
-        out = json.loads(r.json().get("response", "{}"))
-        s = int(round(float(out.get("score", 0))))
+        text = r.json().get("response", "")
+        # Strip thinking blocks then parse JSON
+        text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+        out  = json.loads(text or "{}")
+        s    = int(round(float(out.get("score", 0))))
         return max(0, min(3, s))
     except Exception:
         return None
