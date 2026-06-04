@@ -63,6 +63,7 @@ Lời:
 
 
 def _judge(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
+    """Qwen3 judge (Ollama, offline). Returns 0-3 relevance score."""
     prompt = PROMPT.format(mood_vi=mood_vi, title=title or "",
                            tags=tags or "(không rõ)", lyrics=(lyrics or "")[:1200])
     try:
@@ -73,6 +74,45 @@ def _judge(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
         out = json.loads(r.json().get("response", "{}"))
         s = int(round(float(out.get("score", 0))))
         return max(0, min(3, s))
+    except Exception:
+        return None
+
+
+def _judge_gemini(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
+    """Gemini 2.5-flash judge (Verga 2024 PoLL: distinct family from Qwen3).
+    Same prompt as Qwen3 judge; native Vietnamese; thinking disabled.
+    Panickssery 2024 note: Gemini also labeled valence (v5b), but L3 task
+    (lyrics mood relevance 0-3) differs from valence scoring — acceptable.
+    """
+    import os, re
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=api_key)
+        prompt = (PROMPT + "\nTrả về JSON duy nhất.").format(
+            mood_vi=mood_vi, title=title or "",
+            tags=tags or "(không rõ)", lyrics=(lyrics or "")[:1200])
+        resp = client.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0, max_output_tokens=64,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        text = resp.text.strip()
+        text = re.sub(r"```[a-z]*\n?", "", text).strip("`").strip()
+        m = re.search(r'"score"\s*:\s*([0-3])', text)
+        if m:
+            return int(m.group(1))
+        # fallback: find any digit 0-3
+        m2 = re.search(r'\b([0-3])\b', text)
+        return int(m2.group(1)) if m2 else None
     except Exception:
         return None
 
