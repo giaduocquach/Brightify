@@ -238,13 +238,7 @@ COLOR_ANTISKEW_STRENGTH = 0.7   # kept for reference; no effect when ENABLED=Fal
 COLOR_SCORE_LABEL_BOOST = 0.00         # F3: removed from affective model (was 0.12)
 COLOR_SCORE_CROSS_MOOD_PENALTY = 0.00  # F3: removed from affective model (was 0.08)
 
-# E8 (V16) — "dig deeper" / novelty dial. Fights the #1 mood-discovery complaint
-# (repetitiveness/sameness). novelty ∈ [0,1]: 0.5 = neutral (NO change — backward
-# compatible), >0.5 surfaces deep cuts (down-weights mainstream), <0.5 favours the
-# familiar. Popularity proxy = artist frequency in the catalog (no play-count data),
-# rank-normalised; long-tail debiasing (Abdollahpouri 2019; Steck 2011 popularity bias).
-COLOR_NOVELTY_DEFAULT = 0.5
-COLOR_NOVELTY_STRENGTH = 0.6           # max score attenuation at the dial extremes
+
 
 # ============================================================================
 # Color Distance Calculation

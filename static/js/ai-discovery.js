@@ -121,21 +121,6 @@ function _updateColorPickerUI() {
     }
 }
 
-// ── E8: novelty / "dig deeper" dial ──
-function _currentNovelty() {
-    const el = document.getElementById('color-novelty');
-    return el ? (parseInt(el.value, 10) / 100) : 0.5;
-}
-function onNoveltyChange(v) {
-    const lbl = document.getElementById('color-novelty-val');
-    const n = parseInt(v, 10);
-    if (lbl) lbl.textContent = n <= 20 ? 'Hit quen thuộc' : n < 45 ? 'Hơi quen' :
-        n <= 55 ? 'Cân bằng' : n < 80 ? 'Hơi lạ' : 'Đào sâu deep-cut';
-}
-// Re-run the active colour query when the novelty dial moves.
-function rerunActiveColorQuery() {
-    if (_selectedColors && _selectedColors.length) getColorRecommendations();
-}
 
 async function getColorRecommendations() {
     if (_selectedColors.length === 0) {
@@ -147,7 +132,7 @@ async function getColorRecommendations() {
     results.innerHTML = '<div class="loading-inline"><div class="loader"></div>AI đang phân tích màu sắc...</div>';
 
     try {
-        const data = await API.recommendByColor(_selectedColors, count, 0.15, _currentNovelty());
+        const data = await API.recommendByColor(_selectedColors, count, 0.15);
         const journey = data.query?.journey;
         const modeLabel = journey ? ' (hành trình)' : '';
         renderAiResults(results, data.results, `Nhạc phù hợp với ${_selectedColors.join(', ')}${modeLabel}`, 'color');

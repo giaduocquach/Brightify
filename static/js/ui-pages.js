@@ -364,14 +364,7 @@ const pages = {
                             </div>
                             <input type="range" id="color-count" min="5" max="25" value="10" class="color-count-slider" oninput="document.getElementById('color-count-val').textContent=this.value">
                         </div>
-                        <!-- E8 — "dig deeper"/novelty dial: quen thuộc ↔ khám phá -->
-                        <div class="color-novelty-control">
-                            <label for="color-novelty">Khám phá: <span id="color-novelty-val">Cân bằng</span></label>
-                            <input type="range" id="color-novelty" min="0" max="100" value="50" step="5" class="color-count-slider"
-                                   aria-label="Mức khám phá: thấp là bài quen thuộc, cao là bài ít nghe"
-                                   oninput="onNoveltyChange(this.value)" onchange="rerunActiveColorQuery()">
-                            <div class="color-novelty-ends"><span>Quen thuộc</span><span>Ít nghe</span></div>
-                        </div>
+
                         <button class="btn btn-primary btn-glow" onclick="getColorRecommendations()">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M12 2a5 5 0 015 5c0 2-1 3-2 4l-1 1v2h-4v-2l-1-1c-1-1-2-2-2-4a5 5 0 015-5z"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/></svg>
                             Tìm nhạc ✨

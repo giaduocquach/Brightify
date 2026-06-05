@@ -67,8 +67,6 @@ class ColorRecommendationRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=50)
     weights: Optional[List[float]] = None
     diversity_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
-    novelty: float = Field(default=0.5, ge=0.0, le=1.0,
-                           description="E8 dig-deeper dial: 0.5 neutral, >0.5 deep cuts, <0.5 familiar")
 
     @validator('colors')
     def validate_colors(cls, v):
@@ -120,7 +118,6 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         top_k=request.top_k,
         weights=request.weights,
         diversity_penalty=request.diversity_penalty,
-        novelty=request.novelty,
     )
     cached = await cache_get(cache_key)
     if cached is not None:
@@ -131,7 +128,6 @@ async def recommend_by_color(request: ColorRecommendationRequest):
             request.colors, top_k=request.top_k,
             weights=request.weights,
             diversity_penalty=request.diversity_penalty,
-            novelty=request.novelty,
         )
         # V12: colour→emotion bridge for the UI chip (the feature's core value made
         # visible — Palmer/PLOS: emotion mediates the colour↔music link).

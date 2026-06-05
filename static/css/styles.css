@@ -1828,24 +1828,6 @@ img { display: block; max-width: 100%; }
     line-height: 1.3;
 }
 
-/* E8 — novelty / "dig deeper" dial */
-.color-novelty-control {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 160px;
-}
-.color-novelty-control label {
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-}
-.color-novelty-control #color-novelty-val { color: var(--accent, #c4b5fd); font-weight: 600; }
-.color-novelty-ends {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.62rem;
-    color: var(--text-tertiary);
-}
 
 /* E6 — "why this song" caption under colour-query results */
 .song-row-why {

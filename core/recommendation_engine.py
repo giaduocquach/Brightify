@@ -443,8 +443,7 @@ class MusicRecommender:
                            color_hexes,
                            top_k=DEFAULT_TOP_K,
                            weights=None,
-                           diversity_penalty=DIVERSITY_PENALTY,
-                           novelty=COLOR_NOVELTY_DEFAULT):
+                           diversity_penalty=DIVERSITY_PENALTY):
 
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
@@ -497,40 +496,7 @@ class MusicRecommender:
 
         return self._rank_by_color_features(
             per_color_va, per_color_emotion, per_color_lyrics,
-            color_hexes, top_k, diversity_penalty, novelty)
-
-    def _novelty_prior(self):
-        """Per-song popularity prior in [0,1] (high = mainstream). E8.
-
-        No play-count data exists → proxy = artist frequency in the catalog
-        (prolific artist ≈ more mainstream here), log-scaled + min-max normalised.
-        Cached on first use.
-        """
-        if getattr(self, '_artist_pop_prior', None) is None:
-            col = ('primary_artist' if 'primary_artist' in self.df.columns
-                   else (self.artist_col if self.artist_col in self.df.columns else None))
-            if col:
-                s = self.df[col].fillna('')
-                counts = s.map(s.value_counts()).values.astype(float)
-                c = np.log1p(counts)
-                rng = float(c.max() - c.min())
-                self._artist_pop_prior = ((c - c.min()) / rng if rng > 0
-                                          else np.full(self.n_songs, 0.5))
-            else:
-                self._artist_pop_prior = np.full(self.n_songs, 0.5)
-        return self._artist_pop_prior
-
-    def _apply_novelty(self, scores, novelty):
-        """E8 — re-weight scores by the novelty dial (0.5 = neutral, no change)."""
-        if novelty is None or abs(float(novelty) - 0.5) < 1e-6:
-            return scores
-        pop = self._novelty_prior()
-        s = COLOR_NOVELTY_STRENGTH
-        if novelty > 0.5:                              # deep cuts: suppress mainstream
-            factor = 1.0 - s * (novelty - 0.5) * 2.0 * pop
-        else:                                          # familiar: suppress long-tail
-            factor = 1.0 - s * (0.5 - novelty) * 2.0 * (1.0 - pop)
-        return np.clip(scores * factor, 0.0, 1.0)
+            color_hexes, top_k, diversity_penalty)
 
     def _precompute_density_weights(self) -> np.ndarray:
         """Inverse catalog density weights for anti-skew (Saerens 2002 / Steck 2018).
@@ -647,7 +613,7 @@ class MusicRecommender:
 
     def _rank_by_color_features(self, per_color_va, per_color_emotion,
                                 per_color_lyrics, color_hexes, top_k,
-                                diversity_penalty, novelty=COLOR_NOVELTY_DEFAULT):
+                                diversity_penalty):
         """Pure V-A heteroscedastic RBF scorer (F3 V19).
 
         Matches colour V-A against song V-A using per-axis bandwidth (σ_V>σ_A —
@@ -715,7 +681,7 @@ class MusicRecommender:
                 per_color_va[0], per_color_emotion[0], per_color_lyrics[0])
             # F3: cross-mood penalty removed — the heteroscedastic V-A RBF already
             # makes large mood-distance songs score near-zero without explicit rules.
-            final_scores = self._apply_novelty(final_scores, novelty)   # E8
+            
             candidates = (self._rrf_candidates([va_s, emo_s, lyr_s])
                           if ENABLE_RRF else None)
             res = self._fast_rank(final_scores, top_k, diversity_penalty,
@@ -743,7 +709,7 @@ class MusicRecommender:
         # (Saari 2016). top_k=10 waypoints across the path achieves this spacing.
         if COLOR_JOURNEY_ENABLED:
             idxs = self._journey_waypoint_sample(
-                per_color_va[0], per_color_va[1], top_k, diversity_penalty, novelty)
+                per_color_va[0], per_color_va[1], top_k, diversity_penalty)
             res = self._build_result_df(idxs)
             if not res.empty and 'original_index' in res.columns:
                 res = res.copy()
@@ -773,7 +739,7 @@ class MusicRecommender:
         for ci, (cva, evec, lyr) in enumerate(
                 zip(per_color_va, per_color_emotion, per_color_lyrics)):
             sc, va_s, emo_s, lyr_s = _color_score(cva, evec, lyr)
-            sc = self._apply_novelty(sc, novelty)
+            
             per_color.append((sc, va_s, emo_s, lyr_s, cva,
                               color_hexes[ci] if ci < len(color_hexes) else None))
         score_stack = np.vstack([p[0] for p in per_color])
@@ -796,8 +762,7 @@ class MusicRecommender:
         return res
 
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
-                                  diversity_penalty: float,
-                                  novelty=COLOR_NOVELTY_DEFAULT) -> list[int]:
+                                  diversity_penalty: float) -> list[int]:
         """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
 
         Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
@@ -827,7 +792,7 @@ class MusicRecommender:
             dv = self.song_va[:, 0] - wp[0]
             da = self.song_va[:, 1] - wp[1]
             scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
-            scores = self._apply_novelty(scores, novelty)   # E8 novelty dial
+            
             scores[excluded] = -1.0
 
             # Mild diversity penalty (cap repeat-artist contribution at 3)
