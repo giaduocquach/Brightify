@@ -145,6 +145,45 @@ def test_engine_multi_color_rrf(rec):
     assert len(df) >= 5
 
 
+def test_config_journey_enabled():
+    """V23: 2-colour mood journey must be enabled."""
+    from config import COLOR_JOURNEY_ENABLED
+    assert COLOR_JOURNEY_ENABLED
+
+
+@pytest.mark.slow
+def test_engine_color_cap_is_2(rec):
+    """V23: ≥3 colours are capped to 2 (3rd dropped)."""
+    df3 = rec.recommend_by_colors(['#848482', '#F3C300', '#BE0032'], top_k=10)
+    df2 = rec.recommend_by_colors(['#848482', '#F3C300'], top_k=10)
+    # 3rd colour ignored → same result set as 2 colours
+    assert set(df3['original_index']) == set(df2['original_index']), (
+        "3rd colour should be dropped (cap=2)")
+
+
+@pytest.mark.slow
+def test_engine_journey_monotonic(rec):
+    """V23: 2-colour journey must order songs smoothly along V-A path A→B
+    (Iso-Principle), not interleaved. Position-along-path must increase with
+    sequence index (Spearman ρ > 0.5)."""
+    import numpy as np
+    from scipy import stats
+    hx_a, hx_b = '#848482', '#F3C300'   # grey(sad) → yellow(happy)
+    df = rec.recommend_by_colors([hx_a, hx_b], top_k=10)
+    idxs = [int(i) for i in df['original_index'].tolist()]
+    p1 = np.array(rec.color_mapper.hsl_to_va(hx_a))
+    p2 = np.array(rec.color_mapper.hsl_to_va(hx_b))
+    axis = p2 - p1
+    t = [float((rec.song_va[i] - p1) @ axis / (axis @ axis + 1e-9)) for i in idxs]
+    rho, _ = stats.spearmanr(t, np.arange(len(t)))
+    assert rho > 0.5, f"Journey not monotonic along A→B path (ρ={rho:.2f})"
+    # first song closer to A, last closer to B
+    assert (np.linalg.norm(rec.song_va[idxs[0]] - p1)
+            < np.linalg.norm(rec.song_va[idxs[0]] - p2)), "First song should match colour A"
+    assert (np.linalg.norm(rec.song_va[idxs[-1]] - p2)
+            < np.linalg.norm(rec.song_va[idxs[-1]] - p1)), "Last song should match colour B"
+
+
 @pytest.mark.slow
 def test_engine_results_va_valid(rec):
     """All recommended songs must have valid V-A in [0, 1]."""

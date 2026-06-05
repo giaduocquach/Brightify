@@ -39,6 +39,7 @@ def main() -> int:
     results['ED_editorial']     = run('ED — Editorial grouped eval (Qprec=consistency diagnostic)', 'tools.color_editorial_grouped', TOP_K)
     results['L3_discriminant']  = run('L3 — Discriminant validity (PoLL panel, partly circular)', 'tools.color_discriminant_metrics')
     results['NC_negative_ctrl'] = run('NC — Negative control (shuffled-label falsification)', 'tools.color_negative_control', TOP_K)
+    results['SEQ_journey']      = run('SEQ — Journey sequencing (2-colour A→B smoothness)', 'tools.color_journey_sequencing')
 
     print(f'\n{"="*60}')
     print('F1 VALIDATION SUMMARY (V22)')
@@ -50,6 +51,7 @@ def main() -> int:
         'ED_editorial':     'ED — INTERNAL: Qprec tautological (see NC below)',
         'L3_discriminant':  'L3 — DISCRIMINANT (partly circular, κ=0.19)',
         'NC_negative_ctrl': 'NC — FALSIFICATION: shuffle→Qprec should drop',
+        'SEQ_journey':      'SEQ — JOURNEY: 2-colour order smoother than shuffle',
     }
     for name, ok in results.items():
         label = labels.get(name, name)

@@ -203,10 +203,9 @@ const pages = {
                 <div class="page-subtitle">Khám phá nhạc qua màu sắc hoặc hình ảnh — AI sẽ tìm bài hát phù hợp cho bạn</div>
             </div>
 
-            <div class="ai-tabs" id="ai-tabs">
-                <div class="ai-tab active" data-tab="color" onclick="switchAiTab('color')">🎨 Bắt vibe từ ảnh/màu</div>
-                <div class="ai-tab" data-tab="journey" onclick="switchAiTab('journey')">🎯 Hành trình</div>
-            </div>
+            <!-- V23: "Hành trình" tab merged into colour (2 colours = mood journey A→B,
+                 Iso-Principle). Separate journey tab removed — single mood entry point
+                 (progressive disclosure: 1 colour = static mood, 2 = journey). -->
 
             <!-- Color Tab -->
             <div class="ai-panel" id="tab-color">
@@ -407,8 +406,9 @@ const pages = {
 
 
 
-            <!-- Emotion Journey Tab -->
-            <div class="ai-panel journey-panel-wide" id="tab-journey" style="display:none">
+            <!-- V23 DEPRECATED: Emotion Journey tab merged into colour (2-colour journey).
+                 Hidden + unreachable (no tab button). Kept temporarily; safe to delete. -->
+            <div class="ai-panel journey-panel-wide" id="tab-journey" style="display:none" hidden>
                 <div class="journey-section">
                     <div class="journey-header">
                         <div class="journey-title">Hành Trình Cảm Xúc</div>
@@ -542,7 +542,7 @@ const pages = {
 
         initColorPicker();
         initImageUpload();
-        initJourneyPickers();
+        // V23: initJourneyPickers() removed — journey tab merged into colour.
     },
 
     // ── LIKED ────────────────────────────────────────────────────────────

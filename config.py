@@ -216,6 +216,12 @@ COLOR_SCORE_VA_SIGMA   = 0.20          # kept for backwards-compat (isotropic fa
 # improvement (Step 3) is monotone → raw-V RBF is already scale-invariant.
 COLOR_SCORE_VALENCE_QUANTILE = False
 
+# V23 — Mood JOURNEY: 2 colours → sequence songs along V-A path A→B (Iso-Principle,
+# Starcke 2024 d=0.52) instead of interleaving (which caused "mood whiplash").
+# Retrieval (RRF union) unchanged; only the play ORDER. Cap is 2 colours (see
+# recommend_by_colors). Replaces the separate "Hành trình" tab (fully merged).
+COLOR_JOURNEY_ENABLED = True
+
 # Anti-skew (Saerens 2002 / Steck 2018 "Calibrated Recommendations").
 # Catalog is 54% Q3-sad; a neutral color like grey returns 100% Q3 without correction.
 # Mechanism: per-song inverse catalog density weight → songs from overcrowded V-A regions

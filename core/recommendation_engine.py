@@ -449,10 +449,11 @@ class MusicRecommender:
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
 
-        # V12: cap at 3 colours. Research validates 1 colour → 1 emotion; >3 colours
-        # averaged together drift the V-A query toward the centre (mush). With UNION
-        # aggregation (below) up to 3 colours give a rich "mixed-mood" without drift.
-        color_hexes = list(color_hexes)[:3]
+        # V23: cap at 2 colours. 1 colour = static mood; 2 colours = a mood JOURNEY
+        # (from colour A's mood → colour B's mood), sequenced smoothly by the
+        # Iso-Principle (Starcke 2024, d=0.52). 3+ colours dropped — interleaved
+        # multi-mood playlists cause "mood whiplash" (user-reported, V23 research).
+        color_hexes = list(color_hexes)[:2]
 
         if self.verbose:
             logger.debug(f"Recommending by colors: {color_hexes}")
@@ -728,11 +729,12 @@ class MusicRecommender:
                     va_s, emo_s, lyr_s, color_hexes[0])
             return res
 
-        # ---- Multi-colour (2–3): score each colour, RECIPROCAL-RANK-FUSE the lists. ----
-        # TRUE union with EQUAL representation: RRF is rank-based / scale-free (Cormack
-        # 2009), so a skewed catalog can't let one colour's larger pool dominate every
-        # slot (which CombMAX/averaging both do). Songs ranked high by EITHER colour
-        # surface; songs good for BOTH rank highest. Replaces V-A averaging (muddy middle).
+        # ---- 2 colours: a mood JOURNEY (V23) — RRF for SELECTION, Iso for ORDER. ----
+        # RETRIEVAL (which songs): RRF union (Cormack 2009) — songs good for EITHER
+        # endpoint surface, scale-free so a skewed catalog can't let one colour dominate.
+        # SEQUENCING (what order): NOT interleaved (caused mood-whiplash). Instead order
+        # the selected songs along the V-A path P1→P2 (Iso-Principle: start matches
+        # colour A, gradually shift to colour B). Retrieval & ordering are separate concerns.
         per_color = []   # (score, va_s, emo_s, lyr_s, cva, hex)
         for ci, (cva, evec, lyr) in enumerate(
                 zip(per_color_va, per_color_emotion, per_color_lyrics)):
@@ -750,6 +752,9 @@ class MusicRecommender:
         res = self._fast_rank(rrf_norm, top_k, diversity_penalty)
         if not res.empty and 'original_index' in res.columns:
             res = res.copy()
+            # SEQUENCING: reorder selected songs along the journey path P1 → P2.
+            if COLOR_JOURNEY_ENABLED and len(per_color_va) == 2:
+                res = self._sequence_journey(res, per_color_va[0], per_color_va[1])
             best_color = score_stack.argmax(axis=0)            # colour that likes each song most
             whys = []
             for oi in res['original_index'].tolist():
@@ -757,6 +762,28 @@ class MusicRecommender:
                 whys.append(self._build_color_why(
                     [int(oi)], cva, va_s, emo_s, lyr_s, hexc)[0])
             res['why'] = whys
+        return res
+
+    def _sequence_journey(self, res, p1, p2):
+        """Order selected songs along the V-A path P1 → P2 (Iso-Principle, V23).
+
+        Projects each song's V-A onto the journey vector (p1→p2), giving a position
+        t∈[0,1]; sorting by t makes the playlist start at colour A's mood and shift
+        smoothly to colour B's. Replaces interleaved order (mood-whiplash).
+        Basis: Iso-Principle (Starcke & von Georgi 2024, d=0.52); affective arc
+        (Neto 2025). Retrieval (which songs) is unchanged — only the ORDER.
+        """
+        p1 = np.asarray(p1, float); p2 = np.asarray(p2, float)
+        axis = p2 - p1
+        denom = float(axis @ axis)
+        idxs = [int(i) for i in res['original_index'].tolist()]
+        if denom < 1e-9:               # two colours nearly identical → no journey
+            return res
+        # t = normalised projection of (songVA - p1) onto (p2 - p1), clamped [0,1]
+        t = {i: float(np.clip(((self.song_va[i] - p1) @ axis) / denom, 0.0, 1.0))
+             for i in idxs}
+        order = sorted(idxs, key=lambda i: t[i])
+        res = res.set_index('original_index').loc[order].reset_index()
         return res
 
     def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s,

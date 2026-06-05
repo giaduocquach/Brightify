@@ -136,12 +136,22 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         # V12: colour→emotion bridge for the UI chip (the feature's core value made
         # visible — Palmer/PLOS: emotion mediates the colour↔music link).
         bridge = _recommender.color_emotion_bridge(request.colors)
+        # V23: 2 colours = mood JOURNEY (ordered A→B, Iso-Principle). Metadata for UI
+        # to render "Từ [mood A] → [mood B]" + gradient + arrow.
+        journey = None
+        if len(request.colors) == 2 and getattr(config, "COLOR_JOURNEY_ENABLED", False) \
+                and len(bridge) == 2:
+            journey = {
+                "ordered": True,
+                "from": {"hex": bridge[0].get("hex"), "mood": bridge[0].get("emotion_vi")},
+                "to":   {"hex": bridge[1].get("hex"), "mood": bridge[1].get("emotion_vi")},
+            }
         payload = RecommendationResponse(
             success=True,
             query={"colors": request.colors, "top_k": request.top_k,
                    "weights": request.weights or config.WEIGHTS_COLOR_QUERY,
                    "diversity_penalty": request.diversity_penalty,
-                   "bridge": bridge},
+                   "bridge": bridge, "journey": journey},
             results=_dataframe_to_dict(results),
             count=len(results),
         )
