@@ -95,15 +95,25 @@ def run():
         d_start = float(np.linalg.norm(rec.song_va[idxs[0]] - p1))
         d_end   = float(np.linalg.norm(rec.song_va[idxs[-1]] - p2))
 
+        # 5. NEW: mid-coverage — songs with t in (0.3, 0.7) (catches 2-block)
+        t_arr = np.array(t)
+        mid_cov = int(((t_arr > 0.3) & (t_arr < 0.7)).sum())
+
+        # 6. NEW: max-gap — largest single step along path (Saari: ≤15% ideal)
+        t_sorted = np.sort(t_arr)
+        max_gap = float(np.max(np.diff(t_sorted))) if len(t_sorted) > 1 else 1.0
+
         smoother = adj_var < shuf_var
         results.append({
             'pair': label, 'adj_var': round(adj_var,3), 'shuffled_var': round(shuf_var,3),
             'monotonicity': round(mono,3), 'whiplash': whip,
+            'mid_coverage': mid_cov, 'max_gap': round(max_gap,3),
             'dist_start_to_A': round(d_start,3), 'dist_end_to_B': round(d_end,3),
             'smoother_than_shuffle': smoother,
+        'mid_coverage': mid_cov, 'max_gap': round(max_gap,3),
         })
         print(f"{label:32} {adj_var:>8.3f} {shuf_var:>9.3f} {mono:>6.2f} {whip:>5} "
-              f"{d_start:.2f}/{d_end:.2f}")
+              f"mid={mid_cov} gap={max_gap:.2f} {d_start:.2f}/{d_end:.2f}")
 
     # Aggregate gate
     n = len(results)
@@ -113,11 +123,22 @@ def run():
     mean_adj   = float(np.mean([r['adj_var'] for r in results])) if results else 0
     mean_shuf  = float(np.mean([r['shuffled_var'] for r in results])) if results else 0
 
-    # Pass: journey smoother than shuffle on ALL pairs + good monotonicity + no whiplash
+    # Collect mid-coverage and max-gap per pair
+    mid_coverages = [r.get('mid_coverage', 0) for r in results]
+    max_gaps      = [r.get('max_gap', 1.0) for r in results]
+    mean_mid = float(np.mean(mid_coverages)) if mid_coverages else 0
+    mean_gap = float(np.mean(max_gaps)) if max_gaps else 1.0
+
+    # Pass: ALL of the following must hold.
+    # gate_mid: ≥2 songs at intermediate positions (t 0.3-0.7) on average
+    #   → catches "2-block" artefact (0 mid songs) that gate_smoother missed
+    # gate_gap: max step ≤ 0.40 → no single jump covers >40% of the path
     gate_smoother = n_smoother == n
     gate_mono     = mean_mono > 0.70
     gate_whip     = total_whip == 0
-    all_pass = gate_smoother and gate_mono and gate_whip
+    gate_mid      = mean_mid >= 2.0   # NEW: require intermediate coverage
+    gate_gap      = mean_gap <= 0.40  # NEW: no single large jump
+    all_pass = gate_smoother and gate_mono and gate_whip and gate_mid and gate_gap
 
     print("-" * 74)
     print(f"\n=== SEQUENCING GATE ===")
@@ -126,6 +147,10 @@ def run():
           f"{'✓' if gate_smoother else '✗'}")
     print(f"  Monotonicity (ρ>0.70): {mean_mono:.3f}  {'✓' if gate_mono else '✗'}")
     print(f"  Whiplash count (=0):   {total_whip}  {'✓' if gate_whip else '✗'}")
+    print(f"  Mid coverage (≥2/10):  {mean_mid:.1f}  {'✓' if gate_mid else '✗'} "
+          f"← catches 2-block artefact")
+    print(f"  Max gap (≤0.40):       {mean_gap:.3f}  {'✓' if gate_gap else '✗'} "
+          f"← no large step jumps")
     print(f"\n  Overall: {'ALL PASS ✓' if all_pass else 'SOME FAIL ✗'}")
     print(f"\n  NOTE: validates the ORDERING ALGORITHM (claim A), not listener")
     print(f"        preference (claim B → user-test). Falsifiable vs shuffle baseline.")

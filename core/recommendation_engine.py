@@ -729,33 +729,64 @@ class MusicRecommender:
                     va_s, emo_s, lyr_s, color_hexes[0])
             return res
 
-        # ---- 2 colours: a mood JOURNEY (V23) — RRF for SELECTION, Iso for ORDER. ----
-        # RETRIEVAL (which songs): RRF union (Cormack 2009) — songs good for EITHER
-        # endpoint surface, scale-free so a skewed catalog can't let one colour dominate.
-        # SEQUENCING (what order): NOT interleaved (caused mood-whiplash). Instead order
-        # the selected songs along the V-A path P1→P2 (Iso-Principle: start matches
-        # colour A, gradually shift to colour B). Retrieval & ordering are separate concerns.
-        per_color = []   # (score, va_s, emo_s, lyr_s, cva, hex)
+        # ---- 2 colours: true mood JOURNEY via WAYPOINT SAMPLING (V23 fix) ----
+        # Previous approach (RRF union → sort) produced 2 solid blocks: all songs
+        # for colour A first, all for colour B after — no intermediate steps.
+        # Root cause: RRF rewards songs closest to EITHER endpoint; intermediate songs
+        # score low for both → never selected. Sorting selected songs by projection
+        # then naturally gives 2 blocks.
+        #
+        # Fix: WAYPOINT SAMPLING — divide path P1→P2 into top_k evenly-spaced
+        # waypoints and greedily pick the best song for each waypoint (excluding
+        # already-chosen songs). This FORCES intermediate songs into the playlist.
+        # Basis: Iso-Principle (Starcke 2024 d=0.52): ~10-15% V-A shift per step
+        # (Saari 2016). top_k=10 waypoints across the path achieves this spacing.
+        if COLOR_JOURNEY_ENABLED:
+            idxs = self._journey_waypoint_sample(
+                per_color_va[0], per_color_va[1], top_k, diversity_penalty)
+            res = self._build_result_df(idxs)
+            if not res.empty and 'original_index' in res.columns:
+                res = res.copy()
+                # why: attribute each song to nearest colour (A or B)
+                p1 = np.asarray(per_color_va[0], float)
+                p2 = np.asarray(per_color_va[1], float)
+                whys = []
+                for oi in res['original_index'].tolist():
+                    oi = int(oi)
+                    sv = self.song_va[oi]
+                    # nearest endpoint
+                    if np.linalg.norm(sv - p1) <= np.linalg.norm(sv - p2):
+                        cva, hexc = p1, color_hexes[0]
+                    else:
+                        cva, hexc = p2, color_hexes[1] if len(color_hexes) > 1 else color_hexes[0]
+                    va_s_why = np.exp(-0.5 * (
+                        ((self.song_va[:, 0] - cva[0]) / _sigma_v) ** 2 +
+                        ((self.song_va[:, 1] - cva[1]) / _sigma_a) ** 2))
+                    whys.append(self._build_color_why(
+                        [oi], cva, va_s_why, np.full(self.n_songs, 0.5),
+                        np.full(self.n_songs, 0.5), hexc)[0])
+                res['why'] = whys
+            return res
+
+        # Fallback (COLOR_JOURNEY_ENABLED=False): RRF union, no journey ordering.
+        per_color = []
         for ci, (cva, evec, lyr) in enumerate(
                 zip(per_color_va, per_color_emotion, per_color_lyrics)):
             sc, va_s, emo_s, lyr_s = _color_score(cva, evec, lyr)
-            sc = self._apply_novelty(sc, novelty)   # E8
+            sc = self._apply_novelty(sc, novelty)
             per_color.append((sc, va_s, emo_s, lyr_s, cva,
                               color_hexes[ci] if ci < len(color_hexes) else None))
-        score_stack = np.vstack([p[0] for p in per_color])     # (C, n_songs)
+        score_stack = np.vstack([p[0] for p in per_color])
         rrf = np.zeros(self.n_songs)
         for sc in score_stack:
             ranks = np.empty(self.n_songs, dtype=float)
-            ranks[np.argsort(sc)[::-1]] = np.arange(self.n_songs)   # 0-based desc rank
+            ranks[np.argsort(sc)[::-1]] = np.arange(self.n_songs)
             rrf += 1.0 / (RRF_K + ranks + 1.0)
-        rrf_norm = rrf / (rrf.max() + 1e-12)                   # → [0,1] so _fast_rank keeps top
+        rrf_norm = rrf / (rrf.max() + 1e-12)
         res = self._fast_rank(rrf_norm, top_k, diversity_penalty)
         if not res.empty and 'original_index' in res.columns:
             res = res.copy()
-            # SEQUENCING: reorder selected songs along the journey path P1 → P2.
-            if COLOR_JOURNEY_ENABLED and len(per_color_va) == 2:
-                res = self._sequence_journey(res, per_color_va[0], per_color_va[1])
-            best_color = score_stack.argmax(axis=0)            # colour that likes each song most
+            best_color = score_stack.argmax(axis=0)
             whys = []
             for oi in res['original_index'].tolist():
                 _sc, va_s, emo_s, lyr_s, cva, hexc = per_color[int(best_color[int(oi)])]
@@ -763,6 +794,73 @@ class MusicRecommender:
                     [int(oi)], cva, va_s, emo_s, lyr_s, hexc)[0])
             res['why'] = whys
         return res
+
+    def _journey_waypoint_sample(self, p1, p2, top_k: int,
+                                  diversity_penalty: float) -> list[int]:
+        """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
+
+        Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
+        greedily picks the best unselected song for each waypoint. This forces
+        intermediate songs into the list, avoiding the "2-block" artefact of
+        RRF + projection-sort (which only selected songs near the endpoints).
+
+        Basis: Iso-Principle — start matching A, shift ~10-15% per step (Saari
+        2016). Artist diversity applied with mild penalty (Δ ≤ 0.3 per repeat).
+        """
+        p1 = np.asarray(p1, float); p2 = np.asarray(p2, float)
+        n = self.n_songs
+        _sv = COLOR_SCORE_VA_SIGMA_V
+        _sa = COLOR_SCORE_VA_SIGMA_A
+
+        excluded = np.zeros(n, dtype=bool)
+        artist_counts: dict[str, int] = {}
+        artists = (self.df[self.artist_col].fillna('__unknown__').values
+                   if self.artist_col else None)
+        selected: list[int] = []
+
+        # Evenly-spaced waypoints from P1 (t=0) to P2 (t=1)
+        ts = np.linspace(0.0, 1.0, top_k)
+        waypoints = p1[None, :] + ts[:, None] * (p2 - p1)[None, :]  # (K, 2)
+
+        for wp in waypoints:
+            dv = self.song_va[:, 0] - wp[0]
+            da = self.song_va[:, 1] - wp[1]
+            scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
+            scores[excluded] = -1.0
+
+            # Mild diversity penalty (cap repeat-artist contribution at 3)
+            if diversity_penalty > 0 and artists is not None:
+                for i in np.where(scores > 0)[0]:
+                    cnt = artist_counts.get(artists[i], 0)
+                    if cnt:
+                        scores[i] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
+
+            best = int(np.argmax(scores))
+            if scores[best] <= 0:
+                continue
+            selected.append(best)
+            excluded[best] = True
+            if artists is not None:
+                art = artists[best]
+                artist_counts[art] = artist_counts.get(art, 0) + 1
+
+        return selected
+
+    def _build_result_df(self, idxs: list[int]):
+        """Build a result DataFrame from a list of song indices (for journey)."""
+        if not idxs:
+            return pd.DataFrame()
+        rows = self.df.iloc[idxs].copy()
+        rows['original_index'] = idxs
+        optional = ['track_name', 'similarity_score', 'valence', 'energy', 'arousal',
+                    'fused_valence', 'fused_energy', 'fused_emotion', 'color_hex',
+                    'track_url', 'preview_url', 'track_id', 'original_index',
+                    'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
+                    'mood_quadrant', 'album_name', 'artist_ids']
+        if self.artist_col and self.artist_col not in optional:
+            optional.append(self.artist_col)
+        cols = [c for c in optional if c in rows.columns]
+        return rows[cols].reset_index(drop=True)
 
     def _sequence_journey(self, res, p1, p2):
         """Order selected songs along the V-A path P1 → P2 (Iso-Principle, V23).
