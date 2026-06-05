@@ -62,13 +62,6 @@ const pages = {
 
             <div class="carousel-container">
                 <div class="section-header">
-                    <div><div class="section-title">🎭 Đổi tâm trạng</div><div class="section-subtitle">Chọn nơi muốn đến — AI dẫn bạn tới đó qua từng bài, bắt đầu từ bài đang nghe (Iso Principle)</div></div>
-                </div>
-                ${moodPresetButtonsHTML()}
-            </div>
-
-            <div class="carousel-container">
-                <div class="section-header">
                     <div><div class="section-title">Nổi bật</div><div class="section-subtitle">Những bài hát được yêu thích</div></div>
 
                 </div>
