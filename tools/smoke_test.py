@@ -110,8 +110,7 @@ def main():
            f"{bridge[0] if bridge else None}")
 
     post("lyrics", "/api/recommend/lyrics", {"keywords": "cô đơn trong đêm", "top_k": 5})
-    post("emotion-journey", "/api/recommend/emotion-journey",
-         {"end_valence": 0.85, "end_arousal": 0.75, "steps": 8}, expect_key="songs")
+    # V23: /emotion-journey endpoint removed (merged into colour 2-colour journey)
 
     # ---- Image (tiny generated PNG) ----
     try:

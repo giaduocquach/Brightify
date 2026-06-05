@@ -361,13 +361,14 @@ class EmotionClassifier:
             'surprise': (0.6, 0.8),    # Moderate valence, high arousal
         }
 
-    def encode_lyrics(self, lyrics: str, max_length: int = 512) -> Optional[np.ndarray]:
+    def encode_lyrics(self, lyrics: str, max_length: int = 256) -> Optional[np.ndarray]:
         """
         Encode lyrics using PhoBERT with attention pooling
 
         Args:
             lyrics: Vietnamese lyrics text
-            max_length: Maximum sequence length
+            max_length: Maximum sequence length (PhoBERT-base position limit is 258;
+                        capped at 256 — 512 previously could overflow/clip — V17 fix B1)
 
         Returns:
             Embedding vector or None if failed

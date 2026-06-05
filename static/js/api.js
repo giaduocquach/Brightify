@@ -58,9 +58,9 @@ async getRandomSongs(count = 10) {
     },
 
     // ── AI Recommendations ──────────────────────────────────────────────
-    async recommendByColor(colors, topK = 10, diversityPenalty = 0.15) {
+    async recommendByColor(colors, topK = 10, diversityPenalty = 0.15, novelty = 0.5) {
         return this._post('/api/recommend/color', {
-            colors, top_k: topK, diversity_penalty: diversityPenalty,
+            colors, top_k: topK, diversity_penalty: diversityPenalty, novelty,
         });
     },
 
@@ -108,18 +108,6 @@ async getRandomSongs(count = 10) {
 
     async getImageStatus() {
         return this._get('/api/image/status');
-    },
-
-    // ── Emotion Journey ─────────────────────────────────────────────────
-    async getEmotionJourney(startValence, startArousal, endValence, endArousal, steps = 10, opts = {}) {
-        return this._post('/api/recommend/emotion-journey', {
-            start_valence: startValence,
-            start_arousal: startArousal,
-            end_valence: endValence,
-            end_arousal: endArousal,
-            steps,
-            start_track_id: opts.startTrackId ?? null,
-        });
     },
 
 

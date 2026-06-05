@@ -67,6 +67,8 @@ class ColorRecommendationRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=50)
     weights: Optional[List[float]] = None
     diversity_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
+    novelty: float = Field(default=0.5, ge=0.0, le=1.0,
+                           description="E8 dig-deeper dial: 0.5 neutral, >0.5 deep cuts, <0.5 familiar")
 
     @validator('colors')
     def validate_colors(cls, v):
@@ -118,6 +120,7 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         top_k=request.top_k,
         weights=request.weights,
         diversity_penalty=request.diversity_penalty,
+        novelty=request.novelty,
     )
     cached = await cache_get(cache_key)
     if cached is not None:
@@ -128,16 +131,27 @@ async def recommend_by_color(request: ColorRecommendationRequest):
             request.colors, top_k=request.top_k,
             weights=request.weights,
             diversity_penalty=request.diversity_penalty,
+            novelty=request.novelty,
         )
         # V12: colour→emotion bridge for the UI chip (the feature's core value made
         # visible — Palmer/PLOS: emotion mediates the colour↔music link).
         bridge = _recommender.color_emotion_bridge(request.colors)
+        # V23: 2 colours = mood JOURNEY (ordered A→B, Iso-Principle). Metadata for UI
+        # to render "Từ [mood A] → [mood B]" + gradient + arrow.
+        journey = None
+        if len(request.colors) == 2 and getattr(config, "COLOR_JOURNEY_ENABLED", False) \
+                and len(bridge) == 2:
+            journey = {
+                "ordered": True,
+                "from": {"hex": bridge[0].get("hex"), "mood": bridge[0].get("emotion_vi")},
+                "to":   {"hex": bridge[1].get("hex"), "mood": bridge[1].get("emotion_vi")},
+            }
         payload = RecommendationResponse(
             success=True,
             query={"colors": request.colors, "top_k": request.top_k,
                    "weights": request.weights or config.WEIGHTS_COLOR_QUERY,
                    "diversity_penalty": request.diversity_penalty,
-                   "bridge": bridge},
+                   "bridge": bridge, "journey": journey},
             results=_dataframe_to_dict(results),
             count=len(results),
         )
@@ -267,58 +281,4 @@ async def recommend_by_image(
 
 
 # ============================================================================
-# Emotion Journey Endpoint
-# ============================================================================
-
-class EmotionJourneyRequest(BaseModel):
-    # Start V-A is optional: F2 auto-detects it from the now-playing song via
-    # start_track_id (user picks only the destination). Falls back to neutral.
-    start_valence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    start_arousal: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    end_valence: float = Field(..., ge=0.0, le=1.0)
-    end_arousal: float = Field(..., ge=0.0, le=1.0)
-    steps: int = Field(default=10, ge=6, le=15)
-    start_track_id: Optional[str] = None
-
-
-@router.post("/emotion-journey")
-async def emotion_journey(request: EmotionJourneyRequest):
-    """Generate an Iso-Principle emotion journey playlist from start → end mood.
-
-    Start point precedence: explicit start_valence/arousal → now-playing song
-    (start_track_id) → neutral (0.5, 0.5).
-    """
-    try:
-        sv, sa = request.start_valence, request.start_arousal
-        if (sv is None or sa is None) and request.start_track_id:
-            va = _recommender.get_song_va(request.start_track_id)
-            if va:
-                sv, sa = va
-        if sv is None or sa is None:
-            sv, sa = 0.5, 0.5
-
-        result = _recommender.generate_emotion_journey(
-            start_valence=sv,
-            start_arousal=sa,
-            end_valence=request.end_valence,
-            end_arousal=request.end_arousal,
-            steps=request.steps,
-        )
-
-        # Enrich songs with album art URLs
-        for song in result['songs']:
-            _enrich_album_art(song)
-
-        return JSONResponse(content={
-            'success': True,
-            'songs': result['songs'],
-            'waypoints': result['waypoints'],
-            'journey_info': result['journey_info'],
-            'count': len(result['songs']),
-        })
-    except Exception as e:
-        logger.exception("Emotion journey generation failed")
-        raise HTTPException(status_code=500, detail="Emotion journey generation failed")
-
-
 # ============================================================================

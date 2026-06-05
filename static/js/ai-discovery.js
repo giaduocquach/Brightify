@@ -4,12 +4,11 @@
 
 let _selectedColors = [];
 
+// V23: journey tab merged into colour (2-colour journey). Only 'color' remains.
 function switchAiTab(tab) {
     document.querySelectorAll('.ai-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-    ['color', 'journey'].forEach(t => {
-        const el = document.getElementById(`tab-${t}`);
-        if (el) el.style.display = t === tab ? 'block' : 'none';
-    });
+    const el = document.getElementById('tab-color');
+    if (el) el.style.display = 'block';
 }
 
 function adjColorCount(d) {
@@ -20,83 +19,22 @@ function adjColorCount(d) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Color Picker — Emotion Cards + Hex Input
+// Color Picker — Emotion Cards
 // ══════════════════════════════════════════════════════════════════════════
 
-function addColorFromHex() {
-    const input = document.getElementById('color-hex-input');
-    let hex = (input?.value || '').trim().replace(/^#/, '');
-    if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
-        app.toast('Mã màu không hợp lệ (cần 6 ký tự hex)', 'info');
-        return;
-    }
-    hex = '#' + hex.toLowerCase();
-    addSelectedColor(hex);
-    input.value = '';
-    const preview = document.getElementById('hex-preview-swatch');
-    if (preview) preview.style.background = '#a78bfa';
-}
 
-
-// ══════════════════════════════════════════════════════════════════════════
-// Emotion Journey — Quick Mood Cards (v2)
-// ══════════════════════════════════════════════════════════════════════════
-
-function setJourneyFromQuickMood(btn) {
-    const v = parseFloat(btn.dataset.v);
-    const a = parseFloat(btn.dataset.a);
-
-    // Determine: if no start yet, set start; if start set but no end, set end
-    // If both set, reset and set as new start
-    if (!_journeyStart) {
-        _journeyStart = { v, a };
-        btn.classList.add('jqm-selected-start');
-    } else if (!_journeyEnd) {
-        _journeyEnd = { v, a };
-        btn.classList.add('jqm-selected-end');
-    } else {
-        // Reset both
-        document.querySelectorAll('.jqm-card').forEach(c => c.classList.remove('jqm-selected-start', 'jqm-selected-end'));
-        _journeyStart = { v, a };
-        _journeyEnd = null;
-        btn.classList.add('jqm-selected-start');
-    }
-    _updateJourneySummary();
-}
-
-function _updateJourneySummary() {
-    const summary = document.getElementById('journey-summary');
-    if (!summary) return;
-    if (_journeyStart && _journeyEnd) {
-        summary.style.display = 'flex';
-        const fromEl = document.getElementById('journey-summary-from');
-        const toEl = document.getElementById('journey-summary-to');
-        if (fromEl) {
-            const lbl = fromEl.querySelector('.jsv2-label');
-            if (lbl) lbl.textContent = `${_vaToLabel(_journeyStart.v, _journeyStart.a)} (${_journeyStart.v.toFixed(2)}, ${_journeyStart.a.toFixed(2)})`;
-        }
-        if (toEl) {
-            const lbl = toEl.querySelector('.jsv2-label');
-            if (lbl) lbl.textContent = `${_vaToLabel(_journeyEnd.v, _journeyEnd.a)} (${_journeyEnd.v.toFixed(2)}, ${_journeyEnd.a.toFixed(2)})`;
-        }
-    } else {
-        summary.style.display = 'none';
-    }
-}
-
-function initColorPicker() {
     // Reset color state on every page render
     _selectedColors = [];
 
     // Render palette presets
     // V12: 3-colour "mood blends" (union aggregation gives a rich mixed-mood playlist)
     const palettes = [
-        { name: '🌅 Hoàng hôn',   colors: ['#f97316','#ef4444','#fde047'] },
-        { name: '🌊 Trầm lặng',   colors: ['#3b5998','#2c3e66','#99e2d0'] },
-        { name: '🌿 An yên',      colors: ['#86efac','#99e2d0','#9ca3af'] },
-        { name: '🔥 Bùng cháy',   colors: ['#ef4444','#f97316','#a21caf'] },
-        { name: '🌸 Ngọt ngào',   colors: ['#f9a8d4','#fde047','#f5f5f4'] },
-        { name: '🌙 Cô đơn',      colors: ['#2c3e66','#171717','#3b5998'] },
+        { name: '🌅 Hoàng hôn',   colors: ['#F38400','#BE0032','#F3C300'] },
+        { name: '🌊 Trầm lặng',   colors: ['#0067A5','#3AB09E','#848482'] },
+        { name: '🌿 An yên',      colors: ['#008856','#3AB09E','#848482'] },
+        { name: '🔥 Bùng cháy',   colors: ['#BE0032','#F38400','#9C4F96'] },
+        { name: '🌸 Ngọt ngào',   colors: ['#FFB7C5','#F3C300','#F2F3F4'] },
+        { name: '🌙 Cô đơn',      colors: ['#222222','#848482','#80461B'] },
     ];
     window._colorPalettes = palettes;
 
@@ -111,28 +49,14 @@ function initColorPicker() {
     }
 
     _updateColorPickerUI();
-
-    // Hex input: live preview on typing
-    const hexInput = document.getElementById('color-hex-input');
-    if (hexInput) {
-        hexInput.addEventListener('input', () => {
-            let val = hexInput.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
-            hexInput.value = val;
-            if (val.length === 6) {
-                const hex = '#' + val.toLowerCase();
-                const preview = document.getElementById('hex-preview-swatch');
-                if (preview) preview.style.background = hex;
-            }
-        });
-    }
 }
 
 // ── Color helpers ──
 function _rgbToHex(r, g, b) { return '#' + [r,g,b].map(c => c.toString(16).padStart(2,'0')).join(''); }
 
 function addSelectedColor(hex) {
-    // V12: cap 3 (research validates 1 colour→1 emotion; >3 averaged = mush).
-    if (_selectedColors.length >= 3) { app.toast('Tối đa 3 màu', 'info'); return; }
+    // V23: cap 2. 1 màu = mood tĩnh; 2 màu = hành trình A→B (Iso-Principle).
+    if (_selectedColors.length >= 2) { app.toast('Tối đa 2 màu (1 màu = tâm trạng, 2 màu = hành trình)', 'info'); return; }
     if (_selectedColors.includes(hex)) return;
     _selectedColors.push(hex);
     _updateColorPickerUI();
@@ -143,11 +67,11 @@ function addSelectedColor(hex) {
 function pickColor(hex) {
     if (_selectedColors.includes(hex)) {
         removeSelectedColor(_selectedColors.indexOf(hex));
-    } else if (_selectedColors.length < 3) {
+    } else if (_selectedColors.length < 2) {   // V23: cap 2 (mood journey)
         _selectedColors.push(hex);
         _updateColorPickerUI();
     } else {
-        app.toast('Tối đa 3 màu', 'info');
+        app.toast('Tối đa 2 màu (1 màu = tâm trạng, 2 màu = hành trình)', 'info');
         return;
     }
     if (_selectedColors.length > 0) getColorRecommendations();
@@ -167,7 +91,7 @@ function clearSelectedColors() {
 function selectPalette(paletteIdx) {
     const p = window._colorPalettes?.[paletteIdx];
     if (!p) return;
-    _selectedColors = [...p.colors].slice(0, 3);   // V12: cap 3
+    _selectedColors = [...p.colors].slice(0, 2);   // V23: cap 2 (mood journey)
     _updateColorPickerUI();
     document.querySelectorAll('.color-palette-btn').forEach((b, i) => b.classList.toggle('active', i === paletteIdx));
     getColorRecommendations();   // run immediately
@@ -177,7 +101,15 @@ function _updateColorPickerUI() {
     const dotsEl = document.getElementById('color-selected-dots');
     const countEl = document.getElementById('color-selected-count');
     const clearBtn = document.getElementById('btn-clear-colors');
-    if (countEl) countEl.textContent = `${_selectedColors.length}/3`;
+    // WCAG 1.4.1: non-colour selected-state on each swatch (border/check + aria-pressed),
+    // so selection is conveyed without relying on colour alone.
+    const sel = new Set(_selectedColors.map(c => c.toUpperCase()));
+    document.querySelectorAll('.color-emotion-card-v2').forEach(card => {
+        const on = sel.has((card.dataset.color || '').toUpperCase());
+        card.classList.toggle('selected', on);
+        card.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (countEl) countEl.textContent = `${_selectedColors.length}/2`;
     if (clearBtn) clearBtn.style.display = _selectedColors.length > 0 ? 'inline' : 'none';
     if (dotsEl) {
         dotsEl.innerHTML = _selectedColors.length === 0
@@ -187,6 +119,22 @@ function _updateColorPickerUI() {
                     <span class="color-dot-x">×</span>
                 </div>`).join('');
     }
+}
+
+// ── E8: novelty / "dig deeper" dial ──
+function _currentNovelty() {
+    const el = document.getElementById('color-novelty');
+    return el ? (parseInt(el.value, 10) / 100) : 0.5;
+}
+function onNoveltyChange(v) {
+    const lbl = document.getElementById('color-novelty-val');
+    const n = parseInt(v, 10);
+    if (lbl) lbl.textContent = n <= 20 ? 'Hit quen thuộc' : n < 45 ? 'Hơi quen' :
+        n <= 55 ? 'Cân bằng' : n < 80 ? 'Hơi lạ' : 'Đào sâu deep-cut';
+}
+// Re-run the active colour query when the novelty dial moves.
+function rerunActiveColorQuery() {
+    if (_selectedColors && _selectedColors.length) getColorRecommendations();
 }
 
 async function getColorRecommendations() {
@@ -199,12 +147,29 @@ async function getColorRecommendations() {
     results.innerHTML = '<div class="loading-inline"><div class="loader"></div>AI đang phân tích màu sắc...</div>';
 
     try {
-        const data = await API.recommendByColor(_selectedColors, count);
-        renderAiResults(results, data.results, `Nhạc phù hợp với ${_selectedColors.join(', ')}`, 'color');
+        const data = await API.recommendByColor(_selectedColors, count, 0.15, _currentNovelty());
+        const journey = data.query?.journey;
+        const modeLabel = journey ? ' (hành trình)' : '';
+        renderAiResults(results, data.results, `Nhạc phù hợp với ${_selectedColors.join(', ')}${modeLabel}`, 'color');
+        // V23: 2 colours = mood JOURNEY → show "Từ [mood A] → [mood B]" banner + gradient.
+        // The playlist is ordered to flow smoothly from A's mood to B's (Iso-Principle).
+        if (journey && journey.from && journey.to) {
+            results.insertAdjacentHTML('afterbegin', `
+                <div class="color-journey-banner" role="note"
+                     style="--c-from:${safeColor(journey.from.hex)};--c-to:${safeColor(journey.to.hex)}">
+                    <span class="cjb-grad" aria-hidden="true"></span>
+                    <span class="cjb-text">🎯 Hành trình tâm trạng:
+                        <strong>${esc(journey.from.mood || '')}</strong>
+                        <span class="cjb-arrow">→</span>
+                        <strong>${esc(journey.to.mood || '')}</strong>
+                    </span>
+                    <span class="cjb-hint">playlist chuyển dần, nghe theo thứ tự</span>
+                </div>`);
+        }
         // V12: emotion bridge chip — make the colour→emotion→music link visible
         // (Palmer/PLOS: emotion mediates the colour↔music correspondence).
         const bridge = data.query?.bridge;
-        if (Array.isArray(bridge) && bridge.length) {
+        if (!journey && Array.isArray(bridge) && bridge.length) {
             const items = bridge.map(b => `
                 <span class="color-bridge-item" title="Valence ${b.valence} · Arousal ${b.arousal}">
                     <span class="color-bridge-dot" style="background:${b.hex}"></span>
