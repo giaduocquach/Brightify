@@ -340,7 +340,7 @@ const pages = {
                     <div class="color-selected-section">
                         <div class="color-selected-header">
                             <span class="color-selected-label">Màu đã chọn</span>
-                            <span class="color-selected-count" id="color-selected-count">0/3</span>
+                            <span class="color-selected-count" id="color-selected-count">0/2</span>
                             <button class="btn-clear-colors" id="btn-clear-colors" onclick="clearSelectedColors()" style="display:none">Xóa hết</button>
                         </div>
                         <div class="color-selected-dots" id="color-selected-dots">
