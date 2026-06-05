@@ -22,7 +22,7 @@ function adjColorCount(d) {
 // Color Picker — Emotion Cards
 // ══════════════════════════════════════════════════════════════════════════
 
-
+function initColorPicker() {
     // Reset color state on every page render
     _selectedColors = [];
 
