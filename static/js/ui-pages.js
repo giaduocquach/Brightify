@@ -408,7 +408,7 @@ const pages = {
 
         `;
 
-        initColorPicker();
+
         initImageUpload();
         // V23: initJourneyPickers() removed — journey tab merged into colour.
     },

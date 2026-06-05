@@ -110,18 +110,6 @@ async getRandomSongs(count = 10) {
         return this._get('/api/image/status');
     },
 
-    // ── Emotion Journey ─────────────────────────────────────────────────
-    async getEmotionJourney(startValence, startArousal, endValence, endArousal, steps = 10, opts = {}) {
-        return this._post('/api/recommend/emotion-journey', {
-            start_valence: startValence,
-            start_arousal: startArousal,
-            end_valence: endValence,
-            end_arousal: endArousal,
-            steps,
-            start_track_id: opts.startTrackId ?? null,
-        });
-    },
-
 
         // ── Internal ─────────────────────────────────────────────────────────
     async _get(url) {

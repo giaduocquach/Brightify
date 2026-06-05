@@ -23,53 +23,6 @@ function adjColorCount(d) {
 // ══════════════════════════════════════════════════════════════════════════
 
 
-// ══════════════════════════════════════════════════════════════════════════
-// Emotion Journey — Quick Mood Cards (v2)
-// ══════════════════════════════════════════════════════════════════════════
-
-function setJourneyFromQuickMood(btn) {
-    const v = parseFloat(btn.dataset.v);
-    const a = parseFloat(btn.dataset.a);
-
-    // Determine: if no start yet, set start; if start set but no end, set end
-    // If both set, reset and set as new start
-    if (!_journeyStart) {
-        _journeyStart = { v, a };
-        btn.classList.add('jqm-selected-start');
-    } else if (!_journeyEnd) {
-        _journeyEnd = { v, a };
-        btn.classList.add('jqm-selected-end');
-    } else {
-        // Reset both
-        document.querySelectorAll('.jqm-card').forEach(c => c.classList.remove('jqm-selected-start', 'jqm-selected-end'));
-        _journeyStart = { v, a };
-        _journeyEnd = null;
-        btn.classList.add('jqm-selected-start');
-    }
-    _updateJourneySummary();
-}
-
-function _updateJourneySummary() {
-    const summary = document.getElementById('journey-summary');
-    if (!summary) return;
-    if (_journeyStart && _journeyEnd) {
-        summary.style.display = 'flex';
-        const fromEl = document.getElementById('journey-summary-from');
-        const toEl = document.getElementById('journey-summary-to');
-        if (fromEl) {
-            const lbl = fromEl.querySelector('.jsv2-label');
-            if (lbl) lbl.textContent = `${_vaToLabel(_journeyStart.v, _journeyStart.a)} (${_journeyStart.v.toFixed(2)}, ${_journeyStart.a.toFixed(2)})`;
-        }
-        if (toEl) {
-            const lbl = toEl.querySelector('.jsv2-label');
-            if (lbl) lbl.textContent = `${_vaToLabel(_journeyEnd.v, _journeyEnd.a)} (${_journeyEnd.v.toFixed(2)}, ${_journeyEnd.a.toFixed(2)})`;
-        }
-    } else {
-        summary.style.display = 'none';
-    }
-}
-
-function initColorPicker() {
     // Reset color state on every page render
     _selectedColors = [];
 
