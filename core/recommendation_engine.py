@@ -743,7 +743,7 @@ class MusicRecommender:
         # (Saari 2016). top_k=10 waypoints across the path achieves this spacing.
         if COLOR_JOURNEY_ENABLED:
             idxs = self._journey_waypoint_sample(
-                per_color_va[0], per_color_va[1], top_k, diversity_penalty)
+                per_color_va[0], per_color_va[1], top_k, diversity_penalty, novelty)
             res = self._build_result_df(idxs)
             if not res.empty and 'original_index' in res.columns:
                 res = res.copy()
@@ -796,7 +796,8 @@ class MusicRecommender:
         return res
 
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
-                                  diversity_penalty: float) -> list[int]:
+                                  diversity_penalty: float,
+                                  novelty=COLOR_NOVELTY_DEFAULT) -> list[int]:
         """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
 
         Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
@@ -826,6 +827,7 @@ class MusicRecommender:
             dv = self.song_va[:, 0] - wp[0]
             da = self.song_va[:, 1] - wp[1]
             scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
+            scores = self._apply_novelty(scores, novelty)   # E8 novelty dial
             scores[excluded] = -1.0
 
             # Mild diversity penalty (cap repeat-artist contribution at 3)
