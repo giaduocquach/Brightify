@@ -269,6 +269,13 @@ MERT_LAYERS = list(range(1, 13))   # all 12 transformer layers; None → use MER
 MERT_EMBEDDINGS_MULTILAYER_FILE = str(DATA_DIR / "mert_embeddings_multilayer.npy")
 MERT_EMBEDDINGS_MULTILAYER_META_FILE = str(DATA_DIR / "mert_metadata_multilayer.json")
 MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
+# Phase 2 (2026-06-08): SimCSE-style self-supervised metric head.
+# MLP 768→384→128 trained with NT-Xent dropout contrastive (Gao et al. EMNLP 2021).
+# Projected 128-dim embeddings have better cosine geometry (less anisotropic).
+# Trained without any human labels — positive pairs = same embedding, different dropout.
+MERT_PROJ_EMBEDDINGS_FILE            = str(DATA_DIR / "mert_proj_embeddings.npy")
+MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE = str(DATA_DIR / "mert_proj_embeddings_multilayer.npy")
+ENABLE_MERT_PROJ = os.environ.get("ENABLE_MERT_PROJ", "False") == "True"  # off until eval confirms
 
 # ============================================================================
 # Pillar B (alt Vietnamese encoders: SimCSE/ViDeBERTa) — REMOVED 2026-06-01.

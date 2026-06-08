@@ -213,6 +213,9 @@ def main() -> int:
     ap.add_argument("--multilayer", action="store_true",
                     help="A/B test: add 'multilayer' config that swaps MERT matrix "
                          "with data/mert_embeddings_multilayer.npy")
+    ap.add_argument("--proj", action="store_true",
+                    help="A/B test: add 'proj' configs using SimCSE metric head "
+                         "projected embeddings (128-dim)")
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -246,18 +249,41 @@ def main() -> int:
             print(f"[intrinsic] WARNING: multilayer file not found: {ml_path}")
             print("  Run: python -m tools.extract_mert_multilayer")
 
+    # Optionally inject SimCSE projected embeddings (128-dim)
+    if args.proj:
+        import config as cfg
+        for proj_key, proj_path in [
+            ("proj_single",    cfg.MERT_PROJ_EMBEDDINGS_FILE),
+            ("proj_multilayer", cfg.MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE),
+        ]:
+            if os.path.exists(proj_path):
+                praw = np.load(proj_path).astype(np.float32)
+                pnrm = np.linalg.norm(praw, axis=1, keepdims=True)
+                pnrm[pnrm == 0] = 1.0
+                configs[proj_key] = [0.0, 0.0, 0.0, 0.15, 0.10, 0.0, 0.0, 0.75]
+                # stash matrix so we can swap it in the loop below
+                configs[f"__proj_matrix_{proj_key}"] = praw / pnrm
+
     results: Dict[str, dict] = {}
     for name, w in configs.items():
         t0 = time.time()
         print(f"[intrinsic] evaluating '{name}'…", flush=True)
-        # Swap MERT matrix for multilayer configs
-        use_ml = ml_matrix is not None and name.startswith("multilayer")
+        # Skip internal __proj_matrix__ stash entries
+        if name.startswith("__"):
+            continue
+        # Swap MERT matrix for multilayer / projected configs
         orig_mert = None
-        if use_ml:
+        swap_matrix = None
+        if ml_matrix is not None and name.startswith("multilayer"):
+            swap_matrix = ml_matrix
+        proj_key = f"__proj_matrix_{name}"
+        if proj_key in configs:
+            swap_matrix = configs[proj_key]
+        if swap_matrix is not None:
             orig_mert = cat.rec.mert_matrix
-            cat.rec.mert_matrix = ml_matrix
+            cat.rec.mert_matrix = swap_matrix
         results[name] = eval_config(cat, seeds, w, args.top_k, args.quiet)
-        if use_ml and orig_mert is not None:
+        if orig_mert is not None:
             cat.rec.mert_matrix = orig_mert
         elapsed = time.time() - t0
         print(f"           done in {elapsed:.1f}s")
@@ -265,7 +291,7 @@ def main() -> int:
     print_table(results, args.top_k)
 
     # Qualitative spot-check: print top-5 recs for 3 seeds × top config
-    best_config = max(CONFIGS.keys(), key=lambda n: (
+    best_config = max((k for k in configs if not k.startswith("__")), key=lambda n: (
         results[n]["tempo_coh"] + results[n]["mood_coh"] + results[n]["self_consist"]
         - results[n]["calib_err"] - results[n]["same_artist"]
     ) if n != "baseline (current)" else -9999)
