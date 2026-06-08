@@ -38,11 +38,9 @@ NOISE_STD = 0.02  # Gaussian noise for self-consistency test
 # Weight configs to compare:
 # [timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert]
 CONFIGS: Dict[str, List[float]] = {
-    "baseline (current)":    [0.0,  0.0,  0.0,  0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
+    "old_baseline":          [0.0,  0.0,  0.0,  0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
+    "current (v2)":          [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
     "mert_only":             [0.0,  0.0,  0.0,  0.0,    0.0,    0.0,    0.0,    1.0   ],
-    "mert_dominant":         [0.0,  0.0,  0.0,  0.10,   0.05,   0.0,    0.0,    0.85  ],
-    "mert_lyrics_balanced":  [0.0,  0.0,  0.0,  0.20,   0.08,   0.0,    0.0,    0.72  ],
-    "mert_lyrics_va":        [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
 }
 
 REPORT_DIR = "var/runtime/backtest/reports"
@@ -208,10 +206,13 @@ def print_table(results: Dict[str, dict], top_k: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n-seeds", type=int, default=N_SEEDS)
-    ap.add_argument("--top-k",   type=int, default=TOP_K)
-    ap.add_argument("--quiet",   action="store_true")
-    ap.add_argument("--save",    action="store_true", help="save results JSON")
+    ap.add_argument("--n-seeds",    type=int, default=N_SEEDS)
+    ap.add_argument("--top-k",      type=int, default=TOP_K)
+    ap.add_argument("--quiet",      action="store_true")
+    ap.add_argument("--save",       action="store_true", help="save results JSON")
+    ap.add_argument("--multilayer", action="store_true",
+                    help="A/B test: add 'multilayer' config that swaps MERT matrix "
+                         "with data/mert_embeddings_multilayer.npy")
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -227,11 +228,37 @@ def main() -> int:
     seeds = _stratified_seeds(df, args.n_seeds, rng)
     print(f"[intrinsic] {len(seeds)} seeds  top_k={args.top_k}")
 
+    # Optionally inject multilayer MERT matrix for A/B comparison
+    configs = dict(CONFIGS)
+    ml_matrix = None
+    if args.multilayer:
+        ml_path = cfg.MERT_EMBEDDINGS_MULTILAYER_FILE
+        if os.path.exists(ml_path):
+            ml_raw = np.load(ml_path).astype(np.float32)
+            norms  = np.linalg.norm(ml_raw, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            ml_matrix = ml_raw / norms
+            print(f"[intrinsic] multilayer embeddings loaded: {ml_matrix.shape}")
+            # Add multilayer variant using same weights as current v2
+            configs["multilayer (v2 weights)"] = [0.0, 0.0, 0.0, 0.15, 0.10, 0.0, 0.0, 0.75]
+            configs["multilayer (mert_only)"]   = [0.0, 0.0, 0.0, 0.0,  0.0,  0.0, 0.0, 1.0]
+        else:
+            print(f"[intrinsic] WARNING: multilayer file not found: {ml_path}")
+            print("  Run: python -m tools.extract_mert_multilayer")
+
     results: Dict[str, dict] = {}
-    for name, w in CONFIGS.items():
+    for name, w in configs.items():
         t0 = time.time()
         print(f"[intrinsic] evaluating '{name}'…", flush=True)
+        # Swap MERT matrix for multilayer configs
+        use_ml = ml_matrix is not None and name.startswith("multilayer")
+        orig_mert = None
+        if use_ml:
+            orig_mert = cat.rec.mert_matrix
+            cat.rec.mert_matrix = ml_matrix
         results[name] = eval_config(cat, seeds, w, args.top_k, args.quiet)
+        if use_ml and orig_mert is not None:
+            cat.rec.mert_matrix = orig_mert
         elapsed = time.time() - t0
         print(f"           done in {elapsed:.1f}s")
 

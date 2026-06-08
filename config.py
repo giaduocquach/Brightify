@@ -258,7 +258,16 @@ ENABLE_MERT = os.environ.get("ENABLE_MERT", "True") == "True"
 MERT_MODEL = "m-a-p/MERT-v1-95M"
 MERT_EMBEDDINGS_FILE = str(DATA_DIR / "mert_embeddings.npy")
 MERT_EMBEDDINGS_META_FILE = str(DATA_DIR / "mert_metadata.json")
-MERT_LAYER = 8           # 0-indexed hidden state layer (of 12) — best for MIR tasks
+MERT_LAYER = 8           # 0-indexed — kept for backward-compat / single-layer ablation
+# Phase 1 (2026-06-08): multi-layer extraction.
+# MERT hidden_states is a tuple of length 13 (input embed + 12 transformer layers).
+# Layer probing (Li et al. 2023): pitch peaks at 0-4, tempo at 3-7, genre/emotion at 6-11.
+# Mean across all 12 transformer layers (indices 1-12) captures the full spectrum while
+# staying 768-dim (mean commutes with time-pool → no shape change, drop-in compatible).
+# arXiv:2604.20847: adjacent layers encode similar structure; distant layers complementary.
+MERT_LAYERS = list(range(1, 13))   # all 12 transformer layers; None → use MERT_LAYER only
+MERT_EMBEDDINGS_MULTILAYER_FILE = str(DATA_DIR / "mert_embeddings_multilayer.npy")
+MERT_EMBEDDINGS_MULTILAYER_META_FILE = str(DATA_DIR / "mert_metadata_multilayer.json")
 MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
 
 # ============================================================================

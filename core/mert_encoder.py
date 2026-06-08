@@ -3,16 +3,30 @@ MERT-v1-95M audio embedding encoder (Li et al. 2023, arXiv 2306.00107).
 
 Extracts 768-dim L2-normalised embeddings from MP3 files by:
   1. Loading audio at 24 kHz (MERT native sample rate)
-  2. Chunking into MERT_CLIP_DURATION-second segments
-  3. Running the model and extracting layer MERT_LAYER hidden states
-  4. Mean-pooling over time → chunk embedding
-  5. Averaging over all chunks → song embedding
-  6. L2-normalising
+  2. Taking two representative 15-second clips per song
+  3. Running the model with output_hidden_states=True
+  4. Pooling hidden states (single layer OR mean across a list of layers — Phase 1)
+  5. Mean-pooling over time → clip embedding
+  6. Averaging over clips → song embedding
+  7. L2-normalising → (768,) float32 unit-norm
+
+Multi-layer mode (layers=list): mean over selected hidden-state layers THEN mean over
+time — mathematically identical to mean over time first (operations commute), so the
+output is still 768-dim and drop-in compatible with the single-layer pipeline.
+
+Literature basis (Phase 1 — arXiv:2604.20847, Li et al. 2023 probing):
+  Lower layers (1-4): timbral / pitch
+  Middle layers (5-8): rhythmic / tempo
+  Upper layers (9-12): genre / emotion / musical semantics
+  Mean across all 12 layers captures the full spectrum.
 
 Usage:
     from core.mert_encoder import get_mert_encoder
     enc = get_mert_encoder()
     emb = enc.extract("music_files/foo.mp3")   # (768,) float32 unit-norm
+    # Multi-layer (explicit):
+    enc_ml = MERTEncoder(layers=list(range(1, 13)))
+    emb_ml = enc_ml.extract("music_files/foo.mp3")
 """
 
 from __future__ import annotations
@@ -37,17 +51,27 @@ def get_mert_encoder() -> "MERTEncoder":
 
 
 class MERTEncoder:
-    """Lazy-initialised singleton wrapper around MERT-v1-95M."""
+    """Lazy-initialised wrapper around MERT-v1-95M.
 
-    def __init__(self) -> None:
+    layers: int  → single hidden-state index (backward-compat, default from config)
+            list → mean across those hidden-state indices (multi-layer, Phase 1)
+            None → read MERT_LAYERS from config (list) or fall back to MERT_LAYER (int)
+    """
+
+    def __init__(self, layers=None) -> None:
         import config as cfg
-        self._model_id = cfg.MERT_MODEL
-        self._layer    = cfg.MERT_LAYER
-        self._clip_dur = cfg.MERT_CLIP_DURATION
-        self._sr       = 24_000
+        self._model_id  = cfg.MERT_MODEL
+        self._clip_dur  = cfg.MERT_CLIP_DURATION
+        self._sr        = 24_000
         self._cache_dir = cfg.HF_CACHE_DIR
-        self._model    = None
+        self._model     = None
         self._processor = None
+
+        if layers is None:
+            ml = getattr(cfg, "MERT_LAYERS", None)
+            self._layers = ml if ml is not None else cfg.MERT_LAYER
+        else:
+            self._layers = layers
 
     def _load(self) -> None:
         if self._model is not None:
@@ -125,9 +149,21 @@ class MERTEncoder:
                 )
                 inputs = {k: v.to(self._device) for k, v in inputs.items()}
                 out = self._model(**inputs, output_hidden_states=True)
-                # hidden_states: tuple of (1, T, 768) tensors, length = num_layers + 1
-                h = out.hidden_states[self._layer]   # (1, T, 768)
-                emb = h.mean(dim=1).squeeze(0).cpu().numpy()  # (768,)
+                # hidden_states: tuple of (1, T, 768) tensors, length = 13
+                # (input embedding at index 0 + 12 transformer layers at 1-12)
+                layers = self._layers
+                if isinstance(layers, int):
+                    # Single-layer (backward-compat)
+                    h = out.hidden_states[layers]        # (1, T, 768)
+                    emb = h.mean(dim=1).squeeze(0).cpu().numpy()  # (768,)
+                else:
+                    # Multi-layer: stack → (L, 1, T, 768), mean over L then T
+                    # Mean(layers) then Mean(time) == Mean(time) then Mean(layers)
+                    # — operations commute, result is (768,).
+                    stacked = torch.stack(
+                        [out.hidden_states[i] for i in layers], dim=0
+                    )                                    # (L, 1, T, 768)
+                    emb = stacked.mean(dim=0).mean(dim=1).squeeze(0).cpu().numpy()
                 chunk_embs.append(emb)
 
         if not chunk_embs:
