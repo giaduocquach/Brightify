@@ -1,29 +1,40 @@
 """
-Phase 2 — Self-supervised metric head on frozen MERT embeddings.
+Phase 2b — Self-supervised metric head on frozen MERT embeddings with V-A preservation.
 
-Method: SimCSE-style unsupervised contrastive learning (Gao et al. EMNLP 2021).
-  - Frozen MERT embeddings (768-dim) are the backbone — no audio re-processing.
-  - A shallow MLP head (768→384→128, ReLU+Dropout between layers) is trained.
-  - Positive pairs: same embedding passed through head TWICE with different
-    dropout masks — dropout acts as minimal stochastic augmentation.
-  - Negatives: all other songs in the batch (in-batch negatives).
-  - Loss: NT-Xent (InfoNCE) with temperature τ=0.05.
-  - Optional hard negatives: down-weight same-artist pairs in the loss
-    (Flexer 2016: artist identity is the dominant confound in music similarity).
+Method: SimCSE contrastive (Gao et al. EMNLP 2021) + V-A mood preservation (Phase 2b).
+
+Loss = NT-Xent + λ_va × KL(p_VA ‖ q_proj)
+
+  NT-Xent (unchanged from Phase 2):
+    Positive = same embedding, two dropout masks. In-batch negatives.
+    Same-artist pairs excluded from denominator (Flexer 2016).
+
+  V-A Preservation loss (Phase 2b — fixes MoodCoherence drop):
+    For each batch, compute V-A similarity distribution p_VA using Gaussian RBF
+    on the per-song valence/arousal coordinates from RELABELED_EMOTIONS_FILE.
+    Compute cosine similarity distribution q_proj in the projected space.
+    KL(p_VA ‖ q_proj): projected space must reproduce the relative mood ordering
+    from the V-A space — without forcing exact values (unlike MSE).
+    This is analogous to knowledge distillation: V-A is the teacher,
+    projected space is the student.
+
+    Why KL not MSE: MSE forces exact match → collapses acoustic diversity.
+    KL is soft: as long as nearest-VA neighbours are also nearest in proj,
+    loss is low regardless of absolute scale. Preserves mood ranking without
+    sacrificing timbral/rhythmic structure learnt by NT-Xent.
 
 Architecture (MERIT-style, arXiv:2605.27346):
   Linear(768→384) → ReLU → Dropout(p) → Linear(384→128) → L2-norm
 
 Output:
-  data/mert_proj_embeddings.npy        (N, 128) float32, L2-normalised
-  data/mert_proj_metadata.json         training stats
-
-The projected matrix is drop-in compatible with recommendation_engine.py
-(just a different mert_matrix with dim=128 instead of 768).
+  data/mert_proj_embeddings.npy / _multilayer.npy   (N, 128) L2-normalised
+  data/mert_proj_metadata.npy / _multilayer.json    training stats
 
 Usage:
-    python -m tools.train_mert_head [--epochs 50] [--batch 256] [--lr 3e-4]
-    python -m tools.train_mert_head --embeddings data/mert_embeddings_multilayer.npy
+    # Phase 2b (default): NT-Xent + VA preservation
+    python -m tools.train_mert_head --multilayer --artist-neg
+    # Ablation: NT-Xent only (Phase 2 without VA)
+    python -m tools.train_mert_head --multilayer --artist-neg --va-lambda 0
 """
 from __future__ import annotations
 
@@ -110,6 +121,65 @@ def nt_xent_loss(z1, z2, temp: float = 0.05, artist_ids=None):
     return loss
 
 
+# ── V-A Preservation loss (Phase 2b) ─────────────────────────────────────────
+
+def va_preservation_loss(z: "torch.Tensor", va: "torch.Tensor",
+                         temp_va: float = 0.20) -> "torch.Tensor":
+    """KL(p_VA ‖ q_proj): keep projected space consistent with V-A mood ordering.
+
+    For each anchor i in the batch:
+      p_VA[i, j]  = softmax(-d_VA(i,j) / temp_va)   — V-A teacher distribution
+      q_proj[i,j] = softmax(cosine(z_i, z_j) / temp_va) — proj student distribution
+    Minimising KL(p_VA ‖ q_proj) makes q_proj reproduce p_VA's shape:
+    songs close in mood (V-A) should also be close in proj space.
+
+    temp_va: lower = sharper focus on nearest VA neighbours (default 0.20).
+    Diagonal (self) excluded via -inf mask before softmax.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    B = z.shape[0]
+    eye = torch.eye(B, dtype=torch.bool, device=z.device)
+
+    # V-A pairwise distance → similarity
+    diff = va.unsqueeze(0) - va.unsqueeze(1)          # (B, B, 2)
+    va_dist = diff.pow(2).sum(-1).sqrt()              # (B, B) Euclidean
+    va_logit = (-va_dist / temp_va).masked_fill(eye, -1e9)
+    p = F.softmax(va_logit, dim=1)                    # target: (B, B)
+
+    # Projected cosine similarity
+    proj_logit = torch.mm(z, z.t()) / temp_va
+    proj_logit = proj_logit.masked_fill(eye, -1e9)
+    log_q = F.log_softmax(proj_logit, dim=1)          # (B, B) log-probs
+
+    # KL(p ‖ q) = Σ p * (log p − log q); F.kl_div(log_q, p) = Σ p*(log p − log_q)
+    return F.kl_div(log_q, p, reduction="batchmean")
+
+
+def _load_song_va(n_songs: int) -> "np.ndarray | None":
+    """Load per-song V-A from RELABELED_EMOTIONS_FILE (track_id keyed).
+
+    Returns (N, 2) float32 [valence, arousal] or None if unavailable.
+    """
+    import json
+    import pandas as pd
+    try:
+        with open(cfg.RELABELED_EMOTIONS_FILE) as fh:
+            emo = json.load(fh)
+        df = pd.read_csv(cfg.PROCESSED_FILE, usecols=["track_id"])
+        va = np.full((n_songs, 2), 0.5, dtype=np.float32)
+        for i, tid in enumerate(df["track_id"].astype(str)):
+            entry = emo.get(tid)
+            if isinstance(entry, dict):
+                va[i, 0] = float(entry.get("valence", 0.5))
+                va[i, 1] = float(entry.get("arousal", 0.5))
+        return va
+    except Exception as e:
+        print(f"[head] WARNING: could not load song_va: {e} — VA loss disabled")
+        return None
+
+
 # ── Training loop ─────────────────────────────────────────────────────────────
 
 def train(
@@ -121,6 +191,8 @@ def train(
     out_dim: int = 128,
     dropout: float = 0.15,
     temp: float = 0.05,
+    temp_va: float = 0.20,
+    va_lambda: float = 0.30,
     epochs: int = 50,
     batch_size: int = 256,
     lr: float = 3e-4,
@@ -143,6 +215,18 @@ def train(
         if verbose:
             print(f"[head] auto in_dim={in_dim} from embedding shape")
     emb_t = torch.from_numpy(raw).to(device)   # (N, in_dim) — frozen
+
+    # V-A coordinates for mood preservation loss (Phase 2b)
+    song_va_arr = None
+    va_t = None
+    if va_lambda > 0:
+        song_va_arr = _load_song_va(N)
+        if song_va_arr is not None:
+            va_t = torch.from_numpy(song_va_arr).to(device)  # (N, 2)
+            if verbose:
+                print(f"[head] VA preservation: λ={va_lambda}  τ_va={temp_va}")
+        else:
+            va_lambda = 0.0   # disable gracefully if load failed
 
     # Optional artist IDs for hard-negative suppression
     artist_ids_arr = None
@@ -168,10 +252,12 @@ def train(
     best_state = None
 
     if verbose:
+        va_str = f"  VA-loss: λ={va_lambda} τ_va={temp_va}" if va_lambda > 0 else "  VA-loss: disabled"
         print(f"[head] Training: epochs={epochs} batch={batch_size} lr={lr} "
               f"τ={temp} dropout={dropout}")
         print(f"  Architecture: {in_dim}→{hidden}→{out_dim} (L2-norm output)")
         print(f"  Songs: {N}  batches/epoch: {N // batch_size + 1}")
+        print(va_str)
 
     t0 = time.time()
     for ep in range(1, epochs + 1):
@@ -198,6 +284,14 @@ def train(
                 )
 
             loss = nt_xent_loss(z1, z2, temp=temp, artist_ids=a_ids)
+
+            # Phase 2b: V-A preservation — KL(p_VA ‖ q_proj)
+            # Use mean of z1/z2 (averaged dropout views) so VA loss isn't noisy.
+            if va_lambda > 0 and va_t is not None:
+                z_mean = _l2_norm((z1 + z2) * 0.5)
+                va_batch = va_t[batch_idx]
+                loss = loss + va_lambda * va_preservation_loss(z_mean, va_batch, temp_va)
+
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -245,12 +339,14 @@ def train(
         "source_embeddings": emb_path,
         "in_dim": in_dim, "hidden": hidden, "out_dim": out_dim,
         "dropout": dropout, "temp": temp,
+        "va_lambda": va_lambda, "temp_va": temp_va,
         "epochs": epochs, "batch_size": batch_size, "lr": lr,
         "best_loss": round(best_loss, 6),
         "n_songs": N,
         "elapsed_s": round(elapsed_total, 1),
-        "method": "SimCSE-dropout unsupervised contrastive (Gao et al. EMNLP 2021)",
+        "method": "SimCSE-dropout + VA-preservation KL (Phase 2b, 2026-06-08)",
         "artist_hard_neg": artist_col is not None,
+        "va_preservation": va_lambda > 0 and song_va_arr is not None,
     }
     with open(out_meta, "w") as fh:
         json.dump(meta, fh, indent=2)
@@ -278,6 +374,10 @@ def main(argv=None) -> int:
     ap.add_argument("--out-dim",    type=int,   default=128)
     ap.add_argument("--artist-neg", action="store_true",
                     help="Suppress same-artist pairs as hard negatives")
+    ap.add_argument("--va-lambda", type=float, default=0.30,
+                    help="Weight of V-A mood preservation KL loss (0=disable, default 0.30)")
+    ap.add_argument("--temp-va",   type=float, default=0.20,
+                    help="Temperature for V-A softmax (lower=focus on nearest mood neighbours)")
     args = ap.parse_args(argv)
 
     os.chdir(str(PROJECT_ROOT))
@@ -309,6 +409,7 @@ def main(argv=None) -> int:
         emb_path=src, out_npy=out_npy, out_meta=out_meta,
         hidden=args.hidden, out_dim=args.out_dim,
         dropout=args.dropout, temp=args.temp,
+        temp_va=args.temp_va, va_lambda=args.va_lambda,
         epochs=args.epochs, batch_size=args.batch, lr=args.lr,
         artist_col=artist_col,
     )

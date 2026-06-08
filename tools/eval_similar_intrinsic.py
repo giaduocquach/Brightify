@@ -41,6 +41,9 @@ CONFIGS: Dict[str, List[float]] = {
     "old_baseline":          [0.0,  0.0,  0.0,  0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
     "current (v2)":          [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
     "mert_only":             [0.0,  0.0,  0.0,  0.0,    0.0,    0.0,    0.0,    1.0   ],
+    # Phase 2b candidate: proj head with VA-compensated weights
+    # Higher VA (0.40) compensates for mood info lost in 128-dim projection.
+    "proj_ml_va_w50":        [0.0,  0.0,  0.0,  0.10,   0.40,   0.0,    0.0,    0.50  ],
 }
 
 REPORT_DIR = "var/runtime/backtest/reports"
@@ -254,8 +257,9 @@ def main() -> int:
     # Optionally inject SimCSE projected embeddings (128-dim)
     if args.proj:
         for proj_key, proj_path in [
-            ("proj_single",    cfg.MERT_PROJ_EMBEDDINGS_FILE),
-            ("proj_multilayer", cfg.MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE),
+            ("proj_single",        cfg.MERT_PROJ_EMBEDDINGS_FILE),
+            ("proj_ml_nova",       "data/mert_proj_embeddings_multilayer_nova.npy"),
+            ("proj_ml_va",         cfg.MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE),
         ]:
             if os.path.exists(proj_path):
                 praw = np.load(proj_path).astype(np.float32)
