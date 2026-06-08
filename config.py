@@ -272,6 +272,14 @@ MERT_LAYERS = list(range(1, 13))   # all 12 transformer layers; None → use MER
 MERT_EMBEDDINGS_MULTILAYER_FILE = str(DATA_DIR / "mert_embeddings_multilayer.npy")
 MERT_EMBEDDINGS_MULTILAYER_META_FILE = str(DATA_DIR / "mert_metadata_multilayer.json")
 MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
+# Phase 3 (2026-06-08): MuQ-large backbone (SOTA 2025, arXiv:2501.01108).
+# MuQ-large: 12-layer transformer, 1024-dim (vs MERT-95M 768-dim).
+# MARBLE benchmark avg 77.0 — outperforms MERT on all MIR tasks.
+# Extraction: mean all 13 hidden states + time-pool → (N, 1024) L2-norm.
+# Switch production: set MERT_EMBEDDINGS_FILE = MUQ_EMBEDDINGS_FILE after eval.
+MUQ_MODEL_ID          = "OpenMuQ/MuQ-large-msd-iter"
+MUQ_EMBEDDINGS_FILE   = str(DATA_DIR / "muq_embeddings.npy")
+MUQ_METADATA_FILE     = str(DATA_DIR / "muq_metadata.json")
 # Phase 2 (2026-06-08): SimCSE-style self-supervised metric head.
 # MLP 768→384→128 trained with NT-Xent dropout contrastive (Gao et al. EMNLP 2021).
 # Projected 128-dim embeddings have better cosine geometry (less anisotropic).

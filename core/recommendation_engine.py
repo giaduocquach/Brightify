@@ -143,14 +143,14 @@ class MusicRecommender:
         if ENABLE_MERT and os.path.exists(MERT_EMBEDDINGS_FILE):
             try:
                 mert_raw = np.load(MERT_EMBEDDINGS_FILE)
-                if mert_raw.shape[0] == self.n_songs and mert_raw.shape[1] == 768:
+                if mert_raw.shape[0] == self.n_songs and mert_raw.ndim == 2 and mert_raw.shape[1] > 0:
                     norms = np.linalg.norm(mert_raw, axis=1, keepdims=True)
                     norms[norms == 0] = 1
                     self.mert_matrix = (mert_raw / norms).astype(np.float32)
                     logger.info(f"[MERT] Loaded {self.mert_matrix.shape} embeddings")
                 else:
                     logger.warning(
-                        f"[MERT] Shape mismatch {mert_raw.shape} vs ({self.n_songs}, 768) — disabled"
+                        f"[MERT] Shape mismatch {mert_raw.shape} — expected ({self.n_songs}, D) — disabled"
                     )
             except Exception as e:
                 logger.warning(f"[MERT] Load failed: {e} — disabled")
