@@ -116,32 +116,31 @@ WEIGHTS_MOOD_QUERY = [0.50, 0.30, 0.20]   # User selects mood
 WEIGHTS_SONG_QUERY = [0.40, 0.40, 0.20]   # Similar song search
 WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search
 
-# recommend_by_song fusion weights (Laurier et al. 2009 adaptive fusion).
-# Kept in config so ablation can zero out a signal and the optimizer can search.
+# recommend_by_song fusion weights.
+# Signal layout (8-dim, MERT path): [timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert]
 #
-# 7-signal (MERT disabled):
-#   with_lyrics: timbral, rhythmic, tonal, lyrics, va, emotion, mood
-#   audio_only:  timbral, rhythmic, tonal, va, emotion, mood
-# 8-signal (MERT enabled, ENABLE_MERT=True):
-#   with_lyrics: timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert
-#   audio_only:  timbral, rhythmic, tonal, va, emotion, mood, mert
+# DESIGN (2026-06-08, evidence-based rewrite):
+# Literature: acoustic similarity > textual similarity for perceived music similarity
+#   (Berenzweig & Ellis 2003; arXiv:2604.23077; arXiv:2601.19109).
+# Active signals: mert (audio backbone), lyrics (genre/topic cue), va (mood alignment).
+# Zeroed signals:
+#   timbral/rhythmic/tonal (0,1,2) — Essentia scalars degenerate (project_arousal_miscalibration)
+#   emotion (5) — redundant: color_hex is synthesised from song's own V-A/tempo/mode,
+#                  so color→emotion is a noisy re-encoding of V-A already captured by signal 4.
+#   mood (6)    — one-hot same-label bonus (~3%), no discriminating power after ablation.
+# Intrinsic eval (tools/eval_similar_intrinsic.py, n=60 seeds, 2026-06-08):
+#   mert_lyrics_va wins on 4/9 directional metrics vs baseline:
+#   MoodCoherence +0.019, SelfConsistency +0.008, Symmetry +0.038, SameArtist@K -0.007.
+#   mert_only collapses MoodCoherence (-0.193): V-A signal is essential for mood alignment.
 RECO_SONG_WEIGHTS = {
-    # E1d (2026-05-30): audio_only removed — all songs have lyrics (data contract).
-    "with_lyrics": [0.124683, 0.189409, 0.044438, 0.494559, 0.012768, 0.078309, 0.055834],
+    # 7-signal fallback (MERT disabled) — same active-signal logic, no mert term.
+    "with_lyrics": [0.0, 0.0, 0.0, 0.20, 0.10, 0.0, 0.0],
 }
 
-# 8-signal weights when ENABLE_MERT=True (Li et al. 2023 — reduce timbral/rhythmic
-# because MERT already captures those sub-spaces via RVQ+CQT dual teacher).
-# Σ = 1.00 in both variants.
+# 8-signal weights (ENABLE_MERT=True — production path).
+# Σ = 1.00. Breakdown: MERT 75% (audio), lyrics 15% (genre cue), V-A 10% (mood).
 RECO_SONG_WEIGHTS_MERT = {
-    # 8-signal (timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert).
-    # E1/E1b CI-confirmed optimal weights (2026-05-30).
-    # E1d: audio_only removed — all songs have lyrics (data contract).
-    # E-AUDIO-CLEAN (2026-06-01): dropped timbral/rhythmic/tonal (Essentia scalars are
-    # degenerate — project_arousal_miscalibration). Re-optimized 5 signals; paired
-    # cluster-bootstrap on 1050 editorial queries: NDCG@10 0.0999→0.1052, Δ+0.0046
-    # CI95[+0.0015,+0.0070] (entirely positive). MERT(0.335)+lyrics(0.499) carry audio+text.
-    "with_lyrics": [0.0, 0.0, 0.0, 0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
+    "with_lyrics": [0.0, 0.0, 0.0, 0.15, 0.10, 0.0, 0.0, 0.75],
 }
 
 # ============================================================================

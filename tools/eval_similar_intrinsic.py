@@ -1,0 +1,273 @@
+"""Human-free intrinsic evaluation for recommend_by_song.
+
+Measures property metrics (no ground-truth labels needed) across several
+weight configurations and reports Δ vs baseline.
+
+Metrics (all human-free):
+  tempo_coherence   — recs have similar BPM to each other (high = good)
+  mood_coherence    — recs cluster in V-A space (high = good)
+  ild_audio         — mean pairwise diversity in audio space (balance)
+  ild_lyrics        — mean pairwise diversity in lyrics space (balance)
+  ild_va            — mean pairwise diversity in V-A space
+  calibration_err   — KL(seed_emotion ‖ recs_emotion) (low = good)
+  same_artist@K     — fraction same-artist in top-K (low = good)
+  symmetry          — Jaccard A→B / B→A overlap (high = good)
+  self_consistency  — Jaccard(nn(seed), nn(seed+noise)) in MERT space (high = good)
+  coverage          — fraction of catalog surfaced (global, high = good)
+  artist_gini       — Gini of artist exposure (global, low = good)
+
+Usage:
+    python -m tools.eval_similar_intrinsic [--n-seeds N] [--top-k K] [--quiet]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from typing import Dict, List, Sequence
+
+import numpy as np
+
+TOP_K    = 10
+N_SEEDS  = 80     # stratified over fused_emotion
+SEED_RNG = 42
+NOISE_STD = 0.02  # Gaussian noise for self-consistency test
+
+# Weight configs to compare:
+# [timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert]
+CONFIGS: Dict[str, List[float]] = {
+    "baseline (current)":    [0.0,  0.0,  0.0,  0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
+    "mert_only":             [0.0,  0.0,  0.0,  0.0,    0.0,    0.0,    0.0,    1.0   ],
+    "mert_dominant":         [0.0,  0.0,  0.0,  0.10,   0.05,   0.0,    0.0,    0.85  ],
+    "mert_lyrics_balanced":  [0.0,  0.0,  0.0,  0.20,   0.08,   0.0,    0.0,    0.72  ],
+    "mert_lyrics_va":        [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
+}
+
+REPORT_DIR = "var/runtime/backtest/reports"
+
+
+def _stratified_seeds(df, n: int, rng: np.random.Generator) -> List[int]:
+    if "fused_emotion" not in df.columns:
+        return rng.choice(len(df), size=min(n, len(df)), replace=False).tolist()
+    groups = df.groupby("fused_emotion").indices
+    per_g  = max(1, n // len(groups))
+    seeds: List[int] = []
+    for idxs in groups.values():
+        seeds.extend(int(i) for i in rng.choice(idxs, size=min(per_g, len(idxs)), replace=False))
+    remaining = [i for i in range(len(df)) if i not in set(seeds)]
+    if len(seeds) < n and remaining:
+        seeds.extend(int(i) for i in rng.choice(remaining, size=min(n - len(seeds), len(remaining)), replace=False))
+    return seeds[:n]
+
+
+def _self_consistency(cat, seed_idx: int, w: list, top_k: int, rng: np.random.Generator) -> float:
+    """Jaccard overlap between nn(seed) and nn(seed + small MERT noise).
+
+    Higher = more stable / meaningful similarity function in audio space.
+    Falls back to 0.0 if MERT matrix not available.
+    """
+    if cat.rec.mert_matrix is None:
+        return 0.0
+    recs_a = set(cat.recommend_by_song(seed_idx, top_k=top_k, weights=w))
+    if not recs_a:
+        return 0.0
+    # Add Gaussian noise to seed MERT embedding, re-normalise, re-rank
+    orig = cat.rec.mert_matrix[seed_idx].astype(float).copy()
+    noise = rng.normal(0, NOISE_STD, size=orig.shape)
+    noisy = orig + noise
+    nrm = float(np.linalg.norm(noisy))
+    if nrm < 1e-9:
+        return 0.0
+    noisy /= nrm
+    # Cosine similarity against MERT matrix → top-K excluding seed
+    sims = (cat.rec.mert_matrix.astype(float) @ noisy)
+    sims[seed_idx] = -2.0
+    top_noisy = set(int(i) for i in np.argsort(sims)[::-1][:top_k])
+    inter = len(recs_a & top_noisy)
+    union = len(recs_a | top_noisy)
+    return inter / union if union > 0 else 0.0
+
+
+def eval_config(cat, seeds: List[int], w: list, top_k: int, quiet: bool) -> dict:
+    from tools.backtest_v2.metrics.property import (
+        ild_audio, ild_lyrics, ild_va,
+        mood_coherence, tempo_coherence,
+        calibration_error, serendipity_proxy,
+        same_artist_at_k, similar_song_symmetry,
+        catalog_coverage, artist_gini,
+    )
+
+    rng = np.random.default_rng(SEED_RNG)
+    per_query: Dict[str, List[float]] = {
+        k: [] for k in ["tempo_coh", "mood_coh", "ild_audio", "ild_lyrics",
+                         "ild_va", "calib_err", "serendipity",
+                         "same_artist", "self_consist"]
+    }
+    all_recs: List[List[int]] = []
+
+    for seed_idx in seeds:
+        recs = cat.recommend_by_song(seed_idx, top_k=top_k, weights=w)
+        if not recs:
+            continue
+        all_recs.append(recs)
+        per_query["tempo_coh"].append(tempo_coherence(recs, cat))
+        per_query["mood_coh"].append(mood_coherence(recs, cat))
+        per_query["ild_audio"].append(ild_audio(recs, cat))
+        per_query["ild_lyrics"].append(ild_lyrics(recs, cat))
+        per_query["ild_va"].append(ild_va(recs, cat))
+        per_query["calib_err"].append(calibration_error(recs, seed_idx, cat))
+        per_query["serendipity"].append(serendipity_proxy(recs, seed_idx, cat))
+        per_query["same_artist"].append(same_artist_at_k(recs, seed_idx, cat))
+        per_query["self_consist"].append(_self_consistency(cat, seed_idx, w, top_k, rng))
+
+    # Symmetry (needs recommend_fn)
+    def _rec_fn(idx, k):
+        return cat.recommend_by_song(idx, top_k=k, weights=w)
+
+    sym = similar_song_symmetry(_rec_fn, seeds, top_k)
+
+    # Global metrics
+    cov  = catalog_coverage(all_recs, cat.n)
+    gini = artist_gini(all_recs, cat)
+
+    result = {k: float(np.mean(v)) if v else 0.0 for k, v in per_query.items()}
+    result["symmetry"]  = float(sym)
+    result["coverage"]  = float(cov)
+    result["artist_gini"] = float(gini)
+    result["n_seeds"]   = len(all_recs)
+    return result
+
+
+def print_table(results: Dict[str, dict], top_k: int) -> None:
+    METRICS = [
+        # (key, label, higher_is_better)
+        ("tempo_coh",   "TempoCoherence ", True),
+        ("mood_coh",    "MoodCoherence  ", True),
+        ("self_consist","SelfConsistency", True),
+        ("symmetry",    "Symmetry       ", True),
+        ("coverage",    "Coverage       ", True),
+        ("ild_audio",   "ILD_audio      ", None),  # balance
+        ("ild_lyrics",  "ILD_lyrics     ", None),
+        ("ild_va",      "ILD_va         ", None),
+        ("calib_err",   "CalibError     ", False),
+        ("same_artist", "SameArtist@K   ", False),
+        ("serendipity", "Serendipity    ", None),
+        ("artist_gini", "ArtistGini     ", False),
+    ]
+
+    names = list(results.keys())
+    base_name = names[0]
+    base = results[base_name]
+
+    col_w = 14
+    header = f"{'Metric':<18}" + "".join(f"{n[:col_w]:>{col_w}}" for n in names)
+    print("\n" + "=" * (18 + col_w * len(names)))
+    print(f"  INTRINSIC EVAL  top_k={top_k}  n_seeds={base['n_seeds']}")
+    print("=" * (18 + col_w * len(names)))
+    print(header)
+    print("-" * (18 + col_w * len(names)))
+
+    for key, label, hib in METRICS:
+        row = f"{label:<18}"
+        base_v = base.get(key, 0.0)
+        for name in names:
+            v = results[name].get(key, 0.0)
+            delta = v - base_v
+            if name == base_name:
+                row += f"{v:>{col_w}.4f}"
+            else:
+                sign = "+" if delta >= 0 else ""
+                marker = ""
+                if hib is True  and delta >  0.005: marker = "✓"
+                if hib is True  and delta < -0.005: marker = "✗"
+                if hib is False and delta < -0.005: marker = "✓"
+                if hib is False and delta >  0.005: marker = "✗"
+                row += f"{v:>9.4f}{sign}{delta:.3f}{marker:>2}"
+        print(row)
+
+    print("-" * (18 + col_w * len(names)))
+    # Winner row: count ✓ per config
+    wins = {n: 0 for n in names}
+    for key, _, hib in METRICS:
+        if hib is None:
+            continue
+        base_v = base.get(key, 0.0)
+        best = None
+        for n in names[1:]:
+            v = results[n].get(key, 0.0)
+            d = v - base_v
+            if hib is True  and d > 0.005: wins[n] += 1
+            if hib is False and d < -0.005: wins[n] += 1
+    print(f"{'Improvements vs base':<18}" + "".join(
+        f"{'—':>{col_w}}" if n == base_name else f"{wins[n]:>{col_w}}" for n in names
+    ))
+    print("=" * (18 + col_w * len(names)) + "\n")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--n-seeds", type=int, default=N_SEEDS)
+    ap.add_argument("--top-k",   type=int, default=TOP_K)
+    ap.add_argument("--quiet",   action="store_true")
+    ap.add_argument("--save",    action="store_true", help="save results JSON")
+    args = ap.parse_args()
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(project_root)
+    sys.path.insert(0, project_root)
+
+    from tools.backtest_v2.catalog import Catalog
+    print("[intrinsic] Loading catalog…")
+    cat = Catalog.load()
+    df  = cat.df
+
+    rng   = np.random.default_rng(SEED_RNG)
+    seeds = _stratified_seeds(df, args.n_seeds, rng)
+    print(f"[intrinsic] {len(seeds)} seeds  top_k={args.top_k}")
+
+    results: Dict[str, dict] = {}
+    for name, w in CONFIGS.items():
+        t0 = time.time()
+        print(f"[intrinsic] evaluating '{name}'…", flush=True)
+        results[name] = eval_config(cat, seeds, w, args.top_k, args.quiet)
+        elapsed = time.time() - t0
+        print(f"           done in {elapsed:.1f}s")
+
+    print_table(results, args.top_k)
+
+    # Qualitative spot-check: print top-5 recs for 3 seeds × top config
+    best_config = max(CONFIGS.keys(), key=lambda n: (
+        results[n]["tempo_coh"] + results[n]["mood_coh"] + results[n]["self_consist"]
+        - results[n]["calib_err"] - results[n]["same_artist"]
+    ) if n != "baseline (current)" else -9999)
+    print(f"Top config by composite score: '{best_config}'")
+    print("\n--- Spot-check: top-5 recs for 3 seeds ---")
+    for seed_idx in seeds[:3]:
+        seed_name = str(df.iloc[seed_idx].get("track_name", seed_idx))
+        seed_tempo = float(cat.tempo[seed_idx])
+        seed_mood  = str(df.iloc[seed_idx].get("fused_emotion", "?"))
+        print(f"\nSeed: '{seed_name}' | tempo={seed_tempo:.0f} | mood={seed_mood}")
+        for cname in ["baseline (current)", best_config]:
+            w = CONFIGS[cname]
+            recs = cat.recommend_by_song(seed_idx, top_k=5, weights=w)
+            print(f"  [{cname}]")
+            for r in recs:
+                row = df.iloc[r]
+                print(f"    {str(row.get('track_name',''))[:32]:32s} "
+                      f"bpm={cat.tempo[r]:5.0f}  mood={str(row.get('fused_emotion','?'))[:10]:10s}  "
+                      f"artist={str(row.get(cat.artist_col,'?') if cat.artist_col else '?')[:20]}")
+
+    if args.save:
+        os.makedirs(REPORT_DIR, exist_ok=True)
+        out_path = os.path.join(REPORT_DIR, "intrinsic_eval.json")
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump({"configs": CONFIGS, "results": results}, fh, indent=2, ensure_ascii=False)
+        print(f"\n[intrinsic] results saved → {out_path}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

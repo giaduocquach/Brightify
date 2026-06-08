@@ -1,7 +1,7 @@
 # Brightify — Copilot Instructions
 
 ## Project Overview
-Brightify is a Vietnamese AI-powered music streaming platform that uses multimodal signals (audio features, lyrics NLP, color psychology, image analysis) to recommend songs. It serves ~4,300+ Vietnamese songs with a FastAPI backend and vanilla JS frontend.
+Brightify is a Vietnamese AI-powered music streaming platform that uses multimodal signals (audio features, lyrics NLP, color psychology, image analysis) to recommend songs. It serves ~5,100 Vietnamese songs (5,138 in the current processed catalog) with a FastAPI backend and vanilla JS frontend.
 
 ## Tech Stack
 - **Backend**: FastAPI 0.108+, Python 3.10+, Uvicorn

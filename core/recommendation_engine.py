@@ -190,7 +190,10 @@ class MusicRecommender:
         self.song_emotion_vec = np.zeros((self.n_songs, n_emotions))
         self.color_hsl = np.zeros((self.n_songs, 3))
 
-        # Emotion vector from album-art color (kept for recommend_by_colors emotion signal)
+        # Emotion vector from color_hex — NOTE: color_hex is SYNTHESIZED from the song's
+        # own audio V-A/tempo/mode (tools/process_data.apply_color_mapping), NOT extracted
+        # from album art. So this vec is a redundant non-linear re-encoding of V-A.
+        # Kept only as the emotion signal for recommend_by_colors display.
         for idx in range(self.n_songs):
             color = self.colors[idx]
             if pd.isna(color):
@@ -875,7 +878,8 @@ class MusicRecommender:
         va_sim   = np.exp(-(va_dist ** 2) / (2 * 0.20 ** 2))
 
         # === Signal 6: Emotion profile similarity ===
-        # Source: color_to_emotion_probs(album_art_color) — kept despite noisy source.
+        # Source: color_to_emotion_probs(color_hex), where color_hex is SYNTHESIZED from
+        # the song's own audio V-A/tempo/mode (NOT album art) → redundant with V-A signal.
         # E-EMO-RESOURCE 2026-06 tested lexicon.analyze_lyrics() as replacement:
         # REJECTED (editorial Δ=-0.026 CI[-0.032,-0.019], LLM-judge Δ=-0.500).
         # Root cause: lexicon bag-of-words is redundant with PhoBERT (signal 4, w=0.499)
