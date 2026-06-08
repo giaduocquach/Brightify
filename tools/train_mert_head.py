@@ -63,41 +63,50 @@ def _l2_norm(x):
 # ── NT-Xent loss (InfoNCE) ────────────────────────────────────────────────────
 
 def nt_xent_loss(z1, z2, temp: float = 0.05, artist_ids=None):
-    """NT-Xent loss for a batch of (z1[i], z2[i]) positive pairs.
+    """NT-Xent (InfoNCE) loss for SimCSE positive pairs.
 
-    z1, z2: (B, D) L2-normalised
-    Diagonal of sim matrix = positive (same song, different dropout).
-    Off-diagonal = in-batch negatives.
+    z1, z2: (B, D) L2-normalised — same song, two different dropout passes.
+    Positive: z1[i] ↔ z2[i]  (diagonal of the cross-view sim block).
+    Negatives: all other songs in the batch.
 
-    artist_ids (optional): (B,) int tensor; same-artist pairs get their
-    similarity score suppressed (multiplied by 0.3) before softmax,
-    which steers the model away from artist-identity shortcuts.
+    artist_ids (optional, Flexer 2016 artist-filter fix):
+        Same-artist pairs are EXCLUDED from the denominator rather than
+        treated as hard negatives.  Rationale: within-artist variation in a
+        5138-song catalog with 1502 artists means same-artist pairs are
+        "ambiguous" (neither clear positive nor clear negative).  Pushing
+        them apart teaches artist-identity, not musical similarity.
+        Implementation: set same-artist entries to -inf before logsumexp
+        so they contribute zero to the denominator (= ignore, not negative).
     """
     import torch
-    import torch.nn.functional as F
 
     B = z1.shape[0]
-    # Concatenate: first B = z1 views, next B = z2 views
-    z = torch.cat([z1, z2], dim=0)          # (2B, D)
-    sim = torch.mm(z, z.t()) / temp          # (2B, 2B)
+    z  = torch.cat([z1, z2], dim=0)          # (2B, D)
+    sim = torch.mm(z, z.t()) / temp           # (2B, 2B)
 
-    # Suppress self-similarity on diagonal
-    mask_self = torch.eye(2 * B, device=z.device).bool()
-    sim = sim.masked_fill(mask_self, -1e9)
+    # Self-similarity mask (diagonal)
+    eye = torch.eye(2 * B, dtype=torch.bool, device=z.device)
 
-    # Optional: suppress same-artist pairs
+    # Artist-exclusion mask: same-artist off-diagonal entries → ignore
+    exclude = eye.clone()
     if artist_ids is not None:
-        a = torch.cat([artist_ids, artist_ids], dim=0)  # (2B,)
-        same_artist = (a.unsqueeze(0) == a.unsqueeze(1)) & ~mask_self
-        # Scale down same-artist similarities (suppress artist-identity shortcut)
-        sim = sim * torch.where(same_artist, torch.tensor(0.3, device=z.device), torch.tensor(1.0, device=z.device))
+        a = torch.cat([artist_ids, artist_ids], dim=0)        # (2B,)
+        same_artist = (a.unsqueeze(0) == a.unsqueeze(1))       # (2B, 2B)
+        exclude = exclude | (same_artist & ~eye)
 
-    # Positive targets: z1[i] <-> z2[i] (cross-view)
-    labels = torch.cat([
-        torch.arange(B, 2 * B, device=z.device),
-        torch.arange(0, B,     device=z.device),
-    ])
-    loss = F.cross_entropy(sim, labels)
+    # Numerator: positive similarity (z1[i] ↔ z2[i], i.e. index B+i for z1[i])
+    pos_idx_fwd = torch.arange(B, device=z.device)          # z1 rows → z2 cols
+    pos_idx_bwd = torch.arange(B, 2 * B, device=z.device)  # z2 rows → z1 cols
+    pos_sim = torch.cat([
+        sim[pos_idx_fwd, pos_idx_fwd + B],
+        sim[pos_idx_bwd, pos_idx_bwd - B],
+    ])  # (2B,)
+
+    # Denominator: logsumexp over all valid negatives (exclude self + same-artist)
+    sim_denom = sim.masked_fill(exclude, -1e9)
+    log_denom  = torch.logsumexp(sim_denom, dim=1)          # (2B,)
+
+    loss = -(pos_sim - log_denom).mean()
     return loss
 
 
