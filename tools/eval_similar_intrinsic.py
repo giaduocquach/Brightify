@@ -231,6 +231,8 @@ def main() -> int:
     seeds = _stratified_seeds(df, args.n_seeds, rng)
     print(f"[intrinsic] {len(seeds)} seeds  top_k={args.top_k}")
 
+    import config as cfg
+
     # Optionally inject multilayer MERT matrix for A/B comparison
     configs = dict(CONFIGS)
     ml_matrix = None
@@ -251,7 +253,6 @@ def main() -> int:
 
     # Optionally inject SimCSE projected embeddings (128-dim)
     if args.proj:
-        import config as cfg
         for proj_key, proj_path in [
             ("proj_single",    cfg.MERT_PROJ_EMBEDDINGS_FILE),
             ("proj_multilayer", cfg.MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE),
