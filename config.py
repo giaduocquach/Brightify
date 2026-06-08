@@ -256,8 +256,11 @@ COLOR_PALETTE = 'husl'
 # ============================================================================
 ENABLE_MERT = os.environ.get("ENABLE_MERT", "True") == "True"
 MERT_MODEL = "m-a-p/MERT-v1-95M"
-MERT_EMBEDDINGS_FILE = str(DATA_DIR / "mert_embeddings.npy")
-MERT_EMBEDDINGS_META_FILE = str(DATA_DIR / "mert_metadata.json")
+# Phase 1 confirmed 2026-06-08: multilayer (mean 12 layers) wins on 3 intrinsic metrics
+# vs single-layer (MoodCoherence +0.022, Symmetry +0.040, SelfConsistency +0.010).
+# Old single-layer file kept as mert_embeddings_single_layer.npy for ablation.
+MERT_EMBEDDINGS_FILE = str(DATA_DIR / "mert_embeddings_multilayer.npy")
+MERT_EMBEDDINGS_META_FILE = str(DATA_DIR / "mert_metadata_multilayer.json")
 MERT_LAYER = 8           # 0-indexed — kept for backward-compat / single-layer ablation
 # Phase 1 (2026-06-08): multi-layer extraction.
 # MERT hidden_states is a tuple of length 13 (input embed + 12 transformer layers).
