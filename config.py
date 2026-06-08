@@ -5,6 +5,7 @@ Version 7.1
 """
 
 import os
+from pathlib import Path
 
 
 def _read_secret_or_env(name: str, default: str = "") -> str:
@@ -24,10 +25,36 @@ BRIGHTIFY_ADMIN_KEY = _read_secret_or_env("BRIGHTIFY_ADMIN_KEY")
 # ============================================================================
 # File Paths
 # ============================================================================
-INPUT_FILE = 'data/vietnamese_music_complete_dataset_full.csv'
-PROCESSED_FILE = 'data/vietnamese_music_processed_full.csv'
-EMBEDDINGS_FILE = 'data/vietnamese_music_embeddings_full.npy'
-EMBEDDINGS_META_FILE = 'data/embeddings_metadata.json'
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_path_env(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    value = Path(raw)
+    if value.is_absolute():
+        return value
+    return (PROJECT_ROOT / value).resolve()
+
+
+SERVING_ROOT = _resolve_path_env("BRIGHTIFY_SERVING_ROOT", PROJECT_ROOT)
+MEDIA_ROOT = _resolve_path_env("BRIGHTIFY_MEDIA_ROOT", SERVING_ROOT)
+DATA_DIR = _resolve_path_env("BRIGHTIFY_DATA_DIR", SERVING_ROOT / "data")
+CHECKPOINTS_DIR = _resolve_path_env("BRIGHTIFY_CHECKPOINTS_DIR", SERVING_ROOT / "checkpoints")
+MUSIC_DIR = _resolve_path_env("BRIGHTIFY_MUSIC_DIR", MEDIA_ROOT / "music_files")
+ALBUM_ART_DIR = _resolve_path_env("BRIGHTIFY_ALBUM_ART_DIR", MEDIA_ROOT / "album_art")
+ARTIST_IMAGES_DIR = _resolve_path_env("BRIGHTIFY_ARTIST_IMAGES_DIR", MEDIA_ROOT / "artist_images")
+ARCHIVE_ROOT = _resolve_path_env("BRIGHTIFY_ARCHIVE_ROOT", PROJECT_ROOT / "var" / "archive")
+RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" / "runtime")
+
+INPUT_FILE = str(DATA_DIR / "vietnamese_music_complete_dataset_full.csv")
+PROCESSED_FILE = str(DATA_DIR / "vietnamese_music_processed_full.csv")
+EMBEDDINGS_FILE = str(DATA_DIR / "vietnamese_music_embeddings_full.npy")
+EMBEDDINGS_META_FILE = str(DATA_DIR / "embeddings_metadata.json")
+ARTIST_IMAGES_DATA_FILE = str(DATA_DIR / "artist_images.json")
+PHASE1_ARTISTS_FILE = str(CHECKPOINTS_DIR / "phase1_artists.csv")
+CROSSFADE_FEATURES_FILE = str(DATA_DIR / "crossfade_features.json")
 
 # ============================================================================
 # PhoBERT Model Settings
@@ -166,77 +193,24 @@ DIVERSITY_METHOD = os.environ.get("DIVERSITY_METHOD", "mmr")
 DIVERSITY_LAMBDA = 0.7   # MMR λ: relevance weight (0=pure diversity, 1=pure relevance)
 
 # Multimodal Fusion Weights (Research-based - Zhang et al. 2024, Kim et al. 2024)
-# Color-based recommendation with lyrics integration:
-#   - Audio features: 25% (Spotify audio analysis)
-#   - Lyrics semantic: 35% (PhoBERT embeddings) - Improves accuracy by 18%
-#   - Valence-Arousal: 20% (Color psychology mapping)
-#   - Emotion vectors: 20% (Emotion probability distribution)
-WEIGHTS_COLOR_QUERY_WITH_LYRICS = [0.25, 0.35, 0.20, 0.20]  # [audio, lyrics, VA, emotion]
-WEIGHTS_COLOR_QUERY_NO_LYRICS = [0.25, 0.35, 0.25, 0.15]    # Fallback without lyrics
-
 # ----------------------------------------------------------------------------
-# recommend_by_colors() — _color_score signal weights (V16 E2)
+# recommend_by_colors() — V-A heteroscedastic RBF scorer (V19/F3)
 # ----------------------------------------------------------------------------
-# The ACTUAL weights used by core.recommendation_engine._color_score, replacing
-# values previously hardcoded in business logic (project rule: config-only).
-# Signals carry the colour↔music link directly (Palmer 2013 PNAS; i-Perception
-# 2018): PhoBERT lyric-centroid cosine + V-A Gaussian RBF + song-mood↔colour-mood.
-# E2 (2026-06): emotion signal moved off album-art colour (≈random for musical
-# mood, r=0.22) to the song's content emotion. Tuned on the non-circular L2-LLM
-# NDCG (paired bootstrap); see docs/PLAN_COLOR_UPGRADE_EXEC_V16.md.
-# Tuned 2026-06 (tools.color_weight_opt) on L2-LLM NDCG@10, paired bootstrap over 12
-# colours: 0.35/0.55/0.10 → NDCG 0.654 vs default 0.40/0.30/0.30 → 0.498 (Δ+0.155,
-# 95% CI [+0.024, …]); L3 discriminant still 4/4 opposite-colour pairs separated
-# (Cohen's d stronger on 3/4). emotion kept low (one-hot fused_emotion adds little
-# over song_va, which is already v4 lyrics-valence + MERT-arousal) but non-zero as a
-# categorical hedge vs the tuner argmax (0.40/0.60/0.00). Editorial GT insensitive here.
-# F3 (V19 2026-06): V-A-only heteroscedastic — F2 ablation confirmed dropping lyrics
-# cosine (encoder near-noise, Li 2020 anisotropy) and emotion cosine (double-counts V-A,
-# Russell 1980) improves editorial Qprec 0.900→0.930 and monotonicity 0.867→0.979.
-# Scores: pure heteroscedastic V-A RBF (no lyric or emotion matching term).
-# Science anchor: Whiteford 2018 — colour↔music mediation is FULLY through V-A;
-# direct perceptual correspondences vanish after partialling emotion.
-COLOR_SCORE_WEIGHTS = {
-    'lyrics':  0.00,   # removed — no validated colour→lyric-theme channel (Palmer/Whiteford)
-    'va':      1.00,   # V-A heteroscedastic RBF — the only matching signal
-    'emotion': 0.00,   # removed — double-counts V-A (Russell 1980 circumplex)
-}
-# Heteroscedastic σ per axis (F3, median heuristic Garreau 2017 on song-V-A):
-#   σ_V=0.20  (valence: larger spread, less reliable ~17% audio-predictable)
-#   σ_A=0.14  (arousal: tighter spread, more reliable ~80% audio-predictable)
-# Whiteford 2018: saturation (→arousal) explains 72% colour variance; trust arousal.
-COLOR_SCORE_VA_SIGMA_V = 0.20          # Gaussian RBF bandwidth — valence axis (wide)
-COLOR_SCORE_VA_SIGMA_A = 0.14          # Gaussian RBF bandwidth — arousal axis (narrow)
-COLOR_SCORE_VA_SIGMA   = 0.20          # kept for backwards-compat (isotropic fallback)
-# Scale-invariant valence matching: disabled (2026-06-04 empirical revert).
-# Quantile-V theory is sound but requires adaptive σ ∝ local density — a
-# constant σ=0.20 in quantile space stretches one-σ to raw-V=0.80 for mid-
-# valence colours (brown V=0.41) on this skewed catalog (median_V=0.20,
-# 61% V<0.30), destroying ED Qprec 0.850→0.644. LLM-rubric/ensemble
-# improvement (Step 3) is monotone → raw-V RBF is already scale-invariant.
-COLOR_SCORE_VALENCE_QUANTILE = False
+# Scorer = exp(-½[(Δv/σ_V)² + (Δa/σ_A)²]). Only signal: V-A distance.
+# Whiteford 2018: colour↔music mediation is FULLY through V-A; direct
+# perceptual correspondences vanish after partialling emotion.
+# σ_V > σ_A: valence less reliable (~17% audio-predictable, Delbouys 2018);
+# arousal more reliable (~80%, Eerola 2026). Trust arousal more.
+COLOR_SCORE_VA_SIGMA_V = 0.20   # Gaussian RBF bandwidth — valence axis (wide)
+COLOR_SCORE_VA_SIGMA_A = 0.14   # Gaussian RBF bandwidth — arousal axis (narrow)
 
-# V23 — Mood JOURNEY: 2 colours → sequence songs along V-A path A→B (Iso-Principle,
-# Starcke 2024 d=0.52) instead of interleaving (which caused "mood whiplash").
-# Retrieval (RRF union) unchanged; only the play ORDER. Cap is 2 colours (see
-# recommend_by_colors). Replaces the separate "Hành trình" tab (fully merged).
+# recommend_by_song — V-A RBF (isotropic, E-VA-SPLIT gate-rejected 2026-06).
+RECO_SONG_VA_SIGMA_V = 0.20
+RECO_SONG_VA_SIGMA_A = 0.20
+
+# V23 — Mood JOURNEY: 2 colours → waypoint-sample songs along V-A path A→B
+# (Iso-Principle, Starcke 2024 d=0.52). Replaces "Hành trình" tab (merged).
 COLOR_JOURNEY_ENABLED = True
-
-# Anti-skew (Saerens 2002 / Steck 2018 "Calibrated Recommendations").
-# Catalog is 54% Q3-sad; a neutral color like grey returns 100% Q3 without correction.
-# Mechanism: per-song inverse catalog density weight → songs from overcrowded V-A regions
-# (Q3) are down-weighted, so sparse regions (Q1 happy, Q4 calm) become accessible.
-# strength=0 → off; strength=1 → full correction; default 0.7 (aggressive, needed given
-# catalogue skew — grey neighborhood is 100% melancholic in raw V-A).
-# Phase 2 (2026-06-04): anti-skew DISABLED after arousal recalibration (Phase 1).
-# With corrected arousal (v5b), toggle test shows anti-skew ON hurts Macro Qprec
-# (0.812→0.854 when disabled) — signal is now correct; anti-skew was masking it.
-# Steck 2018 gate: "if disabling raises recall → signal healthy, not anti-skew."
-COLOR_ANTISKEW_ENABLED  = False
-COLOR_ANTISKEW_BINS     = 25    # grid resolution for density estimate (kept for reference)
-COLOR_ANTISKEW_STRENGTH = 0.7   # kept for reference; no effect when ENABLED=False
-COLOR_SCORE_LABEL_BOOST = 0.00         # F3: removed from affective model (was 0.12)
-COLOR_SCORE_CROSS_MOOD_PENALTY = 0.00  # F3: removed from affective model (was 0.08)
 
 
 
@@ -283,8 +257,8 @@ COLOR_PALETTE = 'husl'
 # ============================================================================
 ENABLE_MERT = os.environ.get("ENABLE_MERT", "True") == "True"
 MERT_MODEL = "m-a-p/MERT-v1-95M"
-MERT_EMBEDDINGS_FILE = "data/mert_embeddings.npy"
-MERT_EMBEDDINGS_META_FILE = "data/mert_metadata.json"
+MERT_EMBEDDINGS_FILE = str(DATA_DIR / "mert_embeddings.npy")
+MERT_EMBEDDINGS_META_FILE = str(DATA_DIR / "mert_metadata.json")
 MERT_LAYER = 8           # 0-indexed hidden state layer (of 12) — best for MIR tasks
 MERT_CLIP_DURATION = 15.0  # seconds per segment for mean-pooling
 
@@ -318,30 +292,11 @@ RERANKER_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 RERANKER_TOP_K = 20      # Number of candidates to re-rank
 
 # ============================================================================
-# Pillar F — Cold-start: KG Embeddings + VN Holiday Context
+# Pillar F — VN Holiday / Time-of-Day Context  (KG removed 2026-06-08)
 # ============================================================================
-# KG v2 (2026-05-29): CONTENT-similarity graph — k-NN on fused MERT + mood_tags
-# + instrument_tags + audio features, then SVD (64-dim). Replaces the old
-# artist-album bipartite graph, which injected same-artist bias into
-# recommend_by_song (pillar-f-xartist showed its gain collapsed on cross-artist
-# pairs). No artist/album edges. See docs/MASTER_UPGRADE_PLAN_V10.md §6.3.
-ENABLE_KG = os.environ.get("ENABLE_KG", "True") == "True"
-KG_EMBEDDINGS_FILE = "data/kg_embeddings.npy"
-KG_DIM = 64
-# Weight of the KG content signal in recommend_by_song fusion. Replaces the old
-# hardcoded +0.05 artist bonus; tunable/ablatable. 0 disables the term.
-# E-KG-CLEAN (2026-06-01): set to 0. The KG embedding was 50% MERT + 50% degenerate
-# Essentia tags (mood/instrument, 99% corporate/trumpet). Cluster-bootstrap on 1050
-# editorial queries: KG-on vs KG-off NDCG@10 statistically indistinguishable
-# (Δ+0.0038, CI95[-0.018,+0.015]) — KG contributes ~nothing. Dropped to remove the
-# degenerate-tag dependency + a MERT-redundant signal. Set >0 to re-enable.
-KG_SIM_WEIGHT = float(os.environ.get("KG_SIM_WEIGHT", "0.0"))
-# Optional same-artist cap for similar-song results. DEFAULT 0 = NO CAP:
-# fix the *cause* (artist bias in the KG signal) not the *symptom*. With the
-# content-based KG, same-artist songs only rank high when they are genuinely the
-# most musically similar (e.g. an artist with a very consistent style) — capping
-# would discard correct results. Musical (not artist) diversity is handled by
-# MMR. Set >0 only if an operator explicitly wants a hard artist cap.
+# KG removed: E-KG-CLEAN (2026-06-01) showed KG-on vs KG-off NDCG@10
+# statistically indistinguishable (Δ+0.0038, CI95[-0.018,+0.015]).
+# Embedding was 50% MERT + 50% degenerate Essentia tags → MERT-redundant.
 MAX_PER_ARTIST_SIMILAR = int(os.environ.get("MAX_PER_ARTIST_SIMILAR", "0"))
 
 # Context: applies valence/arousal shifts based on VN holidays + time-of-day.
@@ -364,7 +319,7 @@ OWM_TIMEOUT_S = 2  # seconds — never block recommendation path
 # Falls back to lexicon analysis when the file is absent or a song is missing.
 ENABLE_CLAP_EMOTION = os.environ.get("ENABLE_CLAP_EMOTION", "True") == "True"
 CLAP_MODEL = "laion/larger_clap_music_and_speech"
-CLAP_EMOTIONS_FILE = "data/clap_emotions.json"
+CLAP_EMOTIONS_FILE = str(DATA_DIR / "clap_emotions.json")  # raw CLAP (deprecated; file removed — see RELABELED_EMOTIONS_FILE)
 CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
 
 # E-RELABEL (2026-05-31) — CLAP audio zero-shot labels are biased (74% happy/excited,
@@ -381,8 +336,8 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
-RELABELED_EMOTIONS_FILE = "data/emotion_labels_v5c.json"  # B3: Gemini valence + quantile-mapped arousal (2026-06-04)
-VALENCE_CALIBRATION_FILE = "data/valence_calibration.json"  # isotonic fit on VN gold-set (V17)
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v5c.json")  # B3: Gemini valence + quantile-mapped arousal (2026-06-04)
+VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
 # System Settings
@@ -392,17 +347,4 @@ VERBOSE = False  # Set True to see detailed logs
 
 # GPU settings
 USE_GPU = True  # Auto-detect CUDA if available
-
-# ============================================================================
-# Image-to-Music Settings (CLIP-based Analysis)
-# ============================================================================
-CLIP_MODEL = 'openai/clip-vit-base-patch32'  # CLIP model for image understanding
-IMAGE_MAX_SIZE_MB = 10  # Maximum upload size
-IMAGE_DOMINANT_COLORS = 5  # Number of dominant colors to extract
-IMAGE_ANALYSIS_SIZE = 256  # Resize target for analysis
-
-# Image recommendation weights
-# Fusion: [audio, lyrics, V-A, emotion, color]
-WEIGHTS_IMAGE_QUERY_WITH_LYRICS = [0.20, 0.25, 0.20, 0.15, 0.20]
-WEIGHTS_IMAGE_QUERY_NO_LYRICS = [0.25, 0.00, 0.25, 0.20, 0.30]
 

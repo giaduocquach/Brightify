@@ -71,9 +71,11 @@ Pipeline dữ liệu Brightify gồm 7 giai đoạn, với **3 strict removal ga
 │  - Create HNSW index on song_embeddings                         │
 │  - Create trigram indexes (pg_trgm)                             │
 │  - Post-seed validation                                         │
-│  → Output: PostgreSQL brightify_dw database                     │
+│  → Output: PostgreSQL serving mirror / side-data store          │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **Lưu ý triển khai:** với runtime hiện tại, output thực sự dùng để serve recommendation vẫn là artifact file ở Phase 6. Phase 7 chủ yếu đồng bộ PostgreSQL cho integrity, health, seed mirror và crossfade side-data. Xem thêm [PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](./PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md).
 
 ---
 

@@ -12,7 +12,7 @@ const pages = {
                 <div class="hero-content">
                     <div class="hero-greeting">${getGreeting()}</div>
                     <div class="hero-title">Khám phá âm nhạc<br>với trí tuệ nhân tạo</div>
-                    <div class="hero-subtitle">Brightify dùng AI để tìm nhạc phù hợp với cảm xúc của bạn — qua màu sắc hoặc hình ảnh.</div>
+                    <div class="hero-subtitle">Brightify dùng AI để tìm nhạc phù hợp với cảm xúc của bạn — qua màu sắc.</div>
                     <div class="hero-actions">
                         <button class="btn btn-primary" onclick="router.navigate('ai-lab')">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M12 2a5 5 0 015 5c0 2-1 3-2 4l-1 1v2h-4v-2l-1-1c-1-1-2-2-2-4a5 5 0 015-5z"/></svg>
@@ -193,7 +193,7 @@ const pages = {
         container.innerHTML = `
             <div class="ai-lab-hero">
                 <div class="page-title">AI Lab ✨</div>
-                <div class="page-subtitle">Khám phá nhạc qua màu sắc hoặc hình ảnh — AI sẽ tìm bài hát phù hợp cho bạn</div>
+                <div class="page-subtitle">Khám phá nhạc qua màu sắc — AI sẽ tìm bài hát phù hợp cho bạn</div>
             </div>
 
             <!-- V23: "Hành trình" tab merged into colour (2 colours = mood journey A→B,
@@ -205,7 +205,7 @@ const pages = {
                 <div class="color-picker-v2">
                     <div class="color-picker-header">
                         <div class="color-wheel-title">🎨 Soundtrack cho khoảnh khắc</div>
-                        <div class="color-wheel-subtitle">Chọn màu bạn đang cảm thấy — hoặc thả một tấm ảnh — AI bắt "vibe" rồi tìm nhạc phù hợp</div>
+                        <div class="color-wheel-subtitle">Chọn màu bạn đang cảm thấy — AI bắt "vibe" rồi tìm nhạc phù hợp</div>
                     </div>
 
                     <!-- Emotion Color Grid V17 — 12 màu ICEAS, hex = CENTROID TRI GIÁC
@@ -372,22 +372,6 @@ const pages = {
                     </div>
                 </div>
                 <div class="ai-results" id="color-results"></div>
-
-                <!-- F5 — same "capture a vibe" screen: an image is just another way
-                     to express a mood. Drop one instead of (or after) picking colors. -->
-                <div style="display:flex;align-items:center;gap:12px;margin:22px 0 14px;color:var(--text-secondary);font-size:.82rem">
-                    <span style="flex:1;height:1px;background:var(--border)"></span>
-                    hoặc bắt vibe từ một tấm ảnh 📷
-                    <span style="flex:1;height:1px;background:var(--border)"></span>
-                </div>
-                <div class="image-dropzone" id="image-dropzone">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                    <div class="image-dropzone-text">Kéo thả hình ảnh vào đây</div>
-                    <div class="image-dropzone-hint">hoặc click để chọn file (JPEG, PNG, WebP)</div>
-                    <input type="file" id="image-input" accept="image/*" style="display:none">
-                </div>
-                <div id="image-preview-area"></div>
-                <div class="ai-results" id="image-results"></div>
             </div>
 
 
@@ -396,7 +380,6 @@ const pages = {
 
 
         initColorPicker();
-        initImageUpload();
         // V23: initJourneyPickers() removed — journey tab merged into colour.
     },
 
@@ -475,34 +458,30 @@ const pages = {
         }
     },
 
-    // ── SEARCH (F3 — unified full results: khớp-nhất + liên-quan, play-all) ──
+    // ── SEARCH (unified full results: one smart ranked list, play-all) ──
     async search(container, hash) {
         const query = decodeURIComponent(hash.replace('search/', '')).trim();
         container.innerHTML = '<div class="loading-screen"><div class="loader"></div></div>';
         if (!query) { container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔍</div>Nhập từ khoá để tìm</div>'; return; }
         try {
             const data = await API.searchUnified(query, 20, 20);
-            const matches = (data.matches || []).map(s => _normalizeSong(s));
-            const related = (data.related || []).map(s => _normalizeSong(s));
-            await _checkAudioBatch([...matches, ...related]);
-            window._searchMatches = matches;
-            window._searchRelated = related;
-
-            const section = (title, sub, songs, which) => songs.length ? `
-                <div class="section-header" style="margin-top:18px">
-                    <div><div class="section-title">${title}</div><div class="section-subtitle">${sub}</div></div>
-                    <button class="btn btn-primary btn-sm" onclick="playSearchResults('${which}')"><svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Phát tất cả</button>
-                </div>
-                <div class="song-list">${songs.map((s, i) => songRowHTML(s, i + 1)).join('')}</div>` : '';
+            // Merge into one list — exact hits already rank first, same-vibe
+            // follows. The user sees a single seamless result set.
+            const songs = [...(data.matches || []), ...(data.related || [])].map(s => _normalizeSong(s));
+            await _checkAudioBatch(songs);
+            window._searchResults = songs;
 
             container.innerHTML = `
                 <div class="page-header">
                     <div class="page-title">Kết quả: "${esc(query)}"</div>
-                    <div class="page-subtitle">${matches.length + related.length} bài · khớp nhất trước, liên quan ở dưới</div>
+                    <div class="page-subtitle">${songs.length} bài</div>
                 </div>
-                ${(!matches.length && !related.length) ? '<div class="empty-state"><div class="empty-state-icon">🔍</div>Không tìm thấy bài nào</div>' : ''}
-                ${section('🎯 Khớp nhất', 'Trùng tên, nghệ sĩ hoặc lời bài hát', matches, 'matches')}
-                ${section('🔗 Liên quan · cùng vibe', 'AI gợi ý theo cảm xúc/chủ đề', related, 'related')}
+                ${!songs.length ? '<div class="empty-state"><div class="empty-state-icon">🔍</div>Không tìm thấy bài nào</div>' : `
+                <div class="section-header" style="margin-top:18px">
+                    <div><div class="section-title">Bài hát</div></div>
+                    <button class="btn btn-primary btn-sm" onclick="playSearchResults()"><svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Phát tất cả</button>
+                </div>
+                <div class="song-list">${songs.map((s, i) => songRowHTML(s, i + 1)).join('')}</div>`}
             `;
         } catch (e) {
             container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div>Lỗi tìm kiếm</div>';

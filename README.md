@@ -36,7 +36,9 @@ Core AI/ML layer
   ├─ advanced_color_mapping.py — CIEDE2000 + 13 emotion-color profiles
   └─ image_analysis.py — CLIP zero-shot (10 emotions, 18 scenes)
         ↓
-PostgreSQL 17 + pgvector (HNSW) + pg_trgm
+File-based serving release (`data/*.csv/*.npy/*.json` + `music_files/*.mp3`)
+        ↓
+PostgreSQL 17 + pgvector (crossfade side-data, seed mirror, health)
         ↓
 Data pipeline (7-phase strict-gate, resumable)
   collect → filter → download → lyrics → extract → process → seed
@@ -138,6 +140,7 @@ brightify/
 - **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)** — Endpoint documentation
 - **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** — DB schema + ERD
 - **[docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md)** — Pipeline phases
+- **[docs/PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](docs/PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md)** — Production data layout, DB scope, keep/drop plan
 - **[docs/RESEARCH_FOUNDATIONS.md](docs/RESEARCH_FOUNDATIONS.md)** — Academic references (20+ papers)
 - **[docs/AI_FEATURE_EVALUATION.md](docs/AI_FEATURE_EVALUATION.md)** — AI engine evaluation
 - **[docs/MARKET_ANALYSIS_REPORT.md](docs/MARKET_ANALYSIS_REPORT.md)** — Competitor analysis

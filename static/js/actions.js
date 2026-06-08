@@ -86,9 +86,9 @@ function _refreshGeo() {
 // Uses the smart context engine (circadian + activity + season) now also wired to
 // the VN holiday calendar + live weather via vn_context. Time/day auto-resolve
 // server-side; the browser's current coordinates are passed for local weather.
-// F3 — play a whole search-result group (matches / related) from the search page.
-function playSearchResults(which) {
-    const songs = which === 'related' ? window._searchRelated : window._searchMatches;
+// Play the whole (single, unified) search-result list from the search page.
+function playSearchResults() {
+    const songs = window._searchResults;
     if (songs?.length) player.loadQueue([...songs], 0, 'search');
 }
 

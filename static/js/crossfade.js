@@ -60,9 +60,30 @@ function dbToLin(db) {
     return Math.pow(10, db / 20);
 }
 
-const CROSSFADE_TARGET_LUFS = -14;   // Spotify standard
-const CROSSFADE_DURATION_MIN = 2.0;
-const CROSSFADE_DURATION_MAX = 12.0;
+const CROSSFADE_TARGET_LUFS        = -14;   // Spotify standard
+const CROSSFADE_DURATION_MIN       = 2.0;
+const CROSSFADE_DURATION_MAX       = 12.0;
+const CROSSFADE_MAX_GAIN_BOOST_DB  = 12.0;  // cap LUFS compensation at +12 dB to avoid clipping quiet outliers
+
+// Mood distance helpers — Q1..Q4 from mood_quadrant strings like "Q1: Happy/Excited"
+function _quadOf(mqStr) {
+    const m = mqStr && mqStr.match(/Q(\d)/);
+    return m ? parseInt(m[1], 10) : 0;
+}
+
+// Adjacent quads share exactly one V-A axis boundary:
+//   Q1(V+A+) ↔ Q2(V-A+), Q1 ↔ Q4(V+A-), Q2 ↔ Q3(V-A-), Q3 ↔ Q4
+// Opposite quads differ on both axes: Q1↔Q3, Q2↔Q4
+const _QUAD_ADJACENT = new Set(['1-2','2-1','1-4','4-1','2-3','3-2','3-4','4-3']);
+
+// Returns 1.0 = same quad | 0.5 = adjacent | 0.0 = opposite quad
+function _moodScore(mqA, mqB) {
+    const a = _quadOf(mqA), b = _quadOf(mqB);
+    if (!a || !b) return 0.5;       // unknown → neutral
+    if (a === b)  return 1.0;
+    if (_QUAD_ADJACENT.has(`${a}-${b}`)) return 0.5;
+    return 0.0;
+}
 
 /**
  * Compute a complete crossfade plan from track features.
@@ -90,18 +111,31 @@ function planCrossfade(trackA, trackB, userBaseVolume) {
                    && Number.isFinite(trackA?.mode) && Number.isFinite(trackB?.mode);
 
     // 1. Feature deltas
-    const dTempo   = Math.abs(Atempo - Btempo) / Math.max(Atempo, 1);
-    const dEnergy  = Math.abs(Aenergy - Benergy);
-    const sameQuad = moodKnown && trackA.mood_quadrant === trackB.mood_quadrant;
+    const dTempo    = Math.abs(Atempo - Btempo) / Math.max(Atempo, 1);
+    const dEnergy   = Math.abs(Aenergy - Benergy);
+    const moodScore = moodKnown ? _moodScore(trackA.mood_quadrant, trackB.mood_quadrant) : 0.5;
+    const sameQuad  = moodScore >= 1.0;   // kept for correlated-curve check below
     const keyCompat = keyKnown
-        ? camelotCompatible(trackA.key, trackA.mode, trackB.key, trackB.mode)
+        ? camelotCompatible(Math.round(trackA.key), trackA.mode, Math.round(trackB.key), trackB.mode)
         : 0.4;   // unknown key → treat as incompatible (safe)
 
     // 2. Duration policy (Bittner 2017 + Spotify defaults)
-    let duration = 6.0;   // base
-    if (sameQuad && dTempo < 0.06 && keyCompat >= 0.7) duration = 10.0;   // smooth blend
-    if (dTempo > 0.10 || dEnergy > 0.4) duration = 3.0;                   // fast cut
-    if (Aenergy > 0.75 && Benergy > 0.75) duration = 8.0;                 // EDM pair
+    // Priority tiers (if/else, cannot override each other):
+    //   clash (3s) > perfect (10s) > adjacent+key (8s) = EDM pair (8s) > mood-clash (4s) > default (6s)
+    let duration;
+    if (dTempo > 0.10 || dEnergy > 0.4) {
+        duration = 3.0;    // audio clash: big tempo or energy jump → fast cut
+    } else if (moodScore >= 1.0 && dTempo < 0.06 && keyCompat >= 0.7) {
+        duration = 10.0;   // perfect: same mood + close tempo + Camelot-compatible
+    } else if (moodScore >= 0.5 && dTempo < 0.06 && keyCompat >= 0.7) {
+        duration = 8.0;    // adjacent mood + close tempo + key-compatible
+    } else if (Aenergy > 0.75 && Benergy > 0.75) {
+        duration = 8.0;    // EDM pair: both high-energy, no audio clash
+    } else if (moodScore === 0.0) {
+        duration = 4.0;    // mood clash (Q1↔Q3 or Q2↔Q4) → shorter than default
+    } else {
+        duration = 6.0;    // default
+    }
     // Short-track safety: ensure we don't crossfade longer than 30% of track A
     if (AdurS > 0) duration = Math.min(duration, AdurS * 0.3);
     duration = Math.max(CROSSFADE_DURATION_MIN, Math.min(CROSSFADE_DURATION_MAX, duration));
@@ -132,14 +166,14 @@ function planCrossfade(trackA, trackB, userBaseVolume) {
     }
 
     // 4. Loudness-matched gains (ITU-R BS.1770 / EBU R128)
+    // Correction capped at +CROSSFADE_MAX_GAIN_BOOST_DB so very quiet outliers
+    // (e.g. -36 LUFS) don't get a ×13 boost that hits the unity clamp and sounds wrong.
     const hasLUFS = Number.isFinite(trackA?.loudness_lufs) && Number.isFinite(trackB?.loudness_lufs);
-    const clamp = v => Math.min(1.0, Math.max(0, v));
-    const gainA = hasLUFS
-        ? clamp(userBaseVolume * dbToLin(CROSSFADE_TARGET_LUFS - trackA.loudness_lufs))
-        : userBaseVolume;
-    const gainB = hasLUFS
-        ? clamp(userBaseVolume * dbToLin(CROSSFADE_TARGET_LUFS - trackB.loudness_lufs))
-        : userBaseVolume;
+    const clamp   = v => Math.min(1.0, Math.max(0, v));
+    const _lufsGain = (lufs) => Math.min(dbToLin(CROSSFADE_MAX_GAIN_BOOST_DB),
+                                          dbToLin(CROSSFADE_TARGET_LUFS - lufs));
+    const gainA = hasLUFS ? clamp(userBaseVolume * _lufsGain(trackA.loudness_lufs)) : userBaseVolume;
+    const gainB = hasLUFS ? clamp(userBaseVolume * _lufsGain(trackB.loudness_lufs)) : userBaseVolume;
 
     // 5. Curve choice (Audacity / KVR consensus)
     // Linear when tracks are highly correlated (same quad + key + tempo) → softer cancellation
@@ -163,7 +197,7 @@ function planCrossfade(trackA, trackB, userBaseVolume) {
             B: trackB?.track_name || '(?)',
             dTempo: dTempo.toFixed(3),
             dEnergy: dEnergy.toFixed(3),
-            sameQuad,
+            moodScore,
             keyCompat,
             duration_s: duration.toFixed(2),
             curve,
@@ -171,6 +205,7 @@ function planCrossfade(trackA, trackB, userBaseVolume) {
             gainB: gainB.toFixed(2),
             hasLUFS,
             danceablePair: danceableA && danceableB,
+            fadeOutCue: trackA?.fade_out_cue_s,
         });
     }
 
@@ -179,6 +214,7 @@ function planCrossfade(trackA, trackB, userBaseVolume) {
 
 // Export for tests (browser global)
 if (typeof window !== 'undefined') {
-    window._smartCrossfade = { planCrossfade, camelotCompatible, toCamelot, dbToLin, CAMELOT_MAP };
+    window._smartCrossfade = { planCrossfade, camelotCompatible, toCamelot, dbToLin, CAMELOT_MAP,
+                               _moodScore, _quadOf };
 }
 

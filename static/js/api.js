@@ -70,15 +70,6 @@ async getRandomSongs(count = 10) {
         });
     },
 
-    async recommendByImage(file, topK = 10) {
-        const form = new FormData();
-        form.append('file', file);
-        form.append('top_k', topK);
-        const res = await fetch('/api/recommend/image', { method: 'POST', body: form });
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
-    },
-
     // ── Audio ────────────────────────────────────────────────────────────
     async getBatchAudioStatus(trackIds) {
         if (!trackIds.length) return { status: {} };
@@ -106,12 +97,7 @@ async getRandomSongs(count = 10) {
         return this._get('/api/moods');
     },
 
-    async getImageStatus() {
-        return this._get('/api/image/status');
-    },
-
-
-        // ── Internal ─────────────────────────────────────────────────────────
+    // ── Internal ─────────────────────────────────────────────────────────
     async _get(url) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`API ${res.status}: ${url}`);

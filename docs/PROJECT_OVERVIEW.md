@@ -14,7 +14,7 @@ Brightify là một nền tảng streaming nhạc Việt Nam tích hợp AI, cho
 ### Điểm nổi bật
 - **6 chế độ gợi ý AI**: Color, Image, Mood, Song Similarity, Lyrics, Context-aware
 - **2 tính năng nâng cao**: Emotion Journey (playlist chuyển cảm xúc), Musical DNA (hồ sơ sở thích)
-- **Pipeline dữ liệu 7 giai đoạn** tự động hóa từ thu thập đến ETL vào PostgreSQL
+- **Pipeline dữ liệu 7 giai đoạn** tự động hóa từ thu thập đến artifact serving + đồng bộ PostgreSQL
 - **Frontend SPA** (Single Page Application) hoàn chỉnh với audio player, visualizer, queue management
 - **Nền tảng nghiên cứu**: Mỗi thuật toán đều có trích dẫn paper học thuật (Russell 1980, Palmer et al. 2013, Kim et al. 2024, v.v.)
 
@@ -55,11 +55,12 @@ Brightify là một nền tảng streaming nhạc Việt Nam tích hợp AI, cho
                          │
 ┌────────────────────────▼─────────────────────────────────┐
 │               Data Layer                                  │
+│  ├── data/           — Runtime serving artifacts          │
+│  │                     (CSV, NPY, JSON)                   │
 │  ├── db/models.py    — SQLAlchemy ORM (PostgreSQL)        │
 │  ├── db/engine.py    — Connection pool & session          │
-│  ├── db/seed.py      — ETL Seed (CSV → DB)               │
-│  ├── alembic/        — Database migrations                │
-│  └── data/           — CSV, NPY, JSON data files          │
+│  ├── db/seed.py      — Catalog sync / seed mirror         │
+│  └── alembic/        — Database migrations                │
 └──────────────────────────────────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────────┐
@@ -212,6 +213,13 @@ Brightify là một nền tảng streaming nhạc Việt Nam tích hợp AI, cho
 
 **DBMS**: PostgreSQL 17 + pgvector extension
 
+**Vai trò thực tế hiện tại**:
+- runtime recommendation catalog: file-based (`data/*.csv/*.npy/*.json`)
+- runtime audio: `music_files/*.mp3`
+- PostgreSQL: serving mirror, health probe, crossfade side-data
+
+Blueprint production chuẩn hóa ở [PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](./PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md).
+
 **Schema** (10 bảng):
 
 | Bảng | Loại | Mô tả |
@@ -246,7 +254,7 @@ Phase 4: LYRICS     → YTMusic/LRCLIB lyrics → phase4_lyrics.csv
 Phase 5: EXTRACT    → Essentia DSP + TF ML models → phase5_features.csv
    └── GATE: Remove tracks with incomplete features
 Phase 6: PROCESS    → Feature engineering + PhoBERT embeddings → data/*.csv + *.npy
-Phase 7: SEED       → ETL into PostgreSQL + HNSW index
+Phase 7: SEED       → Sync serving artifacts into PostgreSQL mirror + HNSW index
 ```
 
 **Features**:

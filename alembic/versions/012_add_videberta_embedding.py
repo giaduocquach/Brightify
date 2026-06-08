@@ -19,17 +19,21 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'song_embeddings',
-        sa.Column(
-            'videberta_embedding',
-            pgvector.sqlalchemy.vector.VECTOR(dim=768),
-            nullable=True,
-            comment='ViDeBERTa/ViSoBERT 768-dim lyrics embedding (Pillar B)',
-        ),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("song_embeddings")}
+    if "videberta_embedding" not in columns:
+        op.add_column(
+            'song_embeddings',
+            sa.Column(
+                'videberta_embedding',
+                pgvector.sqlalchemy.vector.VECTOR(dim=768),
+                nullable=True,
+                comment='ViDeBERTa/ViSoBERT 768-dim lyrics embedding (Pillar B)',
+            ),
+        )
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_song_embeddings_videberta_hnsw "
+        "CREATE INDEX IF NOT EXISTS ix_song_embeddings_videberta_hnsw "
         "ON song_embeddings USING hnsw (videberta_embedding vector_cosine_ops) "
         "WITH (m = 16, ef_construction = 64)"
     )
@@ -37,4 +41,8 @@ def upgrade():
 
 def downgrade():
     op.execute("DROP INDEX IF EXISTS ix_song_embeddings_videberta_hnsw")
-    op.drop_column('song_embeddings', 'videberta_embedding')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("song_embeddings")}
+    if "videberta_embedding" in columns:
+        op.drop_column('song_embeddings', 'videberta_embedding')

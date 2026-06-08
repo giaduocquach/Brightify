@@ -5,6 +5,8 @@
 > **ORM**: SQLAlchemy 2.0  
 > **Migrations**: Alembic
 
+> **Quan trọng:** tài liệu này mô tả **schema DB hiện có / compatibility schema**. Với runtime hiện tại, recommendation catalog vẫn được nạp chủ yếu từ file trong `data/` và `music_files/`; PostgreSQL chưa phải source-of-truth cho toàn bộ serving path. Xem thêm [PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](./PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md).
+
 ---
 
 ## 1. Entity Relationship Diagram
@@ -128,9 +130,9 @@ erDiagram
 
 ## 2. Bảng Chi Tiết
 
-### 2.1. `songs` — Bảng Trung Tâm (72 cột)
+### 2.1. `songs` — Bảng Trung Tâm compatibility (72+ cột)
 
-Bảng `songs` là entity chính, chứa toàn bộ metadata, audio features, lyrics, processed features.
+Bảng `songs` hiện là compatibility table lớn, chứa metadata, audio features, lyrics, processed features và side-data phục vụ seed/runtime. Đây là **schema đang chạy**, không phải đích normalize cuối cùng cho production dài hạn.
 
 #### Nhóm cột:
 

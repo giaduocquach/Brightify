@@ -33,18 +33,19 @@ Bùi Công Nam
 Bùi Lan Hương
 Bảo Anh
 Cao Bá Hưng
-Captain
+Captain Boy::UCcLvhdgB1bW5zPgZmh-uILA
 CARA
 Changg
 ChangMie
 Chi Pu
+Chi Xê::UCuqA2UF6OtF7H2EUHYk90JA
 Chillies
 Chipu
 Châu Đăng Khoa
 Chị Cả
 Cloud 5
 Coldzy
-CONGB
+CONGB::UCqe3QBoxf5Bi62R05Qf7vlA
 CoolKid
 Cá Hồi Hoang
 Công Dương
@@ -68,6 +69,7 @@ Dương Domic
 Dương Edward
 Dương Trần Nghĩa
 Dế Choắt
+Đào Tử A1J::UCX1KZxPDeZSk-PDCk-w_ukQ
 Emcee L
 Erik
 Fishy
@@ -150,7 +152,7 @@ Maius Philharmonic
 Manbo
 Marzuz
 Masew
-Mason Nguyen
+Mason Nguyen::UC_fXNzvVbYBARsytP02ezrA
 Maydays
 Mc Wiz
 meChill
@@ -163,11 +165,15 @@ MONO
 Monstar
 Mr.T
 Muộii
+Mỹ Anh::UCNXfGpmXbKGEXLllnA7mSag
+MYLINA::UC0pRQOtS1c_wDFFobrprO1g
 Namlee
 Nasty5
 NAT
 NEGAV
 New$oulz
+NÂN::UCoXGbTWe2X5dYe_BX-9IJgg
+Nguyễn Hùng::UCJVslw0KrVj4oaMeisOrveA
 Nguyễn Minh Cường
 Nguyễn Trung Đức
 Nguyễn Trần Trung Quân
@@ -180,6 +186,7 @@ Nicky
 Obito
 OgeNus
 OGG
+OLEW::UCSIIfcQoUmE2jSGF9cG_Qbw
 ONIONN
 Orange
 Osad
@@ -191,6 +198,7 @@ Phí Phương Anh
 Phùng Khánh Linh
 Phúc Du
 Phương Ly
+Phương Mỹ Chi::UCW2YNEZsiQSsF7CcCLpGNoQ
 Phạm Minh Thành
 Phạm Việt Thắng
 Phạm Đình Thái Ngân
@@ -215,6 +223,7 @@ Ronboogz
 Rpt Groovie
 RPT MCK
 RTEE
+Saabirose::UC--tdMXgVlGnt4vmY3cNE9w
 Seachains
 Shartnuss
 Shayda
@@ -227,6 +236,7 @@ Sol7
 Sony Trần
 SOOBIN
 Soobin Hoàng Sơn
+Sơn.K::UCI7TdMKyOAcwH6XVq7rbXMw
 Suboi
 SUNI
 Suni Hạ Linh
@@ -276,7 +286,7 @@ VSoul
 Vstra
 Vũ Cát Tường
 Vũ Phụng Tiên
-Vũ Thịnh
+Vũ Thịnh::UCSUzmPE6wPCMeEpOXzne6sQ
 Vũ.
 Vương Bình
 W/N
@@ -307,3 +317,37 @@ Mr Siro
 Chi Dân
 Hà Anh Tuấn
 Hương Ly
+# Verified YouTube Music profiles: ATSH, Rap Việt, active 9x/Gen Z artists
+7dnight::UCpgHqpawoGoA21GwV6V3uGA
+Blacka::UCrfcinO-BvdrvA10qBJhGxA
+Bùi Duy Ngọc::UCNJ3MDpSp0kqOX6df_uK1vQ
+Châu Khải Phong::UCeGU9d29D8TfB-Xz9nRwMkg
+Cody Nam Võ::UC_gWdVTSmW-0fSk6WzWImJA
+Cường Seven::UCnRYbk9BUIP3mY8pcQNk4sg
+Đinh Tùng Huy::UCCrBAM0CTj0LJ9Kn_-ZRuMg
+Đình Dũng::UCCqTZZT-a2A2PWYE7U8vbPw
+Đỗ Nam Sơn::UCjXiFzuhxi8Kbsny9dF3hqw
+Đỗ Phú Quí::UCXxXhegTcCNwOVWVojNj1rw
+Đông Nhi::UClg6gEBigpF7fHuuFtwoXuw
+Gin Tuấn Kiệt::UCICfl8cwTSkZ_kUZ7tLnfBw
+Hà Nhi::UC-ZgmLpdU3XG56RL8dNsfIw
+Hải Nam::UCiDDAAz6doFD-0VDb78xwGw
+Hồ Quang Hiếu::UCRj1vLFmHNEk1dIlDRH1CeQ
+Hương Tràm::UCgWje_qkUMsCyZDEvUp7YjA
+Huy Vạc::UCovrn0c6YKppzUQRhmhexYA
+Isaac::UCExDd9Zg_nlcFN9Hn9UmBxw
+Jun Phạm::UCCiSjTGGtSIqm_OE4sCjbrQ
+Khắc Việt::UCkTiiyow7LhzrOYw4l-wXeg
+Lâm Bảo Ngọc::UC7TCsjXmuKlLkNsTsyk6m6g
+Lê Bảo Bình::UCE6Y_DUxPwRjQOcdFDEOWEA
+Miu Lê::UCvEaRZJYsyZ3p5H96mjx1qw
+Mỹ Mỹ::UCcW2LUCfcJuN6cpVkpNBHbQ
+Ngô Kiến Huy::UCYfbWiC7WqrBzE2U9FwxiXg
+Nhâm Phương Nam::UCm3x0wzwNYC6vrmVnJ5Ozfg
+Phạm Anh Duy::UCMek29x7cGHjJ7325PQcozA
+Quốc Thiên::UCZWCJ49H4f0celMEZMn8qHw
+Song Luân::UCmIntHWIfrF-K2qG8qZ7CsA
+Tóc Tiên::UC-G5rQmTYuwfvOfL4dRDfmg
+Trung Quân::UCm4A1ZeV6vlqK9KXKWxp43Q
+Văn Mai Hương::UCO5wJzEKeqBj3xDRrUc5zng
+Võ Hạ Trâm::UC9ygiYEKQv44GEHEqrfswjg

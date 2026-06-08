@@ -803,49 +803,6 @@ img { display: block; max-width: 100%; }
     accent-color: var(--accent-primary);
 }
 
-/* Image Upload */
-.image-dropzone {
-    border: 2px dashed var(--border);
-    border-radius: var(--radius-xl);
-    padding: 48px 32px;
-    text-align: center;
-    cursor: pointer;
-    transition: all var(--transition-base);
-    background: var(--bg-card);
-}
-.image-dropzone:hover,
-.image-dropzone.dragover {
-    border-color: var(--accent-primary);
-    background: var(--accent-glow);
-}
-.image-dropzone svg { width: 48px; height: 48px; color: var(--text-tertiary); margin: 0 auto 12px; }
-.image-dropzone-text { color: var(--text-secondary); font-size: 0.95rem; }
-.image-dropzone-hint { color: var(--text-tertiary); font-size: 0.8rem; margin-top: 6px; }
-.image-preview-container {
-    display: flex; gap: 24px; margin-top: 20px; flex-wrap: wrap;
-}
-.image-preview {
-    width: 260px;
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    flex-shrink: 0;
-}
-.image-preview img { width: 100%; height: auto; }
-.image-analysis { flex: 1; min-width: 200px; }
-.analysis-item { margin-bottom: 14px; }
-.analysis-label {
-    font-size: 0.75rem; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--text-tertiary); margin-bottom: 4px;
-}
-.analysis-value { font-size: 0.95rem; }
-.analysis-colors { display: flex; gap: 6px; }
-.analysis-color-dot {
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    border: 2px solid rgba(255,255,255,0.15);
-}
-
 /* AI Results */
 .ai-results { margin-top: 28px; }
 .ai-results-header {
@@ -858,41 +815,6 @@ img { display: block; max-width: 100%; }
     display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
 }
 .ai-results-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
-
-/* Speed Picker Popup */
-.speed-picker-popup {
-    position: fixed;
-    transform: translateX(-50%);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    padding: 8px 0;
-    min-width: 160px;
-    z-index: 3000;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-    backdrop-filter: blur(20px);
-}
-.speed-picker-title {
-    padding: 6px 16px 8px;
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    border-bottom: 1px solid var(--border-subtle);
-    margin-bottom: 4px;
-}
-.speed-picker-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 16px;
-    font-size: 0.88rem;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-}
-.speed-picker-item:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
-.speed-picker-item.active { color: var(--accent-primary); font-weight: 600; }
 
 /* ── Library / Playlist ─────────────────────────────────────────────────── */
 .library-header {
@@ -2360,32 +2282,6 @@ img { display: block; max-width: 100%; }
 .top-artist-plays {
     font-size: 0.75rem;
     color: var(--text-tertiary);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Playback Speed Button
-   ══════════════════════════════════════════════════════════════════════════ */
-.btn-speed-display {
-    font-size: 0.7rem !important;
-    font-weight: 700;
-    min-width: 30px;
-    letter-spacing: -0.02em;
-    font-family: var(--font-display);
-}
-.btn-speed-display.active {
-    color: #38bdf8;
-    position: relative;
-}
-.btn-speed-display.active::after {
-    content: '';
-    position: absolute;
-    bottom: -2px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: #38bdf8;
 }
 
 /* Queue button active */

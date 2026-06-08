@@ -34,21 +34,6 @@ def color_mapper():
 
 # ── Config tests (fast) ──────────────────────────────────────────────────────
 
-def test_config_antiskew_disabled():
-    """Phase 2: anti-skew must be OFF after arousal recalibration."""
-    from config import COLOR_ANTISKEW_ENABLED
-    assert not COLOR_ANTISKEW_ENABLED, (
-        "Anti-skew should be disabled — re-enable broke Macro Qprec 0.812→0.854. "
-        "See Phase 2 gate test 2026-06-04."
-    )
-
-
-def test_config_valence_quantile_disabled():
-    """Quantile-V must be off — breaks ED Qprec on skewed catalog (Phase 1B)."""
-    from config import COLOR_SCORE_VALENCE_QUANTILE
-    assert not COLOR_SCORE_VALENCE_QUANTILE
-
-
 def test_config_sigma_heteroscedastic():
     """Arousal sigma must be narrower than valence (trust arousal > valence)."""
     from config import COLOR_SCORE_VA_SIGMA_V, COLOR_SCORE_VA_SIGMA_A

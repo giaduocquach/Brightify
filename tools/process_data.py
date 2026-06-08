@@ -187,7 +187,9 @@ def apply_color_mapping(df):
     print("[4/7] Applying color mapping (Russell's Model)")
     print(f"{'='*60}")
     
-    required = ['valence', 'energy', 'tempo', 'mode', 'acousticness']
+    # Extractor v3 intentionally removed acousticness because it had zero
+    # recommender weight. Color mapping only needs V-A plus tempo and mode.
+    required = ['valence', 'energy', 'tempo', 'mode']
     if not all(f in df.columns for f in required):
         print("⚠️ Missing required audio features for color mapping")
         return df
@@ -207,17 +209,10 @@ def apply_color_mapping(df):
         if 'timbre_bright' in row and not pd.isna(row.get('timbre_bright')):
             audio_feats['timbre_bright'] = float(row['timbre_bright'])
         h, s, l = color_mapper.valence_arousal_to_color(v, a, audio_features=audio_feats)
-        hex_color = color_mapper.hsl_to_hex(h, s, l)
-        return pd.Series({
-            'color_hue': h,
-            'color_saturation': s,
-            'color_lightness': l,
-            'color_hex': hex_color
-        })
-    
-    color_data = df.progress_apply(map_row, axis=1)
-    df[['color_hue', 'color_saturation', 'color_lightness', 'color_hex']] = color_data
-    
+        return color_mapper.hsl_to_hex(h, s, l)
+
+    df['color_hex'] = df.progress_apply(map_row, axis=1)
+
     print(f"✅ Color mapping completed")
     print(f"   - Unique colors: {df['color_hex'].nunique()}")
     
@@ -328,74 +323,41 @@ def analyze_sentiment(df):
 
 
 def create_engineered_features(df):
-    """Create additional engineered features."""
+    """Compute mood_quadrant (the only derived feature persisted to DB).
+
+    arousal is also normalised here: NULL values (tracks where DEAM extraction
+    was skipped) are filled from energy so that every row has a valid 0-1 value.
+    """
     print(f"\n{'='*60}")
     print("[6/7] Creating engineered features")
     print(f"{'='*60}")
-    
-    features_created = []
-    
-    # Mood score (prefer DEAM arousal over energy when available)
-    if 'valence' in df.columns and 'energy' in df.columns:
+
+    # Ensure arousal is always non-null before quadrant derivation
+    if 'arousal' in df.columns and 'energy' in df.columns:
+        null_before = df['arousal'].isna().sum()
+        df['arousal'] = df['arousal'].fillna(df['energy'])
+        if null_before:
+            print(f"   - Filled {null_before:,} NULL arousal values from energy")
+
+    # Mood quadrant (Russell's circumplex): required, non-null
+    if 'valence' in df.columns:
         arousal_col = df['arousal'] if 'arousal' in df.columns else df['energy']
-        arousal_vals = arousal_col.fillna(df['energy'])
-        df['mood_score'] = df['valence'] * 0.6 + arousal_vals * 0.4
-        features_created.append('mood_score')
-        
-        # Mood quadrant (Russell's Model) — use DEAM arousal when available
-        def get_quadrant(row):
-            v = row['valence']
-            a = row.get('arousal') if pd.notna(row.get('arousal')) else row['energy']
-            if pd.isna(v) or pd.isna(a): return 'Unknown'
+
+        def get_quadrant(v, a):
+            if pd.isna(v) or pd.isna(a):
+                return 'Q4: Calm/Peaceful'  # safe fallback; should not occur after backfill
             if v >= 0.5 and a >= 0.5: return 'Q1: Happy/Excited'
-            if v < 0.5 and a >= 0.5: return 'Q2: Angry/Tense'
-            if v < 0.5 and a < 0.5: return 'Q3: Sad/Depressed'
+            if v < 0.5  and a >= 0.5: return 'Q2: Angry/Tense'
+            if v < 0.5  and a < 0.5:  return 'Q3: Sad/Melancholic'
             return 'Q4: Calm/Peaceful'
-        
-        df['mood_quadrant'] = df.apply(get_quadrant, axis=1)
-        features_created.append('mood_quadrant')
-    
-    # Dance score
-    if all(f in df.columns for f in ['danceability', 'energy', 'tempo']):
-        df['dance_score'] = (
-            df['danceability'] * 0.5 +
-            df['energy'] * 0.3 +
-            (df['tempo'].clip(60, 180) - 60) / 120 * 0.2
-        )
-        features_created.append('dance_score')
-    
-    # Acoustic score
-    if all(f in df.columns for f in ['acousticness', 'instrumentalness']):
-        df['acoustic_score'] = df['acousticness'] * 0.7 + df['instrumentalness'] * 0.3
-        features_created.append('acoustic_score')
-    
-    # Combined positivity (audio + lyrics; NULL for no-lyrics tracks)
-    if 'sentiment_compound' in df.columns and 'valence' in df.columns:
-        sentiment_norm = (df['sentiment_compound'] + 1) / 2
-        df['combined_positivity'] = df['valence'] * 0.6 + sentiment_norm * 0.4
-        # combined_positivity stays NaN for tracks without lyrics (sentiment is NaN)
-        features_created.append('combined_positivity')
-    
-    # Energy level category
-    if 'energy' in df.columns:
-        df['energy_level'] = pd.cut(
-            df['energy'], bins=[0, 0.33, 0.66, 1.0],
-            labels=['Low', 'Medium', 'High']
-        )
-        features_created.append('energy_level')
-    
-    # Tempo category
-    if 'tempo' in df.columns:
-        df['tempo_category'] = pd.cut(
-            df['tempo'], bins=[0, 90, 120, 150, 300],
-            labels=['Slow', 'Medium', 'Fast', 'Very Fast']
-        )
-        features_created.append('tempo_category')
-    
-    print(f"✅ Created {len(features_created)} engineered features:")
-    for f in features_created:
-        print(f"   - {f}")
-    
+
+        df['mood_quadrant'] = [
+            get_quadrant(v, a)
+            for v, a in zip(df['valence'], arousal_col)
+        ]
+        print(f"   - mood_quadrant: {dict(df['mood_quadrant'].value_counts())}")
+
+    print(f"✅ Engineered features complete")
     return df
 
 

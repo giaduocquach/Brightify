@@ -1,6 +1,7 @@
 """Music browse, search, and audio streaming API routes."""
 
 import logging
+import unicodedata
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -9,6 +10,13 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import random
+
+import config as cfg
+
+
+def _strip_accents(text: str) -> str:
+    """Normalize Vietnamese diacritics → ASCII so 'yeu' matches 'yêu'."""
+    return unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode("ascii")
 
 from api.cache import cache_get, cache_set, make_key
 
@@ -36,14 +44,14 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
     # Pre-cache file existence to avoid per-request stat() calls
     if _music_path and _music_path.exists():
         _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
-    album_art_dir = Path(__file__).parent.parent / "album_art"
+    album_art_dir = cfg.ALBUM_ART_DIR
     if album_art_dir.exists():
         _albumart_cache = {f.stem for f in album_art_dir.glob("*.jpg")}
     if _artist_images_path and _artist_images_path.exists():
         _artistimg_cache = {f.stem for f in _artist_images_path.glob("*.jpg")}
 
     # Load artist images data
-    artist_json = Path(__file__).parent.parent / "data" / "artist_images.json"
+    artist_json = Path(cfg.ARTIST_IMAGES_DATA_FILE)
     if artist_json.exists():
         try:
             import json
@@ -55,7 +63,7 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
 
     # Fallback: load artist thumbnail URLs from phase1_artists.csv
     if not _artist_data:
-        artist_csv = Path(__file__).parent.parent / "checkpoints" / "phase1_artists.csv"
+        artist_csv = Path(cfg.PHASE1_ARTISTS_FILE)
         if artist_csv.exists():
             try:
                 import csv
@@ -308,8 +316,14 @@ async def search_unified(
     if not query:
         return {"success": True, "query": q, "matches": [], "related": []}
 
+    query_plain = _strip_accents(query)
+
     def _contains(col):
-        return df[col].astype(str).str.lower().str.contains(query, na=False, regex=False)
+        s = df[col].astype(str).str.lower()
+        exact = s.str.contains(query, na=False, regex=False)
+        # Also match when query or data has no diacritics (e.g. "yeu" → "yêu")
+        plain = s.map(_strip_accents).str.contains(query_plain, na=False, regex=False)
+        return exact | plain
 
     # ── Layer 1: literal MATCHES — name/artist/album, then a lyric line ──
     name_mask = _contains('track_name')
@@ -687,7 +701,7 @@ async def get_album_art(track_id: str):
     if not all(c.isalnum() or c in '-_' for c in track_id):
         raise HTTPException(status_code=400, detail="Invalid track ID")
 
-    art_path = Path(__file__).parent.parent / "album_art" / f"{track_id}.jpg"
+    art_path = cfg.ALBUM_ART_DIR / f"{track_id}.jpg"
     if not art_path.exists():
         raise HTTPException(status_code=404, detail="Album art not found")
 

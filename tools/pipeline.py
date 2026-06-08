@@ -32,16 +32,22 @@ from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
+import config as cfg
+from tools.filter_data import (
+    catalog_quality_rejection_reason,
+    is_profane_lyrics,
+    run_filter,
+)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-DATA_DIR = PROJECT_ROOT / "data"
-CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
+DATA_DIR = Path(cfg.DATA_DIR)
+CHECKPOINT_DIR = cfg.CHECKPOINTS_DIR
 BACKUP_DIR = PROJECT_ROOT / "backups"
-MUSIC_DIR = PROJECT_ROOT / "music_files"
+MUSIC_DIR = cfg.MUSIC_DIR
 
 # Default timeout per phase (seconds): 4 hours
 _PHASE_TIMEOUT = int(os.environ.get("PIPELINE_PHASE_TIMEOUT", 4 * 3600))
@@ -105,15 +111,11 @@ def truncate_dw():
         from sqlalchemy import text
         # Order matters: facts first, then bridges, then dimensions
         tables = [
-            "search_logs",
-            "recommendations",
             "song_embeddings",
             "song_artists",
-            "artist_genres",
             "songs",
             "albums",
             "artists",
-            "genres",
             "moods",
         ]
         with engine.begin() as conn:
@@ -177,8 +179,6 @@ def run_phase_2():
     log.info(f"\n{'▓'*70}")
     log.info(f"  PHASE 2: DATA FILTERING & DEDUPLICATION")
     log.info(f"{'▓'*70}")
-
-    from tools.filter_data import run_filter
     df = run_filter()
     if df is None or len(df) == 0:
         log.error("  ❌ Phase 2 produced no data!")
@@ -213,9 +213,11 @@ def run_phase_3(limit: int | None = None):
 def gate_remove_no_mp3():
     """STRICT GATE: Remove all tracks without MP3.
     Reads phase2_filtered.csv (preferred) → phase1_spotify.csv fallback.
+    Enriches with view_count + upload_date from download_log.json.
     Writes phase3_downloaded.csv (only tracks with matching MP3 file).
     """
     log.info(f"\n  ── GATE 3: Remove tracks without MP3 ──")
+    import json as _json
     import pandas as pd
 
     csv_path = None
@@ -243,10 +245,57 @@ def gate_remove_no_mp3():
         log.error("  ❌ No tracks left after MP3 gate!")
         return False
 
+    # ── Enrich with YouTube metadata from download_log.json ──────────────
+    # download_music.py stores view_count + upload_date per track after download.
+    # Merging here gives Filter 6g a fallback year and Filter 8c a view signal.
+    dl_log_path = MUSIC_DIR / "download_log.json"
+    if dl_log_path.exists():
+        try:
+            dl_log = _json.loads(dl_log_path.read_text(encoding="utf-8"))
+            enriched = 0
+            for col in ("view_count", "upload_date"):
+                if col not in df.columns:
+                    df[col] = None
+            for idx, row in df.iterrows():
+                tid = str(row["track_id"])
+                entry = dl_log.get(tid, {})
+                if entry.get("view_count") is not None and pd.isna(df.at[idx, "view_count"]):
+                    df.at[idx, "view_count"] = int(entry["view_count"])
+                    enriched += 1
+                if entry.get("upload_date") and pd.isna(df.at[idx, "upload_date"]):
+                    df.at[idx, "upload_date"] = str(entry["upload_date"])
+            # Derive upload_year as integer for Filter 6g fallback
+            if "upload_date" in df.columns:
+                df["upload_year"] = pd.to_numeric(
+                    df["upload_date"].astype(str).str[:4], errors="coerce"
+                ).astype("Int64")
+            log.info(f"  ✅ Enriched {enriched:,} tracks with YT metadata (view_count, upload_date)")
+        except Exception as e:
+            log.warning(f"  ⚠ YT metadata enrichment failed: {e}")
+
     # Save as phase3_downloaded.csv for next phase
     out = CHECKPOINT_DIR / "phase3_downloaded.csv"
     df.to_csv(str(out), index=False, encoding="utf-8-sig")
-    log.info(f"  ✅ Gate 3 output: {out.name}")
+    log.info(f"  ✅ Gate 3 output: {out.name} ({len(df):,} tracks)")
+
+    # Re-run quality filters now that view_count/upload_year are available.
+    # Phase 2 cannot reliably judge YTMusic-only tracks because popularity is
+    # often missing before yt-dlp metadata enrichment.
+    quality_tmp = CHECKPOINT_DIR / "phase3_downloaded.filtered.csv"
+    quality_report = CHECKPOINT_DIR / "phase3_quality_filter_report.md"
+    quality_df = run_filter(
+        input_path=out,
+        output_path=quality_tmp,
+        report_path=quality_report,
+    )
+    if quality_df is None or len(quality_df) == 0:
+        log.error("  ❌ Post-download quality filter removed every track")
+        quality_tmp.unlink(missing_ok=True)
+        return False
+    quality_tmp.replace(out)
+    log.info(
+        f"  ✅ Post-download quality filter: {len(df):,} → {len(quality_df):,} tracks"
+    )
     return True
 
 
@@ -265,7 +314,10 @@ def run_phase_4():
 
 
 def gate_remove_no_lyrics():
-    """STRICT GATE: Remove all tracks without lyrics."""
+    """STRICT GATE: Remove all tracks without lyrics.
+    Also removes tracks whose lyrics contain Vietnamese profanity.
+    """
+    import re
     log.info(f"\n  ── GATE 4: Remove tracks without lyrics ──")
     csv_path = CHECKPOINT_DIR / "phase4_lyrics.csv"
     if not csv_path.exists():
@@ -293,10 +345,24 @@ def gate_remove_no_lyrics():
         log.error("  ❌ No tracks left after lyrics gate!")
         return False
 
+    lyrics_col = next(
+        (c for c in ['plain_lyrics', 'synced_lyrics', 'lyrics'] if c in df.columns),
+        None,
+    )
+    if lyrics_col:
+        before_prof = len(df)
+        mask_clean = df[lyrics_col].apply(is_profane_lyrics)
+        df = df[~mask_clean].reset_index(drop=True)
+        prof_removed = before_prof - len(df)
+        if prof_removed > 0:
+            log.info(f"  Removed {prof_removed:,} tracks with profanity in lyrics → {len(df):,} remaining")
+    else:
+        log.debug("  No lyrics column found for profanity check — skipping")
+
     # Save as phase4_lyrics_gated.csv for Phase 5
     out = CHECKPOINT_DIR / "phase4_lyrics_gated.csv"
     df.to_csv(str(out), index=False, encoding="utf-8-sig")
-    log.info(f"  ✅ Gate 4 output: {out.name}")
+    log.info(f"  ✅ Gate 4 output: {out.name} ({len(df):,} tracks)")
     return True
 
 
@@ -351,6 +417,16 @@ def gate_remove_incomplete_features():
     if len(df) == 0:
         log.error("  ❌ No tracks left after feature gate!")
         return False
+
+    quality_reasons = df.apply(catalog_quality_rejection_reason, axis=1)
+    quality_mask = quality_reasons.notna()
+    quality_removed = int(quality_mask.sum())
+    if quality_removed:
+        df = df[~quality_mask].reset_index(drop=True)
+        log.info(
+            f"  Removed {quality_removed:,} instrumental/spoken/fragment/legacy tracks "
+            f"after audio analysis → {len(df):,} remaining"
+        )
 
     # Overwrite phase5_features.csv with only complete tracks
     df.to_csv(str(csv_path), index=False, encoding="utf-8-sig")

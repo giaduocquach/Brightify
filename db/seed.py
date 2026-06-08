@@ -15,13 +15,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config as cfg
 from db.engine import engine, SessionLocal
 from db.models import (
-    Base, Artist, Album, Genre, Mood, Song,
-    SongArtist, ArtistGenre, SongEmbedding,
+    Base, Artist, Album, Mood, Song,
+    SongArtist, SongEmbedding,
 )
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(cfg.DATA_DIR)
 
 
 def seed_moods(session):
@@ -33,9 +34,9 @@ def seed_moods(session):
         ("Q2", "Angry/Tense", "angry", 0.30, 0.80),
         ("Q2", "Angry/Tense", "tense", 0.25, 0.75),
         ("Q2", "Angry/Tense", "energetic", 0.45, 0.90),
-        ("Q3", "Sad/Depressed", "sad", 0.25, 0.30),
-        ("Q3", "Sad/Depressed", "depressed", 0.15, 0.25),
-        ("Q3", "Sad/Depressed", "melancholic", 0.30, 0.35),
+        ("Q3", "Sad/Melancholic", "sad", 0.25, 0.30),
+        ("Q3", "Sad/Melancholic", "depressed", 0.15, 0.25),
+        ("Q3", "Sad/Melancholic", "melancholic", 0.30, 0.35),
         ("Q4", "Calm/Peaceful", "calm", 0.65, 0.35),
         ("Q4", "Calm/Peaceful", "peaceful", 0.70, 0.30),
         ("Q4", "Calm/Peaceful", "relaxed", 0.75, 0.25),
@@ -54,7 +55,7 @@ def seed_artists(session, df, artist_images):
     artists = {}
 
     # Load artist CSV for thumbnail_url fallback
-    artist_csv = DATA_DIR.parent / "checkpoints" / "phase1_artists.csv"
+    artist_csv = Path(cfg.PHASE1_ARTISTS_FILE)
     artist_thumbs = {}
     if artist_csv.exists():
         adf = pd.read_csv(artist_csv)
@@ -123,47 +124,6 @@ def seed_artists(session, df, artist_images):
     print(f"  ✓ Artists: {len(rows)} upserted / {session.query(Artist).count()} total")
 
 
-def seed_genres(session):
-    """Extract unique genres from artists and populate genres + bridge (bulk upsert)."""
-    artists = session.query(Artist).all()
-    genre_set = set()
-    for a in artists:
-        if a.genres:
-            for g in a.genres:
-                genre_set.add(g.strip())
-
-    # Bulk upsert genres
-    genre_rows = [{"name": g} for g in sorted(genre_set) if g]
-    for i in range(0, len(genre_rows), 500):
-        batch = genre_rows[i:i+500]
-        stmt = pg_insert(Genre).values(batch)
-        stmt = stmt.on_conflict_do_nothing(index_elements=["name"])
-        session.execute(stmt)
-    session.commit()
-
-    # Build artist_genres in bulk
-    genre_map = {g.name: g.genre_id for g in session.query(Genre).all()}
-    bridge_rows = []
-    for a in artists:
-        if a.genres:
-            for g in a.genres:
-                g = g.strip()
-                if g in genre_map:
-                    bridge_rows.append({
-                        "artist_id": a.artist_id,
-                        "genre_id": genre_map[g],
-                    })
-    
-    for i in range(0, len(bridge_rows), 500):
-        batch = bridge_rows[i:i+500]
-        stmt = pg_insert(ArtistGenre).values(batch)
-        stmt = stmt.on_conflict_do_nothing()
-        session.execute(stmt)
-    session.commit()
-    print(f"  ✓ Genres: {len(genre_rows)} upserted / {session.query(Genre).count()} total")
-    print(f"  ✓ Artist-Genre links: {len(bridge_rows)} upserted")
-
-
 def seed_albums(session, df):
     """Seed albums from CSV (bulk upsert)."""
     albums = {}
@@ -214,8 +174,8 @@ def seed_albums(session, df):
 
 def seed_songs(session, df, mood_map):
     """Seed songs from processed CSV."""
-    mp3_dir = DATA_DIR.parent / "music_files"
-    art_dir = DATA_DIR.parent / "album_art"
+    mp3_dir = cfg.MUSIC_DIR
+    art_dir = cfg.ALBUM_ART_DIR
 
     new_count = 0
     update_count = 0
@@ -231,9 +191,34 @@ def seed_songs(session, df, mood_map):
         thumb = row.get("thumbnail_url")
         has_art = art_file.exists() or (pd.notna(row.get("image_url_medium")) and str(row.get("image_url_medium")).startswith("http")) or (pd.notna(thumb) and str(thumb).startswith("http"))
 
-        # Map mood_quadrant to mood_id
+        # Resolve arousal: prefer DEAM value; fall back to energy (same 0-1 scale)
+        arousal_raw = row.get("arousal")
+        if pd.notna(arousal_raw):
+            arousal_val = float(arousal_raw)
+        else:
+            energy_raw = row.get("energy")
+            arousal_val = float(energy_raw) if pd.notna(energy_raw) else 0.5
+
+        # Resolve color_hex: required; fall back to neutral indigo
+        color_hex_val = row.get("color_hex")
+        color_hex_val = str(color_hex_val) if pd.notna(color_hex_val) else "#6366f1"
+
+        # Resolve mood_quadrant: required; re-derive if missing/unknown
         mq = row.get("mood_quadrant")
-        mood_id = mood_map.get(mq) if pd.notna(mq) else None
+        if pd.isna(mq) or str(mq) == "Unknown":
+            v = float(row.get("valence", 0.5) or 0.5)
+            a = arousal_val
+            if v >= 0.5 and a >= 0.5:
+                mq = "Q1: Happy/Excited"
+            elif v < 0.5 and a >= 0.5:
+                mq = "Q2: Angry/Tense"
+            elif v < 0.5 and a < 0.5:
+                mq = "Q3: Sad/Melancholic"
+            else:
+                mq = "Q4: Calm/Peaceful"
+
+        # Map mood_quadrant to mood_id
+        mood_id = mood_map.get(mq)
 
         # Build column values dict
         song_data = dict(
@@ -241,15 +226,10 @@ def seed_songs(session, df, mood_map):
             album_id=row.get("album_id") if pd.notna(row.get("album_id")) else None,
             primary_artist_id=row.get("primary_artist_id") if pd.notna(row.get("primary_artist_id")) else None,
             primary_artist_name=row.get("primary_artist") if pd.notna(row.get("primary_artist")) else None,
-            isrc=row.get("isrc") if pd.notna(row.get("isrc")) else None,
-            track_number=int(row["track_number"]) if pd.notna(row.get("track_number")) else None,
-            disc_number=int(row["disc_number"]) if pd.notna(row.get("disc_number")) else None,
             popularity=int(row.get("track_popularity", 0)),
             duration_ms=int(row["track_duration_ms"]) if pd.notna(row.get("track_duration_ms")) else None,
             explicit=bool(row.get("track_explicit", False)),
             track_url=row.get("track_url") if pd.notna(row.get("track_url")) else None,
-            preview_url=row.get("preview_url") if pd.notna(row.get("preview_url")) else None,
-            available_markets_count=int(row["available_markets_count"]) if pd.notna(row.get("available_markets_count")) else None,
             image_url_large=row.get("image_url_large") if pd.notna(row.get("image_url_large")) else (row.get("thumbnail_url") if pd.notna(row.get("thumbnail_url")) else None),
             image_url_medium=row.get("image_url_medium") if pd.notna(row.get("image_url_medium")) else (row.get("thumbnail_url") if pd.notna(row.get("thumbnail_url")) else None),
             image_url_small=row.get("image_url_small") if pd.notna(row.get("image_url_small")) else None,
@@ -272,39 +252,24 @@ def seed_songs(session, df, mood_map):
             valence=float(row["valence"]) if pd.notna(row.get("valence")) else None,
             tempo=float(row["tempo"]) if pd.notna(row.get("tempo")) else None,
             time_signature=int(row["time_signature"]) if pd.notna(row.get("time_signature")) else None,
-            has_audio_features=pd.notna(row.get("danceability")),
             # ML-predicted features
-            arousal=float(row["arousal"]) if pd.notna(row.get("arousal")) else None,
+            arousal=arousal_val,
             timbre_bright=float(row["timbre_bright"]) if pd.notna(row.get("timbre_bright")) else None,
-            mood_tags=row.get("mood_tags") if pd.notna(row.get("mood_tags")) else None,
-            instrument_tags=row.get("instrument_tags") if pd.notna(row.get("instrument_tags")) else None,
-            voice_gender=row.get("voice_gender") if pd.notna(row.get("voice_gender")) else None,
-            voice_gender_confidence=float(row["voice_gender_confidence"]) if pd.notna(row.get("voice_gender_confidence")) else None,
             # Lyrics
-            lrclib_id=int(row["lrclib_id"]) if pd.notna(row.get("lrclib_id")) else None,
             plain_lyrics=row.get("plain_lyrics") if pd.notna(row.get("plain_lyrics")) else None,
             synced_lyrics=row.get("synced_lyrics") if pd.notna(row.get("synced_lyrics")) else None,
             instrumental=bool(row.get("instrumental", False)),
             has_lyrics=bool(row.get("has_lyrics", False)),
             lyrics_cleaned=row.get("lyrics_cleaned") if pd.notna(row.get("lyrics_cleaned")) else None,
             # Processed features
-            color_hue=float(row["color_hue"]) if pd.notna(row.get("color_hue")) else None,
-            color_saturation=float(row["color_saturation"]) if pd.notna(row.get("color_saturation")) else None,
-            color_lightness=float(row["color_lightness"]) if pd.notna(row.get("color_lightness")) else None,
-            color_hex=row.get("color_hex") if pd.notna(row.get("color_hex")) else None,
+            color_hex=color_hex_val,
             sentiment_compound=float(row["sentiment_compound"]) if pd.notna(row.get("sentiment_compound")) else None,
             sentiment_positive=float(row["sentiment_positive"]) if pd.notna(row.get("sentiment_positive")) else None,
             sentiment_neutral=float(row["sentiment_neutral"]) if pd.notna(row.get("sentiment_neutral")) else None,
             sentiment_negative=float(row["sentiment_negative"]) if pd.notna(row.get("sentiment_negative")) else None,
             sentiment_category=row.get("sentiment_category") if pd.notna(row.get("sentiment_category")) else None,
-            mood_score=float(row["mood_score"]) if pd.notna(row.get("mood_score")) else None,
-            mood_quadrant=mq if pd.notna(mq) else None,
+            mood_quadrant=mq,
             mood_id=mood_id,
-            dance_score=float(row["dance_score"]) if pd.notna(row.get("dance_score")) else None,
-            acoustic_score=float(row["acoustic_score"]) if pd.notna(row.get("acoustic_score")) else None,
-            combined_positivity=float(row["combined_positivity"]) if pd.notna(row.get("combined_positivity")) else None,
-            energy_level=row.get("energy_level") if pd.notna(row.get("energy_level")) else None,
-            tempo_category=row.get("tempo_category") if pd.notna(row.get("tempo_category")) else None,
             has_mp3=has_mp3,
             mp3_filename=f"{tid}.mp3" if has_mp3 else None,
         )
@@ -374,9 +339,15 @@ def seed_embeddings(session):
         print(f"  ⚠ Mismatch: {len(track_ids)} IDs vs {embeddings.shape[0]} vectors")
         return
 
+    existing_song_ids = {str(tid) for (tid,) in session.query(Song.track_id).all()}
     model_name = meta.get("model", "vinai/phobert-base")
     rows = []
+    skipped_missing_song = 0
     for i, tid in enumerate(track_ids):
+        tid = str(tid)
+        if tid not in existing_song_ids:
+            skipped_missing_song += 1
+            continue
         rows.append({
             "track_id": tid,
             "embedding": embeddings[i].tolist(),
@@ -397,6 +368,8 @@ def seed_embeddings(session):
 
     session.commit()
     print(f"  ✓ Embeddings: {len(rows)} upserted / {session.query(SongEmbedding).count()} total")
+    if skipped_missing_song:
+        print(f"    skipped {skipped_missing_song} embeddings for tracks not present in songs")
 
 
 def run_seed():
@@ -431,13 +404,10 @@ def run_seed():
         print("\n2. Seeding artists...")
         seed_artists(session, df, artist_images)
 
-        print("\n3. Seeding genres...")
-        seed_genres(session)
-
-        print("\n4. Seeding albums...")
+        print("\n3. Seeding albums...")
         seed_albums(session, df)
 
-        print("\n5. Seeding songs...")
+        print("\n4. Seeding songs...")
         # Build mood_quadrant → mood_id map (full quadrant string → first mood_id)
         moods = session.query(Mood).all()
         mood_map = {}
@@ -449,22 +419,22 @@ def run_seed():
                 mood_map[full_key] = m.mood_id
         seed_songs(session, df, mood_map)
 
-        print("\n6. Seeding song-artist bridges...")
+        print("\n5. Seeding song-artist bridges...")
         seed_song_artists(session, df)
 
-        print("\n7. Seeding embeddings...")
+        print("\n6. Seeding embeddings...")
         seed_embeddings(session)
 
         # 8. Create HNSW index for fast similarity search
-        print("\n8. Creating HNSW vector index...")
+        print("\n7. Creating HNSW vector index...")
         create_hnsw_index(session)
 
         # 8b. Ensure pg_trgm extension and trigram indexes
-        print("\n8b. Creating trigram indexes for text search...")
+        print("\n7b. Creating trigram indexes for text search...")
         ensure_trigram_indexes(session)
 
         # 9. Post-seed validation
-        print("\n9. Post-seed validation...")
+        print("\n8. Post-seed validation...")
         post_seed_validation(session)
 
         # Summary
@@ -473,7 +443,6 @@ def run_seed():
         print(f"  Artists:    {session.query(Artist).count()}")
         print(f"  Albums:     {session.query(Album).count()}")
         print(f"  Songs:      {session.query(Song).count()}")
-        print(f"  Genres:     {session.query(Genre).count()}")
         print(f"  Moods:      {session.query(Mood).count()}")
         print(f"  Embeddings: {session.query(SongEmbedding).count()}")
         print("=" * 60)
@@ -572,6 +541,17 @@ def post_seed_validation(session):
     if len(quadrants) < 4:
         print(f"  ⚠ Only {len(quadrants)} quadrants have songs (expected 4)")
         issues += 1
+
+    # Critical columns must never be NULL (NOT NULL enforced at DB level after migration 017)
+    for col in ("color_hex", "arousal", "mood_quadrant"):
+        null_count = session.execute(
+            text(f"SELECT COUNT(*) FROM songs WHERE {col} IS NULL")
+        ).scalar()
+        if null_count > 0:
+            print(f"  ⚠ {null_count} songs have NULL {col} — run migration 017 or re-seed")
+            issues += 1
+        else:
+            print(f"  ✓ {col}: no NULLs")
 
     # HNSW index active check
     hnsw_check = session.execute(text(

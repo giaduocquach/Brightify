@@ -75,6 +75,10 @@ data/*.json
 !data/.gitkeep
 !data/README.md
 
+# Training / research datasets — not needed at runtime
+data/external/
+data/pmemo/
+
 # Canonical var/ root (after Docker migration)
 var/
 
@@ -140,3 +144,4 @@ CLAUDE.md
 .envrc
 .direnv/
 node_modules/
+backups/

@@ -19,12 +19,20 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'songs',
-        sa.Column('loudness_lufs', sa.Float(), nullable=True,
-                  comment='Integrated loudness in LUFS (ITU-R BS.1770)')
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("songs")}
+    if "loudness_lufs" not in columns:
+        op.add_column(
+            'songs',
+            sa.Column('loudness_lufs', sa.Float(), nullable=True,
+                      comment='Integrated loudness in LUFS (ITU-R BS.1770)')
+        )
 
 
 def downgrade():
-    op.drop_column('songs', 'loudness_lufs')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("songs")}
+    if "loudness_lufs" in columns:
+        op.drop_column('songs', 'loudness_lufs')

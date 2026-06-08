@@ -78,7 +78,7 @@ class Catalog:
         restores them after loading so the singleton is not polluted.
 
         Usage::
-            cat = Catalog.load_fresh(ENABLE_KG=False, ENABLE_CLAP_EMOTION=False)
+            cat = Catalog.load_fresh(ENABLE_CLAP_EMOTION=False)
         """
         import config as cfg
         import core.recommendation_engine as _eng
@@ -103,7 +103,7 @@ class Catalog:
     # flags (ENABLE_RRF, DIVERSITY_METHOD, ENABLE_VN_CONTEXT) are read live by the
     # engine and must be pinned by the caller around recommend() calls.
     _ISOLATION_KEYS = (
-        "ENABLE_PILLAR_B", "ENABLE_MERT", "ENABLE_KG", "ENABLE_CLAP_EMOTION",
+        "ENABLE_PILLAR_B", "ENABLE_MERT", "ENABLE_CLAP_EMOTION",
         "ENABLE_RRF", "ENABLE_VN_CONTEXT", "DIVERSITY_METHOD", "MERT_EMBEDDINGS_FILE",
     )
 
@@ -114,7 +114,7 @@ class Catalog:
         Selects the embeddings file from the *overridden* ENABLE_PILLAR_B (not the
         live config default), so each pillar A/B test can be measured against a
         clean v7.2 baseline with all other pillars off. Init-time flags
-        (ENABLE_PILLAR_B → embeddings, ENABLE_MERT, ENABLE_KG, ENABLE_CLAP_EMOTION,
+        (ENABLE_PILLAR_B → embeddings, ENABLE_MERT, ENABLE_CLAP_EMOTION,
         MERT_EMBEDDINGS_FILE) take effect during construction. Recommend-time flags
         must still be pinned by the caller around recommend() calls.
         """
@@ -211,3 +211,4 @@ class Catalog:
         if result is None or (hasattr(result, 'empty') and result.empty):
             return []
         return result['original_index'].tolist()
+

@@ -44,6 +44,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import pandas as pd
 from tqdm import tqdm
+from difflib import SequenceMatcher
 
 # LRCLIB: sử dụng REST API trực tiếp (không cần package bên thứ 3)
 HAS_LRCLIB = True  # always available via requests
@@ -1035,6 +1036,131 @@ class VietnameseDetector:
         'đinh tiến đạt', 'song luân', 'nicky', 'đỗ phú quí',
         'dương edward',
 
+        # ── Indie / Bedroom Pop / Singer-Songwriter (bổ sung 2026) ──
+        # Những nghệ sĩ indie/GenZ thật sự phổ biến nhưng chưa có trong list
+        'nân',              # indie ballad; rất phổ biến với GenZ 2022-2024
+        'tiên tiên',        # indie; "Say You Do", vẫn active 2020s
+        'phương my',        # indie/bedroom pop; rising 2021-2024
+        'beepbeepchild',    # indie/lo-fi; trending underground 2023-2024
+        'tanny ng',         # underground indie; collab scene 2022-2024
+        'hoa vinh',         # Tây Nguyên-influenced; "Thích Mình Duyên" viral 2022
+        'thoại nghi',       # indie/ballad GenZ; emerging 2023-2024
+
+        # ── GenZ Pop Mainstream (bổ sung) ──
+        'hiền hồ',          # ballad/R&B; rất phổ biến 2020-2024
+        'phương anh idol',  # Vietnam Idol 2023; mainstream rising
+
+        # ── Rap / Hip-Hop (layer bổ sung 2024-2026) ──
+        'mck',              # MCK solo profile (khác "rpt mck" group đã có)
+        'nhat nguyen',      # Irish-Vietnamese rapper; "Staying" viral 2021
+        'ozn',              # underground producer/rapper collab 2022-2024
+        'fntastic',         # underground rap collab 2022-2024
+        'the thien',        # emerging pop/indie 2024
+        'nakim',            # underground rap 2023-2024
+        'loathecreed',      # underground rap/trap 2023-2024
+
+        # ── Expansion 2026-06 — recent awards, charts, and TV breakouts ──
+        'nguyễn hùng', 'nguyen hung',
+        'sơn.k', 'son.k',
+        'mylina',
+        'saabirose',
+        'chi xê', 'chi xe',
+        'đào tử a1j', 'dao tu a1j', 'a1j',
+        'olew', 'o.lew',
+
+        # ── Anh Trai Say Hi 2024-2025 / Rap Việt finalists ──
+        'captain', 'captain boy',
+        'gin tuấn kiệt', 'gin tuan kiet',
+        'vũ thịnh', 'vu thinh',
+        'thái ngân', 'thai ngan',
+        'cody nam võ', 'cody nam vo', 'codynamvo',
+        'bùi duy ngọc', 'bui duy ngoc',
+        'hải nam', 'hai nam',
+        'ryn lee', 'otis', 'congb',
+        'đỗ nam sơn', 'do nam son',
+        'lohan', 'dillan hoàng phan', 'dillan hoang phan',
+        'jey b', 'jaysonlei',
+        '7dnight', 'danmy',
+        'huỳnh công hiếu', 'huynh cong hieu',
+        'kellie', 'hoàng anh', 'hoang anh',
+
+        # ── Active 9x-era artists with current Gen Z reach ──
+        'khắc việt', 'khac viet',
+        'hồ quang hiếu', 'ho quang hieu',
+        'lê bảo bình', 'le bao binh',
+        'hải sâm', 'hai sam', 'haisam',
+        'châu khải phong', 'chau khai phong',
+        'đình dũng', 'dinh dung',
+        'đinh tùng huy', 'dinh tung huy',
+        'huy vạc', 'huy vac',
+        'mỹ mỹ', 'my my',
+        'võ hạ trâm', 'vo ha tram',
+
+    }
+
+    # Artist-level blocklists contain historical data-quality decisions and
+    # must not reject newer releases from artists who are currently active.
+    # Tracks by these artists still pass the normal year, popularity, seasonal,
+    # children, foreign-language, version, and profanity filters.
+    CURRENT_ARTISTS = {
+        # Anh Trai Say Hi 2024
+        'hieuthuhai', 'wean', 'công dương', 'cong duong',
+        'anh tú atus', 'anh tu atus', 'anh tú', 'anh tu',
+        'quang hùng masterd', 'quang hung masterd',
+        'lou hoàng', 'lou hoang', 'quang trung', 'jsol',
+        'đỗ phú quí', 'do phu qui', 'đỗ phú quý', 'do phu quy',
+        'song luân', 'song luan', 'gin tuấn kiệt', 'gin tuan kiet',
+        'quân a.p', 'quan a.p', 'hùng huỳnh', 'hung huynh',
+        'nicky', 'tage', 'hải đăng doo', 'hai dang doo',
+        'dương domic', 'duong domic', 'pháp kiều', 'phap kieu',
+        'ali hoàng dương', 'ali hoang duong', 'negav',
+        'captain', 'captain boy', 'hurrykng',
+        'phạm đình thái ngân', 'pham dinh thai ngan', 'thái ngân', 'thai ngan',
+        'phạm anh duy', 'pham anh duy', 'isaac', 'đức phúc', 'duc phuc',
+        'erik', 'rhyder', 'quang anh rhyder', 'vũ thịnh', 'vu thinh',
+
+        # Anh Trai Say Hi 2025
+        'ngô kiến huy', 'ngo kien huy', 'buitruonglinh',
+        'cody nam võ', 'cody nam vo', 'codynamvo',
+        'vương bình', 'vuong binh', 'rio', 'karik', 'b ray', 'bray',
+        'ryn lee', 'khoi vu', 'khôi vũ', 'bùi duy ngọc', 'bui duy ngoc',
+        'phúc du', 'phuc du', 'hải nam', 'hai nam',
+        'hustlang robber', 'robber', 'ogenus', 'otis', 'congb',
+        'đỗ nam sơn', 'do nam son', 'lohan', 'sơn.k', 'son.k',
+        'dillan hoàng phan', 'dillan hoang phan',
+        'vũ cát tường', 'vu cat tuong', 'bigdaddy', 'big daddy',
+        'tez', 'jey b', 'nhâm phương nam', 'nham phuong nam',
+        'gill', 'jaysonlei', 'mason nguyen', 'mason nguyễn',
+
+        # Rap Việt season 1-4 finalists
+        'dế choắt', 'de choat', 'gducky', 'g.ducky',
+        'rpt mck', 'mck', 'tlinh', 'gonzo', 'rpt gonzo',
+        'thành draw', 'thanh draw', 'ricky star', 'lăng ld', 'lang ld',
+        'seachains', 'blacka', 'b-wine', 'bwine', 'vsoul', 'v soul',
+        "lil' wuyn", 'lil wuyn', 'hoàng anh', 'hoang anh', 'kellie', 'dlow',
+        'double2t', 'double 2t', '24k.right', '24k right',
+        'liu grace', 'huỳnh công hiếu', 'huynh cong hieu',
+        'mikelodic', 'smo', 'pháp kiều', 'phap kieu',
+        'coolkid', 'danmy', 'manbo', '7dnight', 'saabirose',
+
+        # Current chart/mainstream artists and active 9x-era catalog
+        'sơn tùng mtp', 'sơn tùng m-tp', 'son tung mtp',
+        'đen vâu', 'den vau', 'soobin', 'soobin hoàng sơn',
+        'đông nhi', 'dong nhi', 'tóc tiên', 'toc tien',
+        'miu lê', 'miu le', 'trung quân', 'trung quan',
+        'văn mai hương', 'van mai huong', 'hương tràm', 'huong tram',
+        'quốc thiên', 'quoc thien', 'jun phạm', 'jun pham',
+        'cường seven', 'cuong seven', 'khắc việt', 'khac viet',
+        'hồ quang hiếu', 'ho quang hieu', 'lê bảo bình', 'le bao binh',
+        'châu khải phong', 'chau khai phong', 'đình dũng', 'dinh dung',
+        'đinh tùng huy', 'dinh tung huy', 'huy vạc', 'huy vac',
+        'phương mỹ chi', 'phuong my chi', 'mỹ anh', 'my anh',
+        'mỹ mỹ', 'my my', 'lâm bảo ngọc', 'lam bao ngoc',
+        'hà nhi', 'ha nhi', 'võ hạ trâm', 'vo ha tram',
+        'hải sâm', 'hai sam', 'haisam',
+        'noo phước thịnh', 'noo phuoc thinh', 'bích phương', 'bich phuong',
+        'bảo anh', 'bao anh', 'hòa minzy', 'hoa minzy',
+        'hoàng thùy linh', 'hoang thuy linh',
     }
 
     # ── OLD-GENRE ARTIST BLOCKLIST ──
@@ -1421,7 +1547,6 @@ class VietnameseDetector:
         'uyên linh', 'uyen linh',
         'hương tràm', 'huong tram',
         'đinh mạnh ninh', 'dinh manh ninh',
-        'phương mỹ chi', 'phuong my chi',
         'thái trinh', 'thai trinh',
         'song luân', 'song luan',
         'khắc việt', 'khac viet',
@@ -1783,6 +1908,7 @@ class VietnameseDetector:
         return bool(cls.COMMON_VN_WORDS.search(text.lower()))
 
     _KNOWN_ARTISTS_NORMALIZED = {a.replace(' ', '').replace('-', ''): a for a in KNOWN_ARTISTS}
+    _CURRENT_ARTISTS_STRIPPED = None
 
     @classmethod
     def is_known_artist(cls, artist_names: List[str]) -> bool:
@@ -1794,6 +1920,32 @@ class VietnameseDetector:
             if normalized in cls._KNOWN_ARTISTS_NORMALIZED:
                 return True
         return False
+
+    @classmethod
+    def is_current_artist(cls, artist_names: List[str]) -> bool:
+        """Return True for an exact current-artist name or normalized alias."""
+        if cls._CURRENT_ARTISTS_STRIPPED is None:
+            cls._CURRENT_ARTISTS_STRIPPED = {
+                cls._strip_vn_diacritics(name) for name in cls.CURRENT_ARTISTS
+            }
+        for name in artist_names:
+            cleaned = str(name or '').lower().strip()
+            if cleaned in cls.CURRENT_ARTISTS:
+                return True
+            if cls._strip_vn_diacritics(cleaned) in cls._CURRENT_ARTISTS_STRIPPED:
+                return True
+        return False
+
+    @classmethod
+    def is_current_old_genre_overlap(cls, artist_names: List[str]) -> bool:
+        """Current artist whose name also exists in the historical old list."""
+        if not cls.is_current_artist(artist_names):
+            return False
+        stripped_old = cls._get_stripped_blocklist()
+        return any(
+            cls._strip_vn_diacritics(str(name or "")) in stripped_old
+            for name in artist_names
+        )
 
     # Pre-computed stripped blocklist for fuzzy matching (lazy init)
     _NON_ARTIST_BLOCKLIST_STRIPPED = None
@@ -1811,10 +1963,12 @@ class VietnameseDetector:
     def is_non_artist_channel(cls, artist_name: str) -> bool:
         """Check if artist name matches a non-artist channel pattern.
         Uses regex patterns, keyword matching, AND explicit blocklist
-        (with diacritics-stripped fuzzy matching).
-        Blocklist takes priority over KNOWN_ARTISTS whitelist."""
+        (with diacritics-stripped fuzzy matching)."""
         name = artist_name.strip()
         name_lower = name.lower()
+        # Exact current artists override stale or ambiguous channel entries.
+        if cls.is_current_artist([artist_name]):
+            return False
         # Explicit blocklist (exact match) — checked FIRST, overrides whitelist
         if name_lower in cls.NON_ARTIST_CHANNEL_BLOCKLIST:
             return True
@@ -1861,6 +2015,11 @@ class VietnameseDetector:
         Matches both with-diacritics and stripped-diacritics versions."""
         stripped_bl = cls._get_stripped_blocklist()
         for name in artist_names:
+            # Exempt only this current artist. Other credited artists still
+            # need to be checked so a modern + old-genre collaboration does
+            # not bypass the filter.
+            if cls.is_current_artist([name]):
+                continue
             cleaned = name.lower().strip()
             # Exact match (with diacritics)
             if cleaned in cls.OLD_GENRE_BLOCKLIST:
@@ -2075,6 +2234,43 @@ class PlaylistDiscoveryCollector:
         self.visited_yt_albums = set()
         self.api_calls = 0
         self._lock = threading.Lock()  # thread-safe access
+        self.existing_track_ids = self._load_existing_track_ids()
+
+    @staticmethod
+    def _load_existing_track_ids() -> set[str]:
+        """Load active and intentionally removed IDs to avoid recollection."""
+        candidates = [
+            Config.BASE_DIR / "data" / "vietnamese_music_processed_full.csv",
+            Config.BASE_DIR / "checkpoints" / "phase5_features.csv",
+            Config.BASE_DIR / "checkpoints" / "phase3_downloaded.csv",
+            Config.BASE_DIR / "checkpoints" / "phase2_filtered.csv",
+        ]
+        candidates.extend(
+            sorted(
+                (Config.BASE_DIR / "data").glob("filtered_out_tracks_*.csv"),
+                reverse=True,
+            )[:2]
+        )
+
+        existing_ids: set[str] = set()
+        for csv_path in candidates:
+            if not csv_path.exists():
+                continue
+            try:
+                ids = pd.read_csv(csv_path, usecols=["track_id"])["track_id"]
+                existing_ids.update(
+                    value
+                    for value in ids.astype(str)
+                    if value and value.lower() not in {"nan", "none"}
+                )
+            except Exception as exc:
+                log.debug(f"  Could not load existing IDs from {csv_path}: {exc}")
+
+        if existing_ids:
+            log.info(
+                f"  Skip-existing: loaded {len(existing_ids):,} active/rejected track IDs"
+            )
+        return existing_ids
 
     @staticmethod
     def _create_yt_instance():
@@ -2523,6 +2719,18 @@ class PlaylistDiscoveryCollector:
             "Cống Hiến", "WeChoice Awards ca sĩ",
             "Billboard Vietnam", "Top 50 Vietnam",
             "ZingChart", "NhacCuaTui",
+            # ── Năm cụ thể (tín hiệu mạnh cho nhạc hiện đại) ──
+            "vpop 2023", "vpop 2024", "vpop 2025",
+            "nhạc Việt 2024", "nhạc Việt 2025",
+            # ── Genre còn thiếu ──
+            "bedroom pop Việt", "indie pop Việt Nam",
+            "singer songwriter Việt", "neo soul Việt Nam",
+            "chill r&b Việt Nam", "alternative Việt Nam",
+            # ── Platform / trend signal ──
+            "nhạc hot TikTok Việt", "nhạc viral Việt 2024",
+            # ── Scene underground bổ sung ──
+            "underground rap Hà Nội", "underground rap Sài Gòn",
+            "underground hiphop Việt 2024",
         ]
 
         # Combined artist+track search: 1 API call returns BOTH types
@@ -2818,8 +3026,12 @@ class PlaylistDiscoveryCollector:
                                 continue
 
                             spotify_track_id = track.get("id")
-                            if not spotify_track_id or spotify_track_id in self.tracks:
+                            if not spotify_track_id:
                                 continue
+                            if spotify_track_id in self.tracks:
+                                continue
+                            if spotify_track_id in self.existing_track_ids:
+                                continue  # already processed in a previous pipeline run
 
                             found_any = True
 
@@ -3545,7 +3757,7 @@ class PlaylistDiscoveryCollector:
     def _add_ytmusic_track(self, track, primary_artist_name=""):
         """Add a single track from YTMusic data to self.tracks."""
         vid = track.get("videoId")
-        if not vid or vid in self.tracks:
+        if not vid or vid in self.tracks or vid in self.existing_track_ids:
             return False
 
         # Skip unavailable tracks
@@ -3968,6 +4180,10 @@ class PlaylistDiscoveryCollector:
 
                 primary_artist = artists[0].get("name", "") if artists else ""
                 primary_artist_id = artists[0].get("id", "") if artists else ""
+                artist_info = self.artists.get(
+                    self._normalize_artist_key(primary_artist),
+                    {},
+                )
 
                 # Determine track URL (Spotify or YTMusic)
                 spotify_url = track.get("spotify_track_url", "")
@@ -3975,6 +4191,14 @@ class PlaylistDiscoveryCollector:
                     track_url = spotify_url
                 else:
                     track_url = f"https://music.youtube.com/watch?v={vid}"
+
+                # Release year: prefer explicit "year" field, fall back to release_date prefix
+                _year_raw = track.get("year") or track.get("release_date", "")
+                _year = str(_year_raw)[:4] if _year_raw else None
+                try:
+                    _year = str(int(_year)) if _year and _year.isdigit() and int(_year) > 1900 else None
+                except (ValueError, TypeError):
+                    _year = None
 
                 row = {
                     "track_id": vid,
@@ -3989,6 +4213,12 @@ class PlaylistDiscoveryCollector:
                     "track_explicit": track.get("isExplicit", False),
                     "track_url": track_url,
                     "thumbnail_url": thumbnail_url,
+                    # Metadata for year filter (Filter 6g) and popularity filter (8/8c)
+                    "year": _year,
+                    "release_date": track.get("release_date", "") or None,
+                    "track_popularity": track.get("track_popularity") or track.get("popularity") or None,
+                    "artist_popularity": artist_info.get("spotify_popularity"),
+                    "artist_genres": ", ".join(artist_info.get("spotify_genres") or []),
                 }
                 rows.append(row)
             except Exception as e:
@@ -4197,6 +4427,55 @@ class LyricsCollector:
         if checkpoint_mgr:
             checkpoint_mgr.save("lyrics", lyrics_dict)
 
+        # ── Retry pass cho track thiếu lyrics ────────────────────────────
+        # Lý do fail: YTMusic rate-limit khi fetch song song. Retry tuần tự
+        # với delay lớn hơn, tối đa 3 lần.
+        LYRICS_MAX_RETRY  = 3
+        LYRICS_RETRY_WAIT = 15   # giây chờ trước mỗi pass
+        LYRICS_RETRY_DELAY = 1.5 # giây giữa mỗi track trong retry
+
+        tasks_by_id = {t["track_id"]: t for t in tasks}
+
+        for retry_pass in range(1, LYRICS_MAX_RETRY + 1):
+            failed_ids = [
+                tid for tid, data in lyrics_dict.items()
+                if not data.get("has_lyrics") and tid in tasks_by_id
+            ]
+            if not failed_ids:
+                break
+
+            wait_s = LYRICS_RETRY_WAIT * retry_pass
+            log.info(f"  🔄 Lyrics retry {retry_pass}/{LYRICS_MAX_RETRY} — "
+                     f"{len(failed_ids)} track thiếu lyrics (chờ {wait_s}s...)")
+            import time as _t; _t.sleep(wait_s)
+
+            # Dùng fresh YTMusic instance cho retry để tránh session stale
+            retry_yt = self._create_yt_instance() or (yt_instances[0] if yt_instances else None)
+            if not retry_yt:
+                log.warning("  Không tạo được YTMusic instance cho retry — dừng")
+                break
+
+            recovered = 0
+            for tid in tqdm(failed_ids, desc=f"Lyrics retry {retry_pass}"):
+                task = tasks_by_id[tid]
+                result = self._fetch_one_threaded(task, retry_yt)
+                with lyrics_lock:
+                    if result and result.get("has_lyrics"):
+                        lyrics_dict[tid] = result
+                        recovered += 1
+                    # else: giữ nguyên entry has_lyrics=False
+                _t.sleep(LYRICS_RETRY_DELAY)
+
+            log.info(f"  Lyrics retry {retry_pass}: recovered {recovered}, "
+                     f"still missing {len(failed_ids) - recovered}")
+            if checkpoint_mgr:
+                checkpoint_mgr.save("lyrics", lyrics_dict)
+
+        still_missing = sum(1 for d in lyrics_dict.values() if not d.get("has_lyrics"))
+        if still_missing:
+            log.info(f"  ⚠️  {still_missing} track vẫn thiếu lyrics sau {LYRICS_MAX_RETRY} lần retry")
+        # ─────────────────────────────────────────────────────────────────
+
         self._print_stats()
         return lyrics_dict
 
@@ -4263,6 +4542,17 @@ class LyricsCollector:
                 for r in results:
                     vid = r.get("videoId")
                     if not vid or vid in tried_ids:
+                        continue
+                    result_artists = ", ".join(
+                        artist.get("name", "")
+                        for artist in (r.get("artists") or [])
+                        if isinstance(artist, dict)
+                    )
+                    if not self._search_result_matches(
+                        task,
+                        r.get("title", ""),
+                        result_artists,
+                    ):
                         continue
                     tried_ids.add(vid)
                     result = self._extract_ytmusic_lyrics_with_inst(vid, task["track_name"], yt_inst)
@@ -4349,7 +4639,13 @@ class LyricsCollector:
                 }
                 resp = self.session.get(f"{self.LRCLIB_URL}/get", params=params, timeout=10)
                 if resp.status_code == 200:
-                    return self._format_lrclib(resp.json())
+                    result = resp.json()
+                    if self._search_result_matches(
+                        task,
+                        result.get("trackName", ""),
+                        result.get("artistName", ""),
+                    ):
+                        return self._format_lrclib(result)
 
             params = {
                 "track_name": task["track_name"],
@@ -4358,11 +4654,55 @@ class LyricsCollector:
             resp = self.session.get(f"{self.LRCLIB_URL}/search", params=params, timeout=10)
             if resp.status_code == 200:
                 results = resp.json()
-                if results and len(results) > 0:
-                    return self._format_lrclib(results[0])
+                for result in results or []:
+                    if self._search_result_matches(
+                        task,
+                        result.get("trackName", ""),
+                        result.get("artistName", ""),
+                    ):
+                        return self._format_lrclib(result)
         except Exception as e:
             log.debug(f"  LRCLIB error for '{task['track_name']}': {e}")
         return None
+
+    @staticmethod
+    def _normalize_lyrics_match(value) -> str:
+        text = VietnameseDetector._strip_vn_diacritics(str(value or ""))
+        text = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", text)
+        text = re.sub(r"\b(?:feat|ft|featuring)\b.*$", " ", text)
+        return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+    @classmethod
+    def _search_result_matches(
+        cls,
+        task: dict,
+        result_title: str,
+        result_artists: str,
+    ) -> bool:
+        expected_title = cls._normalize_lyrics_match(task.get("track_name", ""))
+        candidate_title = cls._normalize_lyrics_match(result_title)
+        if not expected_title or not candidate_title:
+            return False
+        title_ratio = SequenceMatcher(
+            None,
+            expected_title,
+            candidate_title,
+            autojunk=False,
+        ).ratio()
+        title_match = (
+            expected_title == candidate_title
+            or title_ratio >= 0.90
+        )
+        if not title_match:
+            return False
+
+        expected_artist = cls._normalize_lyrics_match(task.get("artist_name", ""))
+        candidate_artist = cls._normalize_lyrics_match(result_artists)
+        if not expected_artist or not candidate_artist:
+            return True
+        expected_tokens = set(expected_artist.split())
+        candidate_tokens = set(candidate_artist.split())
+        return bool(expected_tokens & candidate_tokens)
 
     def _format_lrclib(self, data):
         return {

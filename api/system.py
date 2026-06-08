@@ -23,13 +23,11 @@ def require_admin(request: Request):
 router = APIRouter(tags=["System"])
 
 _recommender = None
-_image_analyzer = None
 
 
-def init(recommender, image_analyzer_ref):
-    global _recommender, _image_analyzer
+def init(recommender):
+    global _recommender
     _recommender = recommender
-    _image_analyzer = image_analyzer_ref
 
 
 class HealthResponse(BaseModel):
@@ -141,13 +139,6 @@ async def get_configuration():
     }
 
 
-@router.get("/api/image/status")
-async def image_service_status():
-    return {
-        "available": _image_analyzer is not None,
-        "model": "CLIP ViT-B/32" if _image_analyzer else None,
-        "device": _image_analyzer.device if _image_analyzer else None,
-    }
 
 
 # ============================================================================

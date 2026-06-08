@@ -148,8 +148,6 @@ class MusicPlayer {
 
         this.audio.src = song.audio_url;
         this.audio.load();
-        // Apply current playback speed
-        if (window.playbackSpeed) this.audio.playbackRate = window.playbackSpeed.current;
         this.audio.play().catch(() => {});
         this._songStartTime = Date.now();
         this._songStartTrackId = song.track_id;
@@ -726,13 +724,15 @@ class MusicPlayer {
         if (thumb) thumb.style.left = `${pct}%`;
         if (cur) cur.textContent = this._formatTime(currentTime);
 
-        // Crossfade trigger: in smart mode we peek the next track to compute
-        // the plan and trigger fade exactly when the planned window starts.
-        // Legacy mode (smart=false) keeps fixed `duration + 5s` heuristic.
+        // Crossfade trigger: smart mode uses the pipeline fade_out_cue_s (audio-derived
+        // silence start) as the absolute trigger position, which avoids the ±5s error
+        // from comparing against YouTube metadata duration. Falls back to counting back
+        // from actual audio end when no cue is available.
+        // Legacy mode (smart=false) keeps fixed `crossfadeDuration + 5s` heuristic.
         if (window.crossfade?.enabled && duration > 15 && !this._crossfading) {
-            const remaining = duration - currentTime;
+            const remaining = duration - currentTime;   // duration = this.audio.duration (actual)
             const smart = window.crossfade?.smart !== false;
-            let triggerAt;
+            let shouldTrigger = false;
             if (smart) {
                 const nextIdx = this._getNextIndex();
                 const nextSong = (nextIdx >= 0 && nextIdx !== this.currentIndex)
@@ -740,15 +740,21 @@ class MusicPlayer {
                 const currentSong = this.queue[this.currentIndex];
                 if (nextSong && currentSong) {
                     const plan = planCrossfade(currentSong, nextSong, this.volume);
-                    triggerAt = plan.duration_s + 0.5;   // 0.5s safety margin
+                    if (Number.isFinite(currentSong.fade_out_cue_s)) {
+                        // Pipeline cue: actual silence-start position from audio analysis
+                        shouldTrigger = currentTime >= currentSong.fade_out_cue_s && remaining > 0.3;
+                    } else {
+                        // No cue: count back from actual audio end
+                        shouldTrigger = remaining <= plan.duration_s + 0.5 && remaining > 0.3;
+                    }
                 } else {
-                    triggerAt = 6.5;   // no next song info → default 6s + 0.5s
+                    shouldTrigger = remaining <= 6.5 && remaining > 0.3;
                 }
             } else {
                 const crossfadeDuration = window.crossfade.duration || 15;
-                triggerAt = crossfadeDuration + 5;
+                shouldTrigger = remaining <= crossfadeDuration + 5 && remaining > 0.3;
             }
-            if (remaining <= triggerAt && remaining > 0.3) {
+            if (shouldTrigger) {
                 this._startCrossfade();
             }
         }
@@ -873,8 +879,22 @@ class MusicPlayer {
                         } catch(e) {}
                     }
                     
-                    // Prioritize songs with audio
-                    newSongs.sort((a, b) => (b.has_audio ? 1 : 0) - (a.has_audio ? 1 : 0));
+                    // Sort: audio availability first, then Camelot key compatibility
+                    // with the current song so the radio transition sounds smooth.
+                    const _curKey  = Number.isFinite(currentSong?.key)  ? Math.round(currentSong.key)  : null;
+                    const _curMode = Number.isFinite(currentSong?.mode) ? Math.round(currentSong.mode) : null;
+                    newSongs.sort((a, b) => {
+                        const audioScore = (b.has_audio ? 1 : 0) - (a.has_audio ? 1 : 0);
+                        if (audioScore !== 0) return audioScore;
+                        if (_curKey !== null && _curMode !== null
+                                && Number.isFinite(a.key) && Number.isFinite(b.key)
+                                && Number.isFinite(a.mode) && Number.isFinite(b.mode)) {
+                            const camA = camelotCompatible(_curKey, _curMode, Math.round(a.key), Math.round(a.mode));
+                            const camB = camelotCompatible(_curKey, _curMode, Math.round(b.key), Math.round(b.mode));
+                            return camB - camA;
+                        }
+                        return 0;
+                    });
                     
                     this.queue.push(...newSongs.slice(0, 10));
                     this._updateQueuePanel();
@@ -943,9 +963,7 @@ class MusicPlayer {
             case 'KeyI':
                 if (!e.metaKey && !e.ctrlKey) window.showLyrics?.();
                 break;
-            case 'KeyP':
-                if (!e.metaKey && !e.ctrlKey) window.playbackSpeed?.showPicker();
-                break;
+
             case 'ArrowUp':
                 e.preventDefault();
                 this.setVolume(Math.min(1, this.audio.volume + 0.05));
@@ -1200,8 +1218,6 @@ class MusicPlayer {
             }
         };
         this._audioInactive.addEventListener('loadedmetadata', onReady);
-        // Apply current playback speed to the next track
-        if (window.playbackSpeed) this._audioInactive.playbackRate = window.playbackSpeed.current;
         this._audioInactive.play().catch(() => {});
 
         // RAF fade loop — supports linear AND equal-power curves

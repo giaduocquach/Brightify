@@ -1,7 +1,7 @@
 """Backfill crossfade cue points + downbeats for all songs with a local MP3.
 
-Computes via tools.extract_cue_points (librosa structural segmentation +
-beat tracking). Writes to Song.fade_out_cue_s, Song.fade_in_cue_s, and
+Computes via tools.extract_cue_points (librosa structural segmentation + beat
+tracking). Writes to Song.fade_out_cue_s, Song.fade_in_cue_s, and
 Song.downbeat_times_json (the latter only for danceable tracks).
 
 Usage:
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -25,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import config as cfg
 from db.engine import SessionLocal
 from db.models import Song
 from tools.extract_cue_points import extract_cue_points
@@ -32,26 +32,20 @@ from tools.extract_cue_points import extract_cue_points
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger("backfill_cue_points")
 
-MUSIC_DIR = ROOT / "music_files"
+MUSIC_DIR = cfg.MUSIC_DIR
 DANCEABILITY_THRESHOLD = 0.7
 
 
-def _resolve_mp3(track_id: str, mp3_path: str | None) -> str | None:
-    if mp3_path and os.path.isabs(mp3_path) and os.path.exists(mp3_path):
-        return mp3_path
+def _resolve_mp3(track_id: str) -> str | None:
     default = MUSIC_DIR / f"{track_id}.mp3"
     if default.exists():
         return str(default)
-    if mp3_path:
-        rel = ROOT / mp3_path
-        if rel.exists():
-            return str(rel)
     return None
 
 
-def _process_one(track_id: str, mp3_path: str | None, is_danceable: bool):
+def _process_one(track_id: str, is_danceable: bool):
     """Worker: returns (track_id, result_dict or None, error_str or None)."""
-    mp3 = _resolve_mp3(track_id, mp3_path)
+    mp3 = _resolve_mp3(track_id)
     if not mp3:
         return track_id, None, "mp3_missing"
     result = extract_cue_points(mp3, is_danceable=is_danceable)
@@ -66,7 +60,7 @@ def main():
     args = ap.parse_args()
 
     session = SessionLocal()
-    q = session.query(Song.track_id, Song.mp3_path, Song.danceability).filter(Song.has_mp3.is_(True))
+    q = session.query(Song.track_id, Song.danceability).filter(Song.has_mp3.is_(True))
     if not args.force:
         q = q.filter(Song.fade_out_cue_s.is_(None))
     if args.limit:
@@ -80,17 +74,17 @@ def main():
         return
 
     log.info(f"Extracting cue points for {total} songs with {args.workers} worker(s)...")
-    payload = [(tid, mp3, bool(d and d >= DANCEABILITY_THRESHOLD)) for tid, mp3, d in rows]
+    payload = [(tid, bool(d and d >= DANCEABILITY_THRESHOLD)) for tid, d in rows]
 
     results = []
     if args.workers <= 1:
-        for i, (tid, mp3, dance) in enumerate(payload):
-            results.append(_process_one(tid, mp3, dance))
+        for i, (tid, dance) in enumerate(payload):
+            results.append(_process_one(tid, dance))
             if (i + 1) % 25 == 0:
                 log.info(f"  processed {i+1}/{total}")
     else:
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(_process_one, tid, mp3, dance): tid for tid, mp3, dance in payload}
+            futures = {ex.submit(_process_one, tid, dance): tid for tid, dance in payload}
             done = 0
             for fut in as_completed(futures):
                 results.append(fut.result())

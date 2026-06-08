@@ -822,7 +822,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ## 7. DATA LAYOUT & PERSISTENCE (MASTER GUIDE)
 
-> **Master guide cho mọi data trong Brightify** — đây là **single source of truth**. Các Plan 1, 2 và mọi tài liệu khác đều phải tuân theo layout này.
+> **Master guide về path/tier trong Docker**. Về source-of-truth runtime và phạm vi dữ liệu nên nằm ở DB so với filesystem, tài liệu authoritative là [PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](./PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md). Section này giữ vai trò hướng dẫn layout/mount path.
 
 ### 7.1 Triết lý 4 tiers
 

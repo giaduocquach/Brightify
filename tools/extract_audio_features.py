@@ -1,6 +1,6 @@
 """
-Brightify – Phase 5: Audio Feature Extraction v2.1
-(Essentia DSP + Essentia-TF pre-trained models + DEAM V-A + Librosa fallback)
+Brightify – Phase 5: Audio Feature Extraction v3.0
+(Essentia DSP + Essentia-TF DEAM V-A + Librosa fallback)
 
 Extracts audio features from MP3 files in music_files/ and writes them
 to checkpoints/phase5_features.csv for the next pipeline phase.
@@ -11,21 +11,16 @@ Input:  checkpoints/phase4_lyrics_gated.csv (tracks with lyrics, strict)
 Output: checkpoints/phase5_features.csv (tracks with audio features)
 
 Features extracted (DSP — Essentia/Librosa):
-  - energy, key, loudness, mode, liveness, tempo, time_signature
+  - energy, key, loudness, loudness_lufs, mode, tempo, time_signature
 
-Features extracted (Pre-trained TF models — Essentia EffNet-Discogs):
-  - danceability            (danceability classification head)
-  - acousticness            (mood_acoustic classification head)
-  - speechiness             (voice_instrumental head, inverted)
-  - instrumentalness        (voice_instrumental head)
-  - mood_tags   JSON        (MTG-Jamendo mood/theme head, 56 classes)
-  - instrument_tags JSON    (MTG-Jamendo instrument head, 40 classes)
-  - voice_gender             (gender classification head)
-  - audio_embedding  400-d   (EffNet-Discogs default output)
+Features extracted (Pre-trained TF models):
+  - danceability  (EffNet-Discogs classification head, 16kHz)
+  - valence       (DEAM V-A regression via MSD-MusiCNN)
+  - arousal       (DEAM V-A regression via MSD-MusiCNN)
 
-Features extracted (DEAM — MSD-MusiCNN backbone):
-  - valence                 (DEAM V-A regression, replaces heuristic)
-  - arousal                 (DEAM V-A regression, new feature)
+Removed in v3.0 (weight=0 in recommender, degenerate at 44kHz):
+  acousticness, speechiness, instrumentalness, liveness, timbre_bright,
+  audio_embedding (400-dim), voice_gender, mood_tags, instrument_tags.
 
 FFT safety: all audio is resampled to 44100 Hz mono with even sample count.
 
@@ -69,8 +64,7 @@ RAW_CSV = DATA_DIR / "vietnamese_music_complete_dataset_full.csv"
 PROCESSED_CSV = DATA_DIR / "vietnamese_music_processed_full.csv"
 MODEL_CACHE_DIR = PROJECT_ROOT / "models_cache"
 
-SAMPLE_RATE = 44100  # Standard sample rate for Essentia
-EMBEDDING_DIM = 400  # EffNet-Discogs default embedding output
+SAMPLE_RATE = 44100  # Standard sample rate for Essentia DSP
 
 
 # ── Essentia TF Model Registry ──────────────────────────────────────────────
@@ -78,85 +72,52 @@ EMBEDDING_DIM = 400  # EffNet-Discogs default embedding output
 MODEL_BASE_URL = "https://essentia.upf.edu/models"
 
 MODEL_REGISTRY = {
-    # ── Feature extractors (standalone, take raw audio) ──
-    # EffNet-Discogs feature extractor → 400-dim embeddings
+    # EffNet-Discogs feature extractor — 1280-dim for danceability head
     "discogs_effnet": {
         "url": f"{MODEL_BASE_URL}/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb",
         "type": "extractor",
         "predict_cls": "TensorflowPredictEffnetDiscogs",
-    },
-    # TempoCNN (standalone, takes raw audio)
-    "tempocnn": {
-        "url": f"{MODEL_BASE_URL}/tempo/tempocnn/deepsquare-k16-3.pb",
-        "type": "extractor",
-        "predict_cls": "TensorflowPredictTempoCNN",
+        "output_node": "PartitionedCall:1",
     },
 
-    # ── Classification heads (take 1280-dim EffNet-Discogs embeddings as input) ──
     # Danceability (binary, EffNet-Discogs head)
+    # Classes: ['not_danceable', 'danceable'] — index 1 is danceable prob
     "danceability": {
         "url": f"{MODEL_BASE_URL}/classification-heads/danceability/danceability-discogs-effnet-1.pb",
         "type": "effnet_head",
         "input_node": "model/Placeholder",
         "output_node": "model/Softmax",
     },
-    # Mood acoustic (binary, EffNet-Discogs head)
-    "mood_acoustic": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/mood_acoustic/mood_acoustic-discogs-effnet-1.pb",
-        "type": "effnet_head",
-        "input_node": "model/Placeholder",
-        "output_node": "model/Softmax",
-    },
-    # Voice/instrumental (binary, EffNet-Discogs head)
+    # Voice vs instrumental (classes: instrumental, voice).
     "voice_instrumental": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/voice_instrumental/voice_instrumental-discogs-effnet-1.pb",
+        "url": (
+            f"{MODEL_BASE_URL}/classification-heads/voice_instrumental/"
+            "voice_instrumental-discogs-effnet-1.pb"
+        ),
         "type": "effnet_head",
         "input_node": "model/Placeholder",
         "output_node": "model/Softmax",
     },
-    # Gender (male / female, EffNet-Discogs head)
-    "gender": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/gender/gender-discogs-effnet-1.pb",
-        "type": "effnet_head",
-        "input_node": "model/Placeholder",
-        "output_node": "model/Softmax",
-    },
-    # MTG-Jamendo mood/theme (56 classes, EffNet-Discogs head)
-    "mtg_jamendo_moodtheme": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.pb",
-        "type": "effnet_head",
-        "input_node": "model/Placeholder",
-        "output_node": "model/Sigmoid",
-    },
-    # MTG-Jamendo instrument (40 classes, EffNet-Discogs head)
-    "mtg_jamendo_instrument": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/mtg_jamendo_instrument/mtg_jamendo_instrument-discogs-effnet-1.pb",
-        "type": "effnet_head",
-        "input_node": "model/Placeholder",
-        "output_node": "model/Sigmoid",
+    "audioset_yamnet": {
+        "url": (
+            f"{MODEL_BASE_URL}/audio-event-recognition/audioset-yamnet/"
+            "audioset-yamnet-1.pb"
+        ),
+        "type": "vggish",
+        "input_node": "melspectrogram",
+        "output_node": "activations",
     },
 
-    # Timbre bright/dark (binary, EffNet-Discogs head)
-    # Alluri & Toiviainen (2010): perceptual timbre correlates with color warmth
-    "timbre": {
-        "url": f"{MODEL_BASE_URL}/classification-heads/timbre/timbre-discogs-effnet-1.pb",
-        "type": "effnet_head",
-        "input_node": "model/Placeholder",
-        "output_node": "model/Softmax",
-    },
-
-    # ── MSD-MusiCNN feature extractor (for DEAM V-A model) ──
+    # MSD-MusiCNN feature extractor (200-dim embeddings → DEAM V-A head)
     "msd_musicnn": {
         "url": f"{MODEL_BASE_URL}/feature-extractors/musicnn/msd-musicnn-1.pb",
         "type": "extractor",
         "predict_cls": "TensorflowPredictMusiCNN",
-        "output_node": "model/batch_normalization_10/batchnorm/add_1",  # 200-dim embeddings for DEAM
+        "output_node": "model/batch_normalization_10/batchnorm/add_1",
     },
 
-    # ── DEAM Valence-Arousal (MusiCNN head, regression) ──
-    # Alonso-Jiménez et al. (2023), trained on DEAM dataset (1802 songs)
-    # Input: 200-dim MusiCNN embeddings, Output: [valence, arousal]
-    # Values in range [1, 9] — normalized to [0, 1] in extraction code
+    # DEAM Valence-Arousal regression (Alonso-Jiménez et al. 2023, DEAM dataset)
+    # Input: 200-dim MusiCNN embeddings, Output: [valence, arousal] ≈ [0, 2]
     "deam_valence_arousal": {
         "url": f"{MODEL_BASE_URL}/classification-heads/deam/deam-msd-musicnn-2.pb",
         "type": "musicnn_head",
@@ -164,29 +125,6 @@ MODEL_REGISTRY = {
         "output_node": "model/Identity",
     },
 }
-
-# Label lists for multi-class models
-MOOD_THEME_LABELS = [
-    "action", "adventure", "advertising", "ambient", "background", "ballad", "calm",
-    "children", "christmas", "commercial", "cool", "corporate", "dark",
-    "deep", "documentary", "drama", "dream", "emotional", "energetic",
-    "epic", "fast", "film", "fun", "funny", "game", "groovy", "happy",
-    "heavy", "holiday", "hopeful", "inspiring", "love", "meditative",
-    "melancholic", "melodic", "motivational", "movie", "nature",
-    "party", "positive", "powerful", "relaxing", "retro", "romantic",
-    "sad", "sexy", "slow", "soft", "soundscape", "space", "sport",
-    "summer", "trailer", "travel", "upbeat", "uplifting",
-]
-
-INSTRUMENT_LABELS = [
-    "accordion", "acousticguitar", "bass", "beat", "bell", "bongo",
-    "brass", "cello", "clarinet", "classicalguitar", "computer",
-    "cymbal", "drums", "electricguitar", "electricpiano", "flute",
-    "guitar", "harmonica", "harp", "horn", "keyboard", "oboe",
-    "orchestra", "organ", "pad", "percussion", "piano", "pipeorgan",
-    "Rhodes", "sampler", "saxophone", "strings", "synthesizer",
-    "trombone", "trumpet", "ukulele", "violin", "voice",
-]
 
 # Loaded model instances (lazy singleton)
 _loaded_models = {}
@@ -242,6 +180,12 @@ def _get_model(name: str):
         elif info["type"] in ("effnet_head", "musicnn_head"):
             # Classification head — uses generic TensorflowPredict2D with custom nodes
             model = es.TensorflowPredict2D(
+                graphFilename=model_path,
+                input=info["input_node"],
+                output=info["output_node"],
+            )
+        elif info["type"] == "vggish":
+            model = es.TensorflowPredictVGGish(
                 graphFilename=model_path,
                 input=info["input_node"],
                 output=info["output_node"],
@@ -359,18 +303,9 @@ def _extract_essentia_dsp(audio: np.ndarray) -> dict | None:
         loudness = es.Loudness()(audio)
         loudness_db = 20 * np.log10(max(loudness, 1e-10))
 
-        # Dynamic complexity (proxy for liveness)
-        try:
-            dyn_complexity, _ = es.DynamicComplexity()(audio)
-        except Exception:
-            dyn_complexity = 0.0
-
         # RMS energy normalized
         rms = np.sqrt(np.mean(audio ** 2))
         energy_norm = min(rms / 0.3, 1.0)
-
-        # Liveness from dynamic complexity
-        liveness = np.clip(min(dyn_complexity / 10, 1.0), 0, 1)
 
         # Beat-based time signature estimation
         time_signature = _estimate_time_signature(beats_intervals, bpm)
@@ -384,7 +319,6 @@ def _extract_essentia_dsp(audio: np.ndarray) -> dict | None:
             "loudness": round(float(loudness_db), 2),
             "loudness_lufs": loudness_lufs,
             "mode": int(mode_int),
-            "liveness": round(float(liveness), 4),
             "tempo": round(float(bpm), 2),
             "time_signature": time_signature,
         }
@@ -424,148 +358,33 @@ def _extract_tf_features(audio: np.ndarray) -> dict:
     """Extract features using Essentia pre-trained TF models.
 
     Architecture:
-    1. EffNet-Discogs extractor → 1280-dim embeddings (per-patch) for classification heads
-    2. EffNet-Discogs extractor → 400-dim embeddings (default output) for storage/similarity
-    3. Classification heads consume 1280-dim EffNet embeddings via TensorflowPredict2D
-    4. MSD-MusiCNN extractor → 200-dim embeddings → DEAM head → [valence, arousal]
+    1. EffNet-Discogs (16kHz, 1280-dim) → danceability head
+    2. MSD-MusiCNN (44kHz, 200-dim) → DEAM head → [valence, arousal]
     """
     results = {}
     import essentia.standard as es
 
-    # ── Step 1: Extract EffNet-Discogs embeddings ──
-    effnet_embeddings_1280 = None
+    # ── Step 1: Danceability via EffNet-Discogs (1280-dim head) ──
+    # Note: EffNet requires 16kHz input for discriminative embeddings.
+    # The main audio array here is 44kHz — danceability at correct 16kHz
+    # is handled separately by _extract_danceability_16k / --patch-dance.
+    # We still run it here at 44kHz as a best-effort default.
     try:
-        effnet_path = str(_ensure_model("discogs_effnet"))
-        # 1280-dim for classification heads
-        effnet_1280 = es.TensorflowPredictEffnetDiscogs(
-            graphFilename=effnet_path, output="PartitionedCall:1"
-        )
-        effnet_embeddings_1280 = effnet_1280(audio)
-
-        # 400-dim (default) for storage as audio embedding
-        effnet_400 = _get_model("discogs_effnet")
-        if effnet_400 is not None:
-            emb_400 = effnet_400(audio)
-            avg_embedding = np.mean(emb_400, axis=0) if emb_400.ndim == 2 else emb_400
-            results["audio_embedding"] = avg_embedding.tolist()
+        effnet_1280 = _get_model("discogs_effnet")
+        effnet_embeddings_1280 = effnet_1280(audio) if effnet_1280 is not None else None
+        model = _get_model("danceability")
+        if model is not None and effnet_embeddings_1280 is not None:
+            predictions = model(effnet_embeddings_1280)
+            avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
+            # Softmax output: [not_danceable, danceable]
+            danceable_prob = float(avg[1]) if len(avg) >= 2 else float(avg[0])
+            results["danceability"] = round(np.clip(danceable_prob, 0, 1), 4)
     except Exception as e:
-        log.debug(f"  EffNet-Discogs embedding extraction failed: {e}")
+        log.debug(f"  Danceability model failed: {e}")
 
-    # ── Step 2: Run EffNet classification heads (need 1280-dim embeddings) ──
-    # ⚠️ KNOWN BUG (verified 2026-06-01, see memory project_arousal_miscalibration):
-    #   These heads read `avg[1]` as the "positive" class WITHOUT loading each model's
-    #   documented class order from its Essentia metadata .json. Class order is often
-    #   NOT [negative, positive] (e.g. danceability = [danceable, not_danceable];
-    #   mood_acoustic = [acoustic, non_acoustic]) → several outputs are INVERTED.
-    #   Worse: across the catalog these features are near-constant / mutually
-    #   uncorrelated (danceability flat ~0.27 across all tempo bands; acousticness
-    #   ~0.80 for a pop/rap catalog) → the embeddings feeding the heads look
-    #   non-discriminative (likely an audio-preprocessing / clip-selection issue).
-    #   BEFORE re-extracting: (1) load `classes` from each model's .json metadata and
-    #   index the correct class; (2) verify the EffNet/MusiCNN input preprocessing
-    #   (16kHz mono, representative segment) so embeddings actually vary per song;
-    #   (3) calibrate DEAM V-A per-dimension (the shared /2.0 below compresses arousal).
-    #   Emotion labels are currently sourced from LLM-on-lyrics (E-RELABEL v3), which
-    #   bypasses these broken audio features entirely.
-    if effnet_embeddings_1280 is not None:
-        # Danceability
-        try:
-            model = _get_model("danceability")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                # Softmax output: [not_danceable, danceable]
-                danceable_prob = float(avg[1]) if len(avg) >= 2 else float(avg[0])
-                results["danceability"] = round(np.clip(danceable_prob, 0, 1), 4)
-        except Exception as e:
-            log.debug(f"  Danceability model failed: {e}")
-
-        # Mood Acoustic
-        try:
-            model = _get_model("mood_acoustic")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                acoustic_prob = float(avg[1]) if len(avg) >= 2 else float(avg[0])
-                results["acousticness"] = round(np.clip(acoustic_prob, 0, 1), 4)
-        except Exception as e:
-            log.debug(f"  Mood acoustic model failed: {e}")
-
-        # Voice / Instrumental
-        try:
-            model = _get_model("voice_instrumental")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                # [voice, instrumental]
-                instrumental_prob = float(avg[1]) if len(avg) >= 2 else float(avg[0])
-                results["instrumentalness"] = round(np.clip(instrumental_prob, 0, 1), 4)
-                results["speechiness"] = round(np.clip(1.0 - instrumental_prob, 0, 1) * 0.5, 4)
-        except Exception as e:
-            log.debug(f"  Voice/instrumental model failed: {e}")
-
-        # Gender
-        try:
-            model = _get_model("gender")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                # [female, male]
-                if len(avg) >= 2:
-                    female_prob = float(avg[0])
-                    results["voice_gender"] = "female" if female_prob > 0.5 else "male"
-                    results["voice_gender_confidence"] = round(max(female_prob, 1 - female_prob), 3)
-        except Exception as e:
-            log.debug(f"  Gender model failed: {e}")
-
-        # MTG-Jamendo Mood/Theme
-        try:
-            model = _get_model("mtg_jamendo_moodtheme")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg_preds = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                top_indices = np.where(avg_preds > 0.1)[0]
-                mood_tags = {}
-                for idx in top_indices:
-                    if idx < len(MOOD_THEME_LABELS):
-                        mood_tags[MOOD_THEME_LABELS[idx]] = round(float(avg_preds[idx]), 3)
-                mood_tags = dict(sorted(mood_tags.items(), key=lambda x: x[1], reverse=True)[:10])
-                results["mood_tags"] = json.dumps(mood_tags, ensure_ascii=False)
-        except Exception as e:
-            log.debug(f"  Mood/theme model failed: {e}")
-
-        # MTG-Jamendo Instrument
-        try:
-            model = _get_model("mtg_jamendo_instrument")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg_preds = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                top_indices = np.where(avg_preds > 0.1)[0]
-                instrument_tags = {}
-                for idx in top_indices:
-                    if idx < len(INSTRUMENT_LABELS):
-                        instrument_tags[INSTRUMENT_LABELS[idx]] = round(float(avg_preds[idx]), 3)
-                instrument_tags = dict(sorted(instrument_tags.items(), key=lambda x: x[1], reverse=True)[:10])
-                results["instrument_tags"] = json.dumps(instrument_tags, ensure_ascii=False)
-        except Exception as e:
-            log.debug(f"  Instrument model failed: {e}")
-
-        # Timbre (bright / dark)
-        try:
-            model = _get_model("timbre")
-            if model is not None:
-                predictions = model(effnet_embeddings_1280)
-                avg = np.mean(predictions, axis=0) if predictions.ndim == 2 else predictions
-                # Softmax output: [bright, dark]
-                bright_prob = float(avg[0]) if len(avg) >= 2 else 0.5
-                results["timbre_bright"] = round(np.clip(bright_prob, 0, 1), 4)
-        except Exception as e:
-            log.debug(f"  Timbre model failed: {e}")
-
-    # ── Step 3: DEAM Valence-Arousal via MSD-MusiCNN embeddings ──
-    # Architecture: audio → MusiCNN → 200-dim embeddings → DEAM head → [valence, arousal]
-    # DEAM v2 raw output is unbounded regression in approx [0, 2] range.
-    # Normalize: divide by 2, then clip to [0, 1].
+    # ── Step 2: DEAM Valence-Arousal via MSD-MusiCNN embeddings ──
+    # audio → MusiCNN (200-dim) → DEAM regression → [valence, arousal]
+    # Raw output ≈ [0, 2] range; normalize by /2 then clip to [0, 1].
     try:
         musicnn_model = _get_model("msd_musicnn")
         deam_model = _get_model("deam_valence_arousal")
@@ -622,10 +441,6 @@ def _extract_librosa_dsp(audio: np.ndarray) -> dict | None:
         rms_mean = float(np.mean(rms))
         loudness_db = 20 * np.log10(max(rms_mean, 1e-10))
 
-        # Liveness (spectral flux variability)
-        spec_flux = librosa.onset.onset_strength(y=y, sr=sr)
-        liveness = float(np.clip(np.std(spec_flux) / 3.0, 0, 1))
-
         # LUFS (ITU-R BS.1770) for Smart Crossfade
         loudness_lufs = measure_lufs(audio, SAMPLE_RATE)
 
@@ -635,7 +450,6 @@ def _extract_librosa_dsp(audio: np.ndarray) -> dict | None:
             "loudness": round(float(loudness_db), 2),
             "loudness_lufs": loudness_lufs,
             "mode": int(mode_int),
-            "liveness": round(float(liveness), 4),
             "tempo": round(float(tempo), 2),
             "time_signature": 4,
         }
@@ -701,7 +515,7 @@ def extract_features_for_track(mp3_path: Path) -> dict | None:
     features["audio_feature_source"] = dsp_source
 
     # ML-based features override DSP proxies
-    for key in ["valence", "danceability", "acousticness", "instrumentalness", "speechiness"]:
+    for key in ["valence", "danceability"]:
         if key in tf_features:
             features[key] = tf_features[key]
 
@@ -712,15 +526,30 @@ def extract_features_for_track(mp3_path: Path) -> dict | None:
     else:
         features["valence_estimated"] = tf_features.get("valence_estimated", False)
 
-    # Additional ML features
-    for key in ["arousal", "timbre_bright", "voice_gender", "voice_gender_confidence",
-                 "mood_tags", "genre_tags", "instrument_tags", "audio_embedding"]:
-        if key in tf_features:
-            features[key] = tf_features[key]
+    # Arousal from DEAM
+    if "arousal" in tf_features:
+        features["arousal"] = tf_features["arousal"]
 
     # Mark source as essentia_tf if any TF model succeeded
     if tf_features:
         features["audio_feature_source"] = f"{dsp_source}+tf"
+
+    # Voice/instrumental probability is a quality gate, not a recommendation
+    # feature. Run it at the model's native 16 kHz sample rate.
+    try:
+        audio_16k = _load_audio_16k(mp3_path)
+        effnet_model = _get_model("discogs_effnet")
+        voice_model = _get_model("voice_instrumental")
+        if audio_16k is not None and effnet_model is not None and voice_model is not None:
+            predictions = voice_model(effnet_model(audio_16k))
+            average = np.mean(predictions, axis=0)
+            if len(average) >= 2:
+                features["instrumental_probability"] = round(float(average[0]), 5)
+                features["voice_probability"] = round(float(average[1]), 5)
+            if len(audio_16k) / 16_000 < 150:
+                features.update(_extract_yamnet_quality(audio_16k))
+    except Exception as e:
+        log.debug(f"  voice/instrumental model failed: {e}")
 
     # ── Smart Crossfade: cue points + downbeats ───────────────────────
     # Reuses the already-loaded `audio` array (no extra disk read).
@@ -801,62 +630,303 @@ def _extract_worker(args: tuple) -> tuple:
     """
     tid, mp3_path_str = args
     try:
+        import essentia
+
+        # Essentia emits a destructor warning for every internal TF network
+        # object on some macOS builds. In multiprocessing this can produce
+        # millions of stderr lines and make logging slower than extraction.
+        essentia.log.infoActive = False
+        essentia.log.warningActive = False
         features = extract_features_for_track(Path(mp3_path_str))
         return (tid, features)
     except Exception as e:
         return (tid, None)
 
 
+def _load_audio_16k(mp3_path: Path) -> np.ndarray | None:
+    """Load MP3 to mono float32 at 16000 Hz — required by Essentia TF models (EffNet, MusiCNN)."""
+    try:
+        import shutil
+        ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+        cmd = [ffmpeg_bin, "-i", str(mp3_path), "-ar", "16000", "-ac", "1",
+               "-sample_fmt", "s16", "-y", tmp_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            return None
+        import wave
+        with wave.open(tmp_path, "rb") as wf:
+            raw = wf.readframes(wf.getnframes())
+        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        if len(audio) % 2 != 0:
+            audio = audio[:-1]
+        return audio if len(audio) > 16000 else None
+    except Exception as e:
+        log.debug(f"  16kHz load failed for {mp3_path}: {e}")
+        return None
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+def _extract_yamnet_quality(audio_16k: np.ndarray) -> dict:
+    """Return speech/music/singing evidence for suspicious short audio."""
+    metadata_path = MODEL_CACHE_DIR / "audioset-yamnet-1.json"
+    if not metadata_path.exists():
+        return {}
+    model = _get_model("audioset_yamnet")
+    if model is None:
+        return {}
+    try:
+        classes = json.loads(metadata_path.read_text(encoding="utf-8"))["classes"]
+        predictions = model(audio_16k)
+        groups = {
+            "speech": {
+                "Speech", "Child speech, kid speaking", "Conversation",
+                "Narration, monologue", "Babbling", "Speech synthesizer",
+                "Chatter", "Hubbub, speech noise, speech babble",
+            },
+            "singing": {"Singing", "Rapping", "Vocal music", "Song"},
+            "music": {
+                "Music", "Musical instrument", "Pop music", "Hip hop music",
+                "Electronic music", "Dance music", "Background music",
+                "Soundtrack music", "Song",
+            },
+        }
+        indices = {
+            key: [index for index, label in enumerate(classes) if label in labels]
+            for key, labels in groups.items()
+        }
+        speech = np.max(predictions[:, indices["speech"]], axis=1)
+        singing = np.max(predictions[:, indices["singing"]], axis=1)
+        music = np.max(predictions[:, indices["music"]], axis=1)
+        return {
+            "yamnet_speech_mean": round(float(np.mean(speech)), 5),
+            "yamnet_singing_mean": round(float(np.mean(singing)), 5),
+            "yamnet_music_mean": round(float(np.mean(music)), 5),
+            "speech_dominant_fraction": round(
+                float(np.mean((speech >= 0.10) & (speech > music))), 5
+            ),
+            "low_music_fraction": round(float(np.mean(music < 0.10)), 5),
+        }
+    except Exception as e:
+        log.debug(f"  YAMNet quality model failed: {e}")
+        return {}
+
+
+def _extract_danceability_16k(mp3_path: Path) -> float | None:
+    """Extract danceability at the correct 16kHz sample rate.
+
+    Essentia EffNet-Discogs requires 16kHz input. The original pipeline used 44100Hz,
+    producing near-constant embeddings (mean pairwise cosine 0.83 vs 0.57 at 16kHz).
+    Classes: ['not_danceable', 'danceable'] → index 1 is the danceable probability.
+    """
+    audio = _load_audio_16k(mp3_path)
+    if audio is None:
+        return None
+    try:
+        import essentia.standard as es
+        effnet_path = str(_ensure_model("discogs_effnet"))
+        effnet_1280 = es.TensorflowPredictEffnetDiscogs(
+            graphFilename=effnet_path, output="PartitionedCall:1"
+        )
+        dance_model = _get_model("danceability")
+        if dance_model is None:
+            return None
+        embeddings = effnet_1280(audio)
+        preds = dance_model(embeddings)
+        avg = np.mean(preds, axis=0) if preds.ndim == 2 else preds
+        return round(float(np.clip(avg[1], 0.0, 1.0)), 4)
+    except Exception as e:
+        log.debug(f"  danceability 16kHz failed for {mp3_path}: {e}")
+        return None
+
+
+def _dance_worker(args: tuple) -> tuple:
+    """Worker for danceability patch — returns (track_id, danceability | None)."""
+    tid, mp3_path_str = args
+    try:
+        val = _extract_danceability_16k(Path(mp3_path_str))
+        return (tid, val)
+    except Exception:
+        return (tid, None)
+
+
+def patch_danceability(
+    workers: int = 4,
+    checkpoint_interval: int = 100,
+    limit: int | None = None,
+    force: bool = False,
+) -> None:
+    """Re-extract danceability at correct 16kHz sample rate for all songs.
+
+    Updates both phase5_features.csv and PROCESSED_FILE (the file the recommendation
+    engine reads at startup). Run with --workers 4 for ~20-30 min on 5548 songs.
+    """
+    import sys
+    sys.path.insert(0, str(PROJECT_ROOT))
+    import config as _cfg
+
+    targets = []
+    for csv_path in [OUTPUT_CSV, Path(_cfg.PROCESSED_FILE)]:
+        if csv_path.exists():
+            targets.append(csv_path)
+
+    if not targets:
+        log.error("No CSV found to patch. Run full extraction first.")
+        return
+
+    mp3_files = {f.stem: f for f in MUSIC_DIR.glob("*.mp3")}
+
+    for csv_path in targets:
+        log.info(f"\n{'='*60}")
+        log.info(f"  patch_danceability → {csv_path.name}")
+        log.info(f"  Workers: {workers}")
+        log.info(f"{'='*60}")
+
+        df = pd.read_csv(str(csv_path))
+
+        if force:
+            pending = [(str(row["track_id"]), mp3_files[str(row["track_id"])])
+                       for _, row in df.iterrows()
+                       if str(row["track_id"]) in mp3_files]
+        else:
+            pending = [(str(row["track_id"]), mp3_files[str(row["track_id"])])
+                       for _, row in df.iterrows()
+                       if str(row["track_id"]) in mp3_files]
+
+        if limit:
+            pending = pending[:limit]
+
+        if not pending:
+            log.info("  No tracks to patch.")
+            continue
+
+        log.info(f"  Tracks to patch: {len(pending)}")
+        if "danceability" not in df.columns:
+            df["danceability"] = None
+
+        stats = {"patched": 0, "failed": 0}
+        completed = 0
+
+        def _apply(tid, val):
+            nonlocal completed
+            if val is None:
+                stats["failed"] += 1
+                return
+            mask = df["track_id"].astype(str) == str(tid)
+            if not mask.any():
+                return
+            df.loc[mask, "danceability"] = val
+            stats["patched"] += 1
+            completed += 1
+
+        def _save():
+            df.to_csv(str(csv_path), index=False, encoding="utf-8-sig")
+
+        if workers <= 1:
+            pbar = tqdm(pending, desc=f"danceability 16kHz ({csv_path.name})")
+            for tid, mp3_path in pbar:
+                _apply(tid, _extract_danceability_16k(mp3_path))
+                if completed > 0 and completed % checkpoint_interval == 0:
+                    _save()
+                    pbar.set_postfix(done=completed, failed=stats["failed"])
+            pbar.close()
+        else:
+            work_items = [(tid, str(mp3_path)) for tid, mp3_path in pending]
+            pbar = tqdm(total=len(work_items), desc=f"danceability 16kHz ({workers}w)")
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(_dance_worker, item): item[0] for item in work_items}
+                for future in as_completed(futures):
+                    try:
+                        tid, val = future.result()
+                        _apply(tid, val)
+                    except Exception:
+                        stats["failed"] += 1
+                    pbar.update(1)
+                    if completed > 0 and completed % checkpoint_interval == 0:
+                        _save()
+                        pbar.set_postfix(done=completed, failed=stats["failed"])
+            pbar.close()
+
+        _save()
+        log.info(f"  Done: {stats['patched']} patched, {stats['failed']} failed → {csv_path}")
+
+        # Stats
+        dance = pd.to_numeric(df["danceability"], errors="coerce")
+        log.info(f"  New distribution: mean={dance.mean():.3f} std={dance.std():.3f} "
+                 f">=0.5: {(dance>=0.5).mean()*100:.1f}%  >=0.7: {(dance>=0.7).mean()*100:.1f}%")
+
+
+def update_db_danceability() -> None:
+    """Push re-extracted danceability values from PROCESSED_FILE to the songs table."""
+    try:
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT))
+        from db.engine import SessionLocal
+        from db.models import Song
+        import config as _cfg
+    except ImportError:
+        log.warning("  Database not available")
+        return
+
+    csv_path = Path(_cfg.PROCESSED_FILE)
+    if not csv_path.exists():
+        log.warning(f"  {csv_path} not found")
+        return
+
+    df = pd.read_csv(str(csv_path))
+    if "danceability" not in df.columns:
+        log.warning("  No danceability column in CSV")
+        return
+
+    session = SessionLocal()
+    try:
+        updated = 0
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="DB danceability update"):
+            val = row.get("danceability")
+            if not pd.notna(val):
+                continue
+            song = session.query(Song).filter_by(track_id=str(row["track_id"])).first()
+            if song:
+                song.danceability = float(val)
+                updated += 1
+                if updated % 500 == 0:
+                    session.flush()
+        session.commit()
+        log.info(f"  DB updated: {updated} songs")
+    except Exception as e:
+        session.rollback()
+        log.error(f"  DB update failed: {e}")
+    finally:
+        session.close()
+
+
 def _extract_new_features_only(mp3_path: Path) -> dict | None:
-    """Extract ONLY the new features (timbre + DEAM V-A).
-    Skips DSP and existing EffNet classification heads for speed.
-    ~3x faster than full extract_features_for_track().
+    """Extract ONLY DEAM V-A (valence + arousal) for tracks missing these features.
+    Skips DSP and danceability for speed (~3x faster than full extraction).
     """
     audio = _load_audio_safe(mp3_path)
     if audio is None:
         return None
 
     results = {}
-
     try:
-        import essentia.standard as es
-
-        # EffNet 1280-dim → timbre head
-        try:
-            effnet_path = str(_ensure_model("discogs_effnet"))
-            effnet_1280 = es.TensorflowPredictEffnetDiscogs(
-                graphFilename=effnet_path, output="PartitionedCall:1"
-            )
-            effnet_embeddings_1280 = effnet_1280(audio)
-
-            timbre_model = _get_model("timbre")
-            if timbre_model is not None and effnet_embeddings_1280 is not None:
-                preds = timbre_model(effnet_embeddings_1280)
-                avg = np.mean(preds, axis=0) if preds.ndim == 2 else preds
-                bright_prob = float(avg[0]) if len(avg) >= 2 else float(avg[0])
-                results["timbre_bright"] = round(np.clip(bright_prob, 0, 1), 4)
-        except Exception as e:
-            log.debug(f"  Timbre extraction failed: {e}")
-
-        # MusiCNN → DEAM V-A
-        try:
-            musicnn_model = _get_model("msd_musicnn")
-            deam_model = _get_model("deam_valence_arousal")
-            if musicnn_model is not None and deam_model is not None:
-                musicnn_embeddings = musicnn_model(audio)
-                deam_predictions = deam_model(musicnn_embeddings)
-                avg_va = np.mean(deam_predictions, axis=0) if deam_predictions.ndim == 2 else deam_predictions
-                if len(avg_va) >= 2:
-                    valence = float(np.clip(avg_va[0] / 2.0, 0.0, 1.0))
-                    arousal = float(np.clip(avg_va[1] / 2.0, 0.0, 1.0))
-                    results["valence"] = round(valence, 4)
-                    results["arousal"] = round(arousal, 4)
-                    results["valence_estimated"] = False
-        except Exception as e:
-            log.debug(f"  DEAM V-A extraction failed: {e}")
-
-    except ImportError:
-        log.warning("  Essentia not available for new feature extraction")
+        musicnn_model = _get_model("msd_musicnn")
+        deam_model = _get_model("deam_valence_arousal")
+        if musicnn_model is not None and deam_model is not None:
+            musicnn_embeddings = musicnn_model(audio)
+            deam_predictions = deam_model(musicnn_embeddings)
+            avg_va = np.mean(deam_predictions, axis=0) if deam_predictions.ndim == 2 else deam_predictions
+            if len(avg_va) >= 2:
+                results["valence"] = round(float(np.clip(avg_va[0] / 2.0, 0.0, 1.0)), 4)
+                results["arousal"] = round(float(np.clip(avg_va[1] / 2.0, 0.0, 1.0)), 4)
+                results["valence_estimated"] = False
+    except Exception as e:
+        log.debug(f"  DEAM V-A extraction failed: {e}")
 
     return results if results else None
 
@@ -876,9 +946,8 @@ def patch_new_features(
     checkpoint_interval: int = 100,
     limit: int | None = None,
 ) -> pd.DataFrame:
-    """Fast patch: extract ONLY timbre + DEAM V-A for tracks missing these features.
-    Skips DSP, danceability, acousticness, gender, mood_tags, instrument_tags.
-    ~3x faster than full re-extraction per track, plus multi-worker parallelism.
+    """Fast patch: extract ONLY DEAM V-A (valence + arousal) for tracks missing them.
+    ~3x faster than full re-extraction per track.
     """
     if not OUTPUT_CSV.exists():
         log.error(f"  No existing {OUTPUT_CSV.name} found. Run full extraction first.")
@@ -893,28 +962,28 @@ def patch_new_features(
 
     mp3_files = {f.stem: f for f in MUSIC_DIR.glob("*.mp3")}
 
-    # Find tracks needing patch (missing timbre_bright OR arousal)
+    # Find tracks needing patch (missing valence or arousal)
     needs_patch = []
     for _, row in df.iterrows():
         tid = str(row.get("track_id", "")).strip()
         if not tid or tid not in mp3_files:
             continue
-        has_timbre = "timbre_bright" in df.columns and pd.notna(row.get("timbre_bright"))
+        has_valence = "valence" in df.columns and pd.notna(row.get("valence"))
         has_arousal = "arousal" in df.columns and pd.notna(row.get("arousal"))
-        if not has_timbre or not has_arousal:
+        if not has_valence or not has_arousal:
             needs_patch.append((tid, mp3_files[tid]))
 
     if limit:
         needs_patch = needs_patch[:limit]
 
     if not needs_patch:
-        log.info("  All tracks already have timbre + DEAM V-A features!")
+        log.info("  All tracks already have valence + arousal!")
         return df
 
     log.info(f"  Tracks needing patch: {len(needs_patch)}")
 
     # Ensure columns exist
-    for col in ["timbre_bright", "arousal"]:
+    for col in ["valence", "arousal"]:
         if col not in df.columns:
             df[col] = None
 
@@ -931,7 +1000,10 @@ def patch_new_features(
             return
         for col, val in features.items():
             if col not in df.columns:
-                df[col] = None
+                df[col] = pd.Series([None] * len(df), dtype="object")
+            elif isinstance(val, (str, list, tuple, dict)):
+                if df[col].dtype != "object":
+                    df[col] = df[col].astype("object")
             df.loc[mask, col] = val
         stats["patched"] += 1
         completed += 1
@@ -1007,34 +1079,37 @@ def batch_extract(
 
     # Resume: load already-done tracks from existing output CSV
     already_done = set()
-    existing_embeddings = {}
     if not reprocess:
         # Check existing output first (from previous partial run)
         if OUTPUT_CSV.exists():
             try:
                 df_existing = pd.read_csv(str(OUTPUT_CSV))
+                if "track_id" in df_existing.columns:
+                    df_existing["track_id"] = df_existing["track_id"].astype(str)
+                    df["track_id"] = df["track_id"].astype(str)
                 if "audio_feature_source" in df_existing.columns:
                     done_mask = df_existing["audio_feature_source"].notna()
                     already_done = set(df_existing.loc[done_mask, "track_id"].astype(str))
-                    # Merge existing results into df
                     if already_done:
-                        df = df_existing
                         log.info(f"  Resuming from {OUTPUT_CSV.name}: {len(already_done)} already done")
+                        existing_by_id = df_existing.drop_duplicates(subset=["track_id"], keep="last")
+                        existing_lookup = existing_by_id.set_index("track_id")
+                        current_ids = df["track_id"]
+                        for col in existing_lookup.columns:
+                            values = existing_lookup.reindex(current_ids)[col].tolist()
+                            if col not in df.columns:
+                                df[col] = values
+                                continue
+                            mask = df[col].isna()
+                            if mask.any():
+                                fill_values = pd.Series(values, index=df.index)
+                                df.loc[mask, col] = fill_values.loc[mask]
             except Exception:
                 pass
 
         # Also check input CSV columns
         if not already_done and "audio_feature_source" in df.columns:
             already_done = set(df.loc[df["audio_feature_source"].notna(), "track_id"].astype(str))
-
-        # Load existing embeddings for resume
-        emb_path = DATA_DIR / "audio_embeddings.json"
-        if emb_path.exists():
-            try:
-                with open(emb_path, "r") as f:
-                    existing_embeddings = json.load(f)
-            except Exception:
-                pass
 
         log.info(f"  Already extracted: {len(already_done)}")
 
@@ -1057,11 +1132,9 @@ def batch_extract(
     for col in ["audio_feature_source", "valence_estimated"]:
         if col not in df.columns:
             df[col] = None
+    df["audio_feature_source"] = df["audio_feature_source"].astype("object")
 
     stats = {"essentia+tf": 0, "essentia": 0, "librosa+tf": 0, "librosa": 0, "failed": 0}
-
-    # Audio embeddings (merge with existing)
-    audio_embeddings = dict(existing_embeddings)
     completed_count = 0
 
     def _apply_features(tid, features):
@@ -1073,11 +1146,6 @@ def batch_extract(
 
         source = features.pop("audio_feature_source", "unknown")
         valence_est = features.pop("valence_estimated", True)
-
-        audio_emb = features.pop("audio_embedding", None)
-        if audio_emb is not None:
-            audio_embeddings[tid] = audio_emb
-
         stats[source] = stats.get(source, 0) + 1
 
         mask = df["track_id"] == tid
@@ -1086,7 +1154,10 @@ def batch_extract(
 
         for col, val in features.items():
             if col not in df.columns:
-                df[col] = None
+                df[col] = pd.Series([None] * len(df), dtype="object")
+            elif isinstance(val, (str, list, tuple, dict)):
+                if df[col].dtype != "object":
+                    df[col] = df[col].astype("object")
             df.loc[mask, col] = val
 
         df.loc[mask, "has_audio_features"] = True
@@ -1095,14 +1166,8 @@ def batch_extract(
         completed_count += 1
 
     def _save_checkpoint():
-        """Save current progress to output CSV and embeddings."""
         OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(str(OUTPUT_CSV), index=False, encoding="utf-8-sig")
-        if audio_embeddings:
-            emb_path = DATA_DIR / "audio_embeddings.json"
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with open(emb_path, "w") as f:
-                json.dump(audio_embeddings, f)
 
     if workers <= 1:
         # Sequential extraction
@@ -1145,11 +1210,6 @@ def batch_extract(
 
     # Final save
     _save_checkpoint()
-
-    # Save audio embeddings
-    if audio_embeddings:
-        emb_path = DATA_DIR / "audio_embeddings.json"
-        log.info(f"  Audio embeddings saved: {len(audio_embeddings)} tracks → {emb_path}")
 
     log.info(f"\n  Extraction complete:")
     for src, count in sorted(stats.items()):
@@ -1197,8 +1257,7 @@ def update_dw_audio_features():
         updated = 0
         feature_cols = [
             "danceability", "energy", "key", "loudness", "mode",
-            "speechiness", "acousticness", "instrumentalness", "liveness",
-            "valence", "tempo", "time_signature",
+            "valence", "arousal", "tempo", "time_signature",
         ]
         for _, row in tqdm(df_extracted.iterrows(), total=len(df_extracted), desc="DB update"):
             tid = str(row["track_id"])
@@ -1238,6 +1297,9 @@ def main():
     parser.add_argument("--test", action="store_true", help="Test: extract 3 tracks")
     parser.add_argument("--reprocess", action="store_true", help="Re-extract even if already done")
     parser.add_argument("--patch", action="store_true", help="Fast patch: only extract NEW features (timbre+DEAM) for existing CSV")
+    parser.add_argument("--patch-dance", action="store_true", help="Re-extract danceability at correct 16kHz sample rate")
+    parser.add_argument("--patch-dance-db", action="store_true", help="Push patched danceability to DB (run after --patch-dance)")
+    parser.add_argument("--force", action="store_true", help="Re-extract all tracks, even already-done ones (for --patch-dance)")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Parallel workers (default: 1, use 2-4 for speed)")
     parser.add_argument("--checkpoint-interval", type=int, default=50, help="Save checkpoint every N tracks (default: 50)")
     parser.add_argument("--update-db", action="store_true", help="Push extracted features to DB")
@@ -1258,6 +1320,15 @@ def main():
 
     if args.update_db:
         update_dw_audio_features()
+    elif args.patch_dance_db:
+        update_db_danceability()
+    elif args.patch_dance:
+        patch_danceability(
+            workers=args.workers or 4,
+            checkpoint_interval=args.checkpoint_interval,
+            limit=args.limit,
+            force=getattr(args, "force", False),
+        )
     elif args.patch:
         patch_new_features(
             workers=args.workers or 4,

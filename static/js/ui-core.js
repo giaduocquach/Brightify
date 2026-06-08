@@ -81,35 +81,28 @@ const app = {
             searchInput.parentElement.style.position = 'relative';
             searchInput.parentElement.appendChild(dropdown);
 
-            // F3 — layered unified search: literal matches (name/artist/lyrics)
-            // on top, semantically-related / same-vibe songs below.
+            // Unified search — one smart, ranked list (exact hits float to the
+            // top, same-vibe songs follow). No visible grouping: the layering is
+            // an internal ranking detail, not something the user perceives.
             const _searchItem = (s) => {
                 const art = s.has_album_art ? `<img src="${safeUrl(s.album_art_url)}" alt="">` : `<span style="color:${safeColor(s.color_hex)}">🎵</span>`;
-                const tag = s.match_kind === 'lyrics' ? ' <span style="font-size:.62rem;color:var(--text-secondary)">· lời</span>' : '';
                 return `<div class="search-dropdown-item" data-song='${JSON.stringify(s).replace(/'/g,"&#39;")}'>
                     <div class="search-dropdown-art">${art}</div>
                     <div class="search-dropdown-info">
-                        <div class="search-dropdown-title">${esc(s.track_name)}${tag}</div>
+                        <div class="search-dropdown-title">${esc(s.track_name)}</div>
                         <div class="search-dropdown-artist">${esc(s.artist)}</div>
                     </div>
                 </div>`;
             };
-            const _group = (label, songs) => songs && songs.length
-                ? `<div class="search-dropdown-group" style="padding:6px 12px 2px;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:var(--text-secondary)">${label}</div>${songs.map(_searchItem).join('')}`
-                : '';
 
             const showResults = async (query) => {
                 if (!query || query.length < 2) { dropdown.classList.remove('visible'); return; }
                 try {
                     const data = await API.searchUnified(query, 6, 5);
-                    const matches = data.matches || [], related = data.related || [];
-                    if (!matches.length && !related.length) {
-                        dropdown.innerHTML = '<div class="search-dropdown-empty">Không tìm thấy kết quả</div>';
-                    } else {
-                        dropdown.innerHTML =
-                            _group('🎯 Khớp nhất', matches) +
-                            _group('🔗 Liên quan · cùng vibe', related);
-                    }
+                    const songs = [...(data.matches || []), ...(data.related || [])];
+                    dropdown.innerHTML = songs.length
+                        ? songs.map(_searchItem).join('')
+                        : '<div class="search-dropdown-empty">Không tìm thấy kết quả</div>';
                     dropdown.classList.add('visible');
                 } catch(e) { dropdown.classList.remove('visible'); }
             };

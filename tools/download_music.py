@@ -12,7 +12,7 @@ Post-download:
   - SponsorBlock segments removed (if yt-dlp supports)
   - FFmpeg silence trim (leading/trailing)
   - Duration ratio check (0.85–1.15 of Spotify duration)
-  - DB update (mp3_path, mp3_source, mp3_duration_s, mp3_quality, youtube_id)
+  - DB update (has_mp3, mp3_filename)
 
 Usage:
     python -m tools.download_music                      # Download all
@@ -38,6 +38,8 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
+import config as cfg
+
 # ── project imports (optional — only for DB update) ─────────────────────────
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -53,16 +55,17 @@ if not log.handlers:
 
 # ── configuration ────────────────────────────────────────────────────────────
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-MUSIC_DIR = Path(__file__).resolve().parent.parent / "music_files"
-CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "checkpoints"
-PROCESSED_CSV = DATA_DIR / "vietnamese_music_processed_full.csv"
-RAW_CSV = DATA_DIR / "vietnamese_music_complete_dataset_full.csv"
+DATA_DIR = Path(cfg.DATA_DIR)
+MUSIC_DIR = cfg.MUSIC_DIR
+CHECKPOINT_DIR = cfg.CHECKPOINTS_DIR
+PROCESSED_CSV = Path(cfg.PROCESSED_FILE)
+RAW_CSV = Path(cfg.INPUT_FILE)
 # Pipeline-correct input: use phase2_filtered.csv first (from Gate 2)
 PIPELINE_CSV = CHECKPOINT_DIR / "phase2_filtered.csv"
 PIPELINE_FALLBACK_CSV = CHECKPOINT_DIR / "phase1_spotify.csv"
 FFMPEG_BIN = shutil.which("ffmpeg") or "ffmpeg"
 COOKIES_FILE = Path(__file__).resolve().parent.parent / "cookies.txt"
+USE_COOKIES = True
 
 AUDIO_FORMAT = "mp3"
 AUDIO_QUALITY = "192"  # kbps
@@ -300,14 +303,8 @@ _rate_limited_until = 0.0  # timestamp when rate limit expires
 
 
 def _download_via_ytdlp(video_ref: str, output_path: Path, is_url: bool = False) -> bool:
-    """Download audio via yt-dlp. Fails fast on bot detection / rate-limit."""
+    """Download audio via yt-dlp with bounded retry on transient rate-limit."""
     global _rate_limited_until
-
-    # If globally rate-limited, wait before proceeding
-    with _rate_limit_lock:
-        wait = _rate_limited_until - time.time()
-    if wait > 0:
-        time.sleep(wait)
 
     if is_url or video_ref.startswith("http"):
         source = video_ref
@@ -315,52 +312,78 @@ def _download_via_ytdlp(video_ref: str, output_path: Path, is_url: bool = False)
         source = f"ytsearch1:{video_ref}"
 
     tmp_pattern = str(output_path.with_suffix(".%(ext)s"))
-    cmd = [
-        sys.executable, "-m", "yt_dlp",
-        source,
-        "--extract-audio",
-        "--audio-format", AUDIO_FORMAT,
-        "--audio-quality", AUDIO_QUALITY,
-        "--match-filter", f"duration<{MAX_DURATION}",
-        "--no-playlist",
-        "--output", tmp_pattern,
-        "--no-warnings",
-        "--retries", "1",
-        "--extractor-retries", "1",
-        "--socket-timeout", "20",
-    ]
-    if COOKIES_FILE.exists():
-        cmd += ["--cookies", str(COOKIES_FILE)]
+    max_attempts = 3
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        return False
-
-    if output_path.exists():
-        return True
-
-    # Check for other formats and convert
-    for f in output_path.parent.glob(f"{output_path.stem}.*"):
-        if f.suffix in ('.mp3', '.m4a', '.webm', '.opus', '.ogg'):
-            if f.suffix != '.mp3':
-                try:
-                    subprocess.run(
-                        [FFMPEG_BIN, "-i", str(f), "-ab", f"{AUDIO_QUALITY}k",
-                         "-y", str(output_path)],
-                        capture_output=True, timeout=60,
-                    )
-                    f.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            if output_path.exists():
-                return True
-
-    # Detect rate-limiting — set global pause so all workers slow down
-    stderr = (result.stderr or "") + (result.stdout or "")
-    if any(kw in stderr.lower() for kw in ("sign in", "bot", "429", "rate", "too many", "try again later")):
+    for attempt in range(1, max_attempts + 1):
+        # Respect any shared cooldown from other workers
         with _rate_limit_lock:
-            _rate_limited_until = max(_rate_limited_until, time.time() + 30)
+            wait = _rate_limited_until - time.time()
+        if wait > 0:
+            time.sleep(wait)
+
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            source,
+            "--extract-audio",
+            "--audio-format", AUDIO_FORMAT,
+            "--audio-quality", AUDIO_QUALITY,
+            "--match-filter", f"duration<{MAX_DURATION}",
+            "--no-playlist",
+            "--output", tmp_pattern,
+            "--no-warnings",
+            "--retries", "1",
+            "--extractor-retries", "1",
+            "--socket-timeout", "20",
+        ]
+        if USE_COOKIES and COOKIES_FILE.exists():
+            cmd += ["--cookies", str(COOKIES_FILE)]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            result = None
+
+        if output_path.exists():
+            return True
+
+        # Check for other formats and convert
+        for f in output_path.parent.glob(f"{output_path.stem}.*"):
+            if f.suffix in ('.mp3', '.m4a', '.webm', '.opus', '.ogg'):
+                if f.suffix != '.mp3':
+                    try:
+                        subprocess.run(
+                            [FFMPEG_BIN, "-i", str(f), "-ab", f"{AUDIO_QUALITY}k",
+                             "-y", str(output_path)],
+                            capture_output=True, timeout=60,
+                        )
+                        f.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                if output_path.exists():
+                    return True
+
+        stderr = ""
+        if result is not None:
+            stderr = (result.stderr or "") + (result.stdout or "")
+        stderr_lower = stderr.lower()
+        # Age/login/bot checks are usually video-specific. Treating those as a
+        # global rate limit stalls every worker for minutes because of one bad
+        # video. Only explicit HTTP throttling should trigger shared cooldown.
+        is_rate_limited = any(
+            kw in stderr_lower
+            for kw in (
+                "http error 429",
+                "status code 429",
+                "too many requests",
+                "session has been rate-limited",
+            )
+        )
+        if not is_rate_limited or attempt == max_attempts:
+            return False
+
+        cooldown_s = 20 * attempt
+        with _rate_limit_lock:
+            _rate_limited_until = max(_rate_limited_until, time.time() + cooldown_s)
 
     return False
 
@@ -414,6 +437,49 @@ def _assess_quality(mp3_dur_s: float | None, spotify_dur_s: float | None) -> str
         return "low"
 
 
+# ── YouTube metadata fetch (view_count + upload_date, no audio download) ────
+
+def _fetch_yt_metadata(video_url: str) -> dict:
+    """Fetch view_count and upload_date from a YouTube URL without downloading audio.
+
+    Uses yt-dlp --skip-download --print — much faster than --dump-json (~2-4s).
+    Returns a dict with zero or more of: view_count (int), upload_date (str YYYY-MM-DD).
+    Never raises — returns {} on any failure so the download pipeline is never blocked.
+    """
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        video_url,
+        "--skip-download",
+        "--print", "%(view_count)s\t%(upload_date)s",
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",
+        "--socket-timeout", "15",
+    ]
+    if USE_COOKIES and COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+        line = result.stdout.strip().split('\n')[0]
+        parts = line.split('\t')
+        if len(parts) < 2:
+            return {}
+        view_str, date_str = parts[0].strip(), parts[1].strip()
+        out = {}
+        if view_str.lstrip('-').isdigit():
+            v = int(view_str)
+            if v >= 0:
+                out["view_count"] = v
+        # upload_date from yt-dlp is YYYYMMDD → store as YYYY-MM-DD
+        if len(date_str) == 8 and date_str.isdigit():
+            out["upload_date"] = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+        return out
+    except Exception:
+        return {}
+
+
 # ── main download logic ─────────────────────────────────────────────────────
 
 def download_track(track: dict, storage: AudioStorage) -> dict | None:
@@ -441,6 +507,7 @@ def download_track(track: dict, storage: AudioStorage) -> dict | None:
         duration_ms = None
 
     output = storage.path(track_id)
+    direct_id_rejected = False
 
     # --- Tier 0: Direct URL from CSV (100% accurate) ---
     # This is the YTMusic URL collected in Phase 1 — guaranteed correct track
@@ -449,17 +516,20 @@ def download_track(track: dict, storage: AudioStorage) -> dict | None:
             _trim_silence(output)
             dur = _get_mp3_duration(output)
             quality = _assess_quality(dur, spotify_dur_s)
-            return {
-                "source": "direct_url",
-                "youtube_music_id": track_id,
-                "youtube_id": track_id,
-                "duration_s": int(dur) if dur else None,
-                "quality": quality,
-            }
+            if quality in {"clean", "unknown"}:
+                return {
+                    "source": "direct_url",
+                    "youtube_music_id": track_id,
+                    "youtube_id": track_id,
+                    "duration_s": int(dur) if dur else None,
+                    "quality": quality,
+                }
+            output.unlink(missing_ok=True)
+            direct_id_rejected = True
 
     # --- Tier 0b: Direct YTMusic URL from track_id ---
     # track_id IS the YouTube videoId (11 chars) in our pipeline
-    if re.match(r'^[A-Za-z0-9_-]{11}$', track_id):
+    if not direct_id_rejected and re.match(r'^[A-Za-z0-9_-]{11}$', track_id):
         url = f"https://music.youtube.com/watch?v={track_id}"
         if _download_via_ytdlp(url, output, is_url=True):
             _trim_silence(output)
@@ -473,9 +543,22 @@ def download_track(track: dict, storage: AudioStorage) -> dict | None:
                 "quality": quality,
             }
 
+        url = f"https://www.youtube.com/watch?v={track_id}"
+        if _download_via_ytdlp(url, output, is_url=True):
+            _trim_silence(output)
+            dur = _get_mp3_duration(output)
+            quality = _assess_quality(dur, spotify_dur_s)
+            return {
+                "source": "youtube_direct",
+                "youtube_music_id": track_id,
+                "youtube_id": track_id,
+                "duration_s": int(dur) if dur else None,
+                "quality": quality,
+            }
+
     # If direct URL existed but both Tier 0 and 0b failed, it's rate-limited.
     # Skip expensive search tiers — they won't help and waste minutes per track.
-    if track_url and "youtube" in track_url:
+    if track_url and "youtube" in track_url and not direct_id_rejected:
         return None
 
     # --- Tier 1: YouTube Music API search (filtered) ---
@@ -553,12 +636,6 @@ def update_dw(storage: AudioStorage, track_ids: list[str] | None = None):
 
             song.has_mp3 = True
             song.mp3_filename = f"{tid}.mp3"
-            song.mp3_path = f"music_files/{tid}.mp3"
-            song.mp3_source = record.get("source")
-            song.mp3_duration_s = int(dur) if dur else None
-            song.mp3_quality = record.get("quality")
-            song.youtube_music_id = record.get("youtube_music_id")
-            song.youtube_id = record.get("youtube_id")
             updated += 1
 
             if updated % 200 == 0:
@@ -610,10 +687,17 @@ def get_tracks(input_csv: str | None = None) -> list[dict]:
     return tracks
 
 
-def batch_download(limit: int | None = None, delay: float = 0.15, workers: int | None = None, input_csv: str | None = None):
+def batch_download(
+    limit: int | None = None,
+    delay: float = 0.15,
+    workers: int | None = None,
+    input_csv: str | None = None,
+    fetch_metadata: bool = True,
+    music_dir: str | Path | None = None,
+):
     """Download tracks in batch with parallel workers and 4-tier priority."""
     max_workers = workers or int(os.getenv("DOWNLOAD_WORKERS", "2"))
-    storage = AudioStorage()
+    storage = AudioStorage(Path(music_dir) if music_dir else None)
     tracks = get_tracks(input_csv)
     downloaded = storage.downloaded_ids()
 
@@ -654,6 +738,13 @@ def batch_download(limit: int | None = None, delay: float = 0.15, workers: int |
 
         result = download_track(track, storage)
         if result:
+            if fetch_metadata:
+                yt_id = result.get("youtube_id")
+                if yt_id:
+                    yt_url = f"https://www.youtube.com/watch?v={yt_id}"
+                    meta = _fetch_yt_metadata(yt_url)
+                    if meta:
+                        result.update(meta)
             storage.record(tid, result)
             with newly_lock:
                 newly_downloaded.append(tid)
@@ -661,7 +752,9 @@ def batch_download(limit: int | None = None, delay: float = 0.15, workers: int |
             with stats_lock:
                 tier_stats[src] = tier_stats.get(src, 0) + 1
                 stats["success"] += 1
-            log.debug(f"  ✅ {tid} | {src} | {result.get('duration_s', '?')}s")
+            vc = result.get("view_count")
+            vc_str = f" | {vc:,} views" if vc else ""
+            log.debug(f"  ✅ {tid} | {src} | {result.get('duration_s', '?')}s{vc_str}")
         else:
             storage.record(tid, {"source": None, "error": "all_tiers_failed"})
             with stats_lock:
@@ -683,6 +776,66 @@ def batch_download(limit: int | None = None, delay: float = 0.15, workers: int |
 
     pbar.close()
 
+    # ── Retry pass cho các track bị lỗi ─────────────────────────────────
+    # Lý do fail thường là rate-limit khi tải song song. Retry tuần tự
+    # với delay dài hơn, tối đa MAX_RETRY_PASSES lần.
+    MAX_RETRY_PASSES = 3
+    RETRY_DELAY_BASE = 8.0  # giây giữa mỗi track trong retry (dài hơn main pass)
+    RETRY_WAIT_BASE  = 20   # giây chờ trước mỗi pass retry
+
+    track_by_id = {t["track_id"]: t for t in tracks}
+    failed_tracks = [
+        track_by_id[tid] for tid, info in storage._log.items()
+        if info.get("source") is None and not storage.exists(tid)
+        and tid in track_by_id
+    ]
+
+    for retry_pass in range(1, MAX_RETRY_PASSES + 1):
+        if not failed_tracks:
+            break
+        wait_s = RETRY_WAIT_BASE * retry_pass
+        log.info(f"\n  🔄 Retry pass {retry_pass}/{MAX_RETRY_PASSES} — "
+                 f"{len(failed_tracks)} track cần retry (chờ {wait_s}s...)")
+        time.sleep(wait_s)
+
+        still_failed = []
+        pbar_r = tqdm(failed_tracks, desc=f"Retry {retry_pass}", unit="track")
+        for track in pbar_r:
+            tid = track["track_id"]
+            if storage.exists(tid):          # đã tải xong ở pass trước
+                stats["success"] += 1
+                pbar_r.update(1)
+                continue
+            result = download_track(track, storage)
+            if result:
+                if fetch_metadata:
+                    yt_id = result.get("youtube_id")
+                    if yt_id:
+                        meta = _fetch_yt_metadata(f"https://www.youtube.com/watch?v={yt_id}")
+                        if meta:
+                            result.update(meta)
+                storage.record(tid, result)
+                newly_downloaded.append(tid)
+                src = result["source"]
+                tier_stats[src] = tier_stats.get(src, 0) + 1
+                stats["success"] += 1
+                stats["fail"] = max(0, stats["fail"] - 1)
+                log.debug(f"  ✅ Retry OK: {tid} [{src}]")
+            else:
+                still_failed.append(track)
+                log.debug(f"  ❌ Retry {retry_pass} still failed: {tid}")
+            time.sleep(RETRY_DELAY_BASE)
+        pbar_r.close()
+
+        recovered = len(failed_tracks) - len(still_failed)
+        log.info(f"  Retry pass {retry_pass}: recovered {recovered}, "
+                 f"still failed {len(still_failed)}")
+        failed_tracks = still_failed
+
+    if failed_tracks:
+        log.info(f"  ⚠️  {len(failed_tracks)} track vẫn lỗi sau {MAX_RETRY_PASSES} lần retry — bỏ qua")
+    # ─────────────────────────────────────────────────────────────────────
+
     # DB update for newly downloaded (single-threaded, safe)
     if newly_downloaded and HAS_DB:
         log.info(f"\n  Updating DB for {len(newly_downloaded)} new downloads...")
@@ -698,10 +851,10 @@ def batch_download(limit: int | None = None, delay: float = 0.15, workers: int |
     log.info(f"{'═'*60}\n")
 
 
-def show_status():
+def show_status(music_dir: str | Path | None = None, input_csv: str | None = None):
     """Show download progress status."""
-    storage = AudioStorage()
-    tracks = get_tracks()
+    storage = AudioStorage(Path(music_dir) if music_dir else None)
+    tracks = get_tracks(input_csv)
     downloaded = storage.downloaded_ids()
     in_csv = {t["track_id"] for t in tracks}
     done = len(downloaded & in_csv)
@@ -740,16 +893,39 @@ def main():
     parser.add_argument("--delay", type=float, default=2.0, help="Delay between downloads per worker (s)")
     parser.add_argument("--workers", type=int, default=2, help="Number of parallel download workers")
     parser.add_argument("--update-db-only", action="store_true", help="Re-scan mp3 files and update DB")
+    parser.add_argument("--skip-metadata", action="store_true", help="Skip extra YouTube metadata fetch after successful download")
+    parser.add_argument("--music-dir", type=str, help="MP3 output directory (default: music_files/)")
+    parser.add_argument(
+        "--no-cookies",
+        action="store_true",
+        help="Do not pass cookies.txt to yt-dlp (useful when that session is rate-limited)",
+    )
     args = parser.parse_args()
+    global USE_COOKIES
+    USE_COOKIES = not args.no_cookies
 
     if args.status:
-        show_status()
+        show_status(args.music_dir, args.input)
     elif args.update_db_only:
-        update_dw(AudioStorage())
+        update_dw(AudioStorage(Path(args.music_dir) if args.music_dir else None))
     elif args.test:
-        batch_download(limit=3, delay=args.delay, workers=args.workers, input_csv=args.input)
+        batch_download(
+            limit=3,
+            delay=args.delay,
+            workers=args.workers,
+            input_csv=args.input,
+            fetch_metadata=not args.skip_metadata,
+            music_dir=args.music_dir,
+        )
     else:
-        batch_download(limit=args.limit, delay=args.delay, workers=args.workers, input_csv=args.input)
+        batch_download(
+            limit=args.limit,
+            delay=args.delay,
+            workers=args.workers,
+            input_csv=args.input,
+            fetch_metadata=not args.skip_metadata,
+            music_dir=args.music_dir,
+        )
 
 
 if __name__ == "__main__":

@@ -5,15 +5,28 @@ Reads Phase 1 output (phase1_spotify.csv) and produces a clean, deduplicated
 dataset with only Vietnamese tracks that have essential metadata.
 
 Filters applied (in order):
-  1. Remove rows missing track_id or track_name
-  2. Remove duplicate track_ids (keep highest popularity)
-  3. Remove duplicate name+artist combinations (keep highest popularity)
-  4. Remove tracks shorter than 30s or longer than 360s (6 minutes)
-  5. Verify Vietnamese (re-run VietnameseDetector v2 as safety net)
-  6. Remove children's music (nhạc thiếu nhi)
-  7. Remove foreign-language dominant tracks (CJK/Korean/Thai > VN chars)
-  8. Clear lyrics for tracks without MP3 (consistency gate)
-  9. Remove tracks missing essential audio features (post-Phase 5)
+  1.  Remove rows missing track_id or track_name
+  2.  Remove duplicate track_ids (keep highest popularity)
+  2b. Normalize artist names (ASCII ↔ diacritics)
+  3.  Remove duplicate name+artist combinations (diacritics-normalized)
+  4.  Remove tracks shorter than 2m30s or longer than 360s (6 minutes),
+      except editorially approved short tracks
+  5.  Verify Vietnamese (re-run VietnameseDetector v2 as safety net)
+  6.  Remove children's music (nhạc thiếu nhi)
+  6b. Remove non-artist channels (remix/compilation/TV show channels)
+  6c. Remove old-genre artists (bolero/nhạc vàng/cải lương)
+  6d. Remove non-original versions (remix/live/cover/acoustic/lofi…)
+  6e. Remove foreign artist patterns (Brazilian MC/DJ…)
+  6f. Remove seasonal music (Tết/Xuân + Giáng Sinh/Noel) [NEW]
+  6g. Remove tracks released before 2013 (target 9x/GenZ) [NEW]
+  6h. Remove profanity in track titles
+  6i. Remove profanity-heavy lyrics (when lyrics are present)
+  7.  Remove foreign-language dominant tracks (CJK/Korean/Thai > VN chars)
+  7c. Remove foreign-language lyrics with no Vietnamese evidence
+  8.  Remove low-quality/obscure artists (blocklist + max popularity < 15)
+  8b. Clean "Artist | Title" pipe format → strip artist prefix
+  8c. Remove tracks with very low per-track popularity (< 20) [NEW]
+  9.  Remove tracks missing essential audio features (post-Phase 5)
 
 Output: checkpoints/phase2_filtered.csv
 
@@ -24,11 +37,16 @@ Usage:
 """
 
 import argparse
+from difflib import SequenceMatcher
+import json
+import re
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -43,8 +61,975 @@ REPORT_PATH = LOGS_DIR / "phase2_filter_report.md"
 REQUIRED_COLUMNS = ["track_id", "track_name", "primary_artist"]
 
 # Duration bounds (milliseconds)
-MIN_DURATION_MS = 30_000    # 30 seconds
+MIN_DURATION_MS = 150_000   # 2 minutes 30 seconds
 MAX_DURATION_MS = 360_000   # 6 minutes
+
+# Release year filter — target 9x/GenZ audience
+RELEASE_YEAR_MIN = 2013     # soft filter: only drops tracks with KNOWN year < this
+
+# Per-track popularity floor (Spotify 0-100 scale)
+TRACK_POP_MIN = 20          # soft filter: only drops when popularity IS known and < this
+VIEW_COUNT_MIN = 100_000    # post-download floor when Spotify popularity is unavailable
+RECENT_VIEW_COUNT_MIN = 50_000
+RECENT_RELEASE_YEAR_MIN = 2022
+
+
+_VN_TOKEN_CHARS = r"A-Za-zÀ-ỹ0-9"
+_PROFANITY_HARD_RE = re.compile(
+    rf'(?<![{_VN_TOKEN_CHARS}])(?:địt|đụ(?!ng)|cặc|lồn|buồi)(?![{_VN_TOKEN_CHARS}])'
+    rf'|(?<![{_VN_TOKEN_CHARS}])(?:đầu buồi|con buồi|bú c|liếm c)(?![{_VN_TOKEN_CHARS}])',
+    re.IGNORECASE,
+)
+_PROFANITY_MILD_RE = re.compile(
+    rf'(?<![{_VN_TOKEN_CHARS}])(?:đéo|vãi l|vãi đ|đ\.m|đmm|đmcs|vcl|cứt|mẹ mày|mẹ kiếp)(?![{_VN_TOKEN_CHARS}])',
+    re.IGNORECASE,
+)
+_TITLE_PROFANITY_RE = re.compile(
+    rf'(?<![{_VN_TOKEN_CHARS}])(?:địt|đụ(?!ng)|cặc|lồn|buồi|đéo|vcl|đ\.m|đmm|cứt)(?![{_VN_TOKEN_CHARS}])',
+    re.IGNORECASE,
+)
+
+_SEASONAL_TET_STRONG_RE = re.compile(
+    r'\b(?:tet|tet nguyen dan|mung xuan|chuc tet|chuc xuan|nam moi|'
+    r'du xuan|don xuan|hoi xuan|giao thua|li xi|hai loc|'
+    r'banh chung|banh tet|ong do|cau doi|hoa dao|hoa mai|'
+    r'phao hoa|anh cho em mua xuan|giai dieu mua xuan|'
+    r'goi (?:em la|ten) mua xuan|hay mang den nhung mua xuan|'
+    r'hom nay mua xuan|mua xuan (?:oi|goi)|ngay xuan|nang xuan|'
+    r'nhu hoa mua xuan|nhung ngay xuan|thi tham mua xuan|'
+    r'xuan ca|xuan son|'
+    r'xuan \d{2,4}|xuan se|xuan dang|xuan da|xuan ben|xuan ve|'
+    r'xuan sang|doan xuan|giai dieu xuan|giai dieu mua xuan|'
+    r'diep khuc mua xuan|hanh phuc xuan|dam cuoi dau xuan|lk xuan)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_NOEL_STRONG_RE = re.compile(
+    r'\b(?:giang sinh|noel|christmas|xmas|merry christmas|'
+    r'jingle bells?|silent night|hang be lem|dem thanh vo cung|'
+    r'rudolph|santa claus)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_ALBUM_STRONG_RE = re.compile(
+    r'\b(?:nhac tet|tet nguyen dan|mung xuan|chuc tet|chuc xuan|'
+    r'nam moi|du xuan|don xuan|hoi xuan|giao thua|li xi|'
+    r'banh chung|banh tet|hoa dao|hoa mai|giai dieu mua xuan|'
+    r've nha don tet|xuan phat tai|giang sinh|noel|'
+    r'christmas|xmas|merry christmas)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_LYRICS_STRONG_RE = re.compile(
+    r'\b(?:chuc tet|chuc xuan|mung xuan|nam moi|tet nguyen dan|'
+    r'giao thua|li xi|hai loc|du xuan|don xuan|hoi xuan|'
+    r'hoa dao|hoa mai|banh chung|banh tet|ong do|cau doi|'
+    r'giang sinh|noel|christmas|xmas|merry christmas|'
+    r'jingle bells?|silent night|hang be lem|dem thanh vo cung)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_LYRICS_MARKER_RE = re.compile(
+    r'\b(?:tet|tet nguyen dan|chuc tet|chuc xuan|mung xuan|nam moi|'
+    r'giao thua|li xi|hai loc|du xuan|don xuan|hoi xuan|nang xuan|'
+    r'phao hoa|hoa dao|hoa mai|banh chung|banh tet|ong do|cau doi|'
+    r'giang sinh|noel|christmas|xmas|merry christmas|jingle bells?)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_LYRICS_CONTEXT_RE = re.compile(
+    r'\b(?:com doan vien|doan vien|cuoi nam|nam qua da lam gi|'
+    r'chuyen nha minh|ve nha|ve chua con|con hua se ve|nha minh co nhau|'
+    r'bao gio lay chong|ra gieng|thang gieng|mung tuoi|van su nhu y|'
+    r'lay via|cau duyen|them duoc ve nha|em oi anh nho nha|vi nha|'
+    r'noella|noend|december)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_HINT_RE = re.compile(
+    r'\b(?:tet|nam moi|giang sinh|noel|christmas|xmas|'
+    r'giao thua|li xi|sum vay|hoa dao|hoa mai|banh chung|'
+    r'ong do|cau doi|phao hoa|hang be lem|dem thanh vo cung)\b',
+    re.IGNORECASE,
+)
+_SEASONAL_XUAN_RE = re.compile(r"\bxuan\b", re.IGNORECASE)
+_SEASONAL_XUAN_TITLE_CONTEXT_RE = re.compile(
+    r'\b(?:lung la lung luyen xuan|nang tien mua xuan|con buom xuan|'
+    r'khuc hat mua xuan|khuc giao mua)\b',
+    re.IGNORECASE,
+)
+_FOREIGN_LANGUAGE_ARTIST_BLOCKLIST = {
+    "antransax",
+    "cloud 5",
+    "hoaprox",
+    "tanny ng",
+}
+_KNOWN_WRONG_CONTENT_TRACK_IDS = {
+    "-Rbf9Kls7qI",
+    "48vT3-a45uc",
+    "78lcZX49yf8",
+    "9ThLlYM5fyg",
+    "9W8xO_aUtgE",
+    "DZ0oir_DLao",
+    "__Hz1Ed2Peo",
+    "FVN2srj9OIk",  # Khúc Hát Chim Trời: short re-release of an old song
+    "tRVsdGZthiQ",  # Khúc Hát Chim Trời: complete re-release of an old song
+    "4tYuIU7pLmI",  # Ngôi Sao Cô Đơn: MP3 source has a long extra segment
+    "J-ghINjFgMQ",  # old song / mismatched re-release
+    "LxNzRN8EMcw",  # Bo Xì Bo: MP3 source has a long extra segment
+    "MZhSVJ4daNU",  # old low-value re-release
+    "ZptHLeuexEs",  # ten-minute medley under a five-minute track entry
+    "_8OsrVyr30M",  # Rời: no clean matching source found
+    "gJHSDZfJrRY",  # See Tình: MP3 source has a long extra segment
+    "kvcVGyzg-OI",  # mismatched source; replacement is extremely low-value
+    "mA-UxOle3YQ",  # Xóa Tên Anh Đi: MP3 source has a long extra segment
+    "bmURTXWSVRQ",  # Đò Sang Ngang: source is incorrectly attributed to Da LAB
+    "prCggo8jWV0",  # Sao Đổi Ngôi: source is incorrectly attributed to Bảo Anh
+    "wRai9bzoFts",  # NGÂY NGÔ: source is over seven minutes
+    "yvK94mAuXrI",  # Đồ Gây Mê: drug/profanity-heavy lyrics, low catalog fit
+    "4AFzkqtFqSg",  # Take It Off: drug/profanity-heavy lyrics, low catalog fit
+    "2Atly_saklA",  # Touman: drug/profanity-heavy lyrics, low catalog fit
+    "89bwEKawtSc",  # Đơn Côi: drug/profanity-heavy lyrics, low catalog fit
+    "2A31yXddLig",  # To the Moon: drug/profanity-heavy lyrics, low catalog fit
+    "raOHouwNuzY",  # Apeshit: drug/profanity-heavy lyrics, low catalog fit
+    "9D2bBo_kGDQ",  # Crazy Love Song: Korean Orange artist collision
+    "Ety-Zn2nPfs",  # On My Own: short English track
+}
+_SHORT_TRACK_ALLOWLIST_IDS = {
+    "TpO5ZVEB3Ek",  # Hạt Giống Số 1
+}
+_SHORT_TRACK_ALLOWLIST_TITLES = {
+    "hat giong so 1",
+}
+_LEGACY_IDENTITY_ARTIST_IDS = {
+    "UCgzabA9k1QZhveKNQpQReOQ",  # Đức Huy: old catalog identity
+    "UCxXheGOMHn5GFJW_A-3n51g",  # Tuấn Dũng: old/traditional identity
+}
+_SCORE_COMPOSER_ARTIST_IDS = {
+    "UCNctzUfSQywEVfR-L8fUXFw",  # Khuất Duy Minh soundtrack score catalog
+}
+_LEGACY_RELEASE_ALBUMS_BY_ARTIST_ID = {
+    # Old Bích Phượng identity mixed into the modern Bích Phương catalog.
+    "UC6cABeghgrm1dV5bYnPNw6A": {
+        "anh tuyet tam ca ao trang ngoi tua man thuyen",
+        "ca dao dong song",
+        "dan sao hau giang",
+        "mo ve da lat",
+        "nhiem mau tinh chua",
+        "nhung dieu ly que huong",
+        "tieng chuong thuc tinh",
+        "tieng goi thanh nien",
+        "tieng hat bich phuong",
+        "tu do em buon",
+        "neu anh la em",
+    },
+    # Old Anh Tú identity mixed into the current singer's catalog.
+    "UCQmJpTarZMikea8T8Pkd2qw": {
+        "bang nhac nhac tre 7",
+        "ben quanh hiu",
+        "buon vuong mat em",
+        "caraoke",
+        "chia tay chieu dong top hits 67",
+        "da vu muon mau",
+        "hai au 200",
+        "hai au 202",
+        "lang nghe thoi gian",
+        "mo ve em",
+        "mot thoang viet nam 1",
+        "nguoi di qua doi toi",
+        "nua trai tim yeu nguoi",
+        "saigon saigon",
+        "tinh nhu canh chim",
+        "tinh suong khoi",
+        "tieng mua roi",
+        "van yeu mot nguoi",
+    },
+}
+_PROGRAM_AUDIO_RE = re.compile(
+    r"\b(?:san dau ca (?:tu|tư)|sàn đấu ca (?:từ|tư)|"
+    r"san chien giong hat|sàn chiến giọng hát|"
+    r"in the moonlight show|a colors show|gameshow|talkshow|podcast)\b",
+    re.IGNORECASE,
+)
+_FRAGMENT_AUDIO_RE = re.compile(
+    r"\b(?:audio cut|short version|snippet|teaser|intro|interlude|outro|"
+    r"prologue|epilogue|opening|ending|skit)\b|"
+    r"(?:^|\s)[#\[]\s*\d+\s*[\]]?\s*$",
+    re.IGNORECASE,
+)
+_KNOWN_ARTIST_COLLISION_ALBUMS = {
+    "best of latin hip hop",
+    "durchstromungen 2 klangkrafte",
+    "flaming star other twangin movie instrumentals associated with the king",
+    "give em the boot iv",
+    "give em the boot v",
+    "kobolt",
+    "musique bluegrass",
+    "party animals vol 3",
+    "peter torsens ungdomssynder",
+    "project outbreak",
+    "rock chicks vol 7",
+    "rock chicks vol 8",
+    "static waves 4",
+    "vip lounge",
+}
+_OLD_GENRE_TEXT_RE = re.compile(
+    r'\b(?:bolero|nhac vang|tru tinh|cai luong|vong co|tan co|ca co|'
+    r'dan ca|nhac que huong|nhac linh|nhac xua|hai ngoai|'
+    r'thanh ca|quan ho|chau van|trinh cong son|em va trinh)\b',
+    re.IGNORECASE,
+)
+_NON_ORIGINAL_STRONG_KEYWORDS = (
+    r'remix|remxi|remixes|lofi|lo-fi|lo fi|acoustic|acapella|a cappella|'
+    r'lk|lien\s*khuc|liên\s*khúc|'
+    r'live session|live at|live|'
+    r'in the moonlight show|a colors show|'
+    r'minishow|moodshow|liveshow|live show|in concert|concert|'
+    r'session|sessions|deep cuts|speed up|speedup|sped up|slowed|reverb|'
+    r'mashup|rapcoustic|cover collection|cover|'
+    r'version|ver\.?|'
+    r'extended|instrumental|karaoke|stripped|unplugged|'
+    r'orchestral|orchestra|symphony|remaster|demo|radio mix|radio edit|'
+    r'rework|flip|bootleg|vip mix|dj mix|dance mix|vocal mix|'
+    r'nightcore|8d|bass boosted|rmx|'
+    r'remake|bonus track|reprise|reprised|teaser|open verse|'
+    r'interlude|intro|outro|outtro|prologue|'
+    r'film version|short version|short \d+'
+)
+_NON_ORIGINAL_CONTEXT_KEYWORDS = (
+    r'piano|solo violin|vocals|inst\.?|'
+    r'performance(?:\s+with\s+band)?|harmony|romance|rumba|'
+    r'(?:v|vrt|orange|real|lylicia|al\d+|tan thieu gia)\s*mix|mix|'
+    r'music box|flute|instrument|doc tau sao|độc tấu sáo|'
+    r'alternative|re-imagined|raw|'
+    r'lam lai|làm lại|phien ban|phiên bản|ban thu|bản thu|'
+    r'ban dau tien|bản đầu tiên|song ca|duet|'
+    r'the recap|recap|fashion show|the heroes|'
+    r'dongvui harmony|động tag show|lan song xanh|làn sóng xanh|'
+    r'huong mua he|hương mùa hè|ugc only|buonhonmotchut|'
+    r'chi dep dap gio re song|chị đẹp đạp gió rẽ sóng|'
+    r'v2|2\.0|speed(?:\s*\d+(?:\.\d+)?)?|slow down|'
+    r'drill|house|vinahouse|edm|ballad|chill|beat|trap|future bass|'
+    r'tropical|deep house|progressive|hardstyle|techno|phonk|uk garage|'
+    r'rock version|tiktok|tour(?:\s+\d{4})?'
+)
+_NON_ORIGINAL_STRONG_RE = re.compile(
+    rf'\b(?:{_NON_ORIGINAL_STRONG_KEYWORDS})\b',
+    re.IGNORECASE,
+)
+_NON_ORIGINAL_CONTEXT_RE = re.compile(
+    rf'(?:'
+    rf'[\(\[][^\)\]]*\b(?:{_NON_ORIGINAL_CONTEXT_KEYWORDS})\b[^\)\]]*[\)\]]'
+    rf'|\s+-\s+[^|]*\b(?:{_NON_ORIGINAL_CONTEXT_KEYWORDS})\b'
+    rf'|\b(?:piano|solo violin|vocals|inst\.?)\s*$'
+    rf')',
+    re.IGNORECASE,
+)
+_NON_ORIGINAL_WHITELIST_RE = re.compile(
+    r'\bALIVE\b|\bTouliver\b|\bProd\.?\b',
+    re.IGNORECASE,
+)
+_SOUNDTRACK_RE = re.compile(
+    r'\b(?:original\s+(?:motion picture|television|movie)\s+soundtrack|'
+    r'original soundtrack|soundtrack|ost)\b',
+    re.IGNORECASE,
+)
+_VN_UNIQUE_CHARS = set(
+    "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩ"
+    "òóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"
+    "ÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨ"
+    "ÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ"
+)
+_VN_HINT_WORDS = {
+    "của", "tôi", "bạn", "anh", "em", "và", "là", "có", "yêu", "thương",
+    "nhớ", "buồn", "vui", "mình", "người", "thôi", "đâu", "đây", "sao",
+    "như", "khi", "một", "được", "không", "rồi", "nào", "hết", "lòng",
+    "đời", "ngày", "đêm", "mưa", "nắng", "bao", "mãi", "chờ", "còn",
+}
+
+
+def _strip_vn_diacritics(text: str) -> str:
+    text = str(text or "").replace("Đ", "D").replace("đ", "d")
+    nfd = unicodedata.normalize("NFD", text)
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+
+
+def _normalize_match_text(text: str) -> str:
+    stripped = _strip_vn_diacritics(text).lower()
+    return re.sub(r"[^a-z0-9]+", " ", stripped).strip()
+
+
+_VN_HINT_WORDS_ASCII = {_normalize_match_text(word) for word in _VN_HINT_WORDS}
+
+
+def _clean_artist_name(name: str) -> str:
+    cleaned = str(name or "").strip()
+    cleaned = re.sub(r"\s*-\s*Topic$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" .-_")
+
+
+def _split_artist_field(artists_value, fallback: str = "") -> list[str]:
+    raw = str(artists_value if pd.notna(artists_value) else fallback)
+    return [_clean_artist_name(a) for a in raw.split(",") if _clean_artist_name(a)]
+
+
+def canonical_track_title(track_name: str) -> str:
+    """Normalize a title while removing credit-only feat/prod annotations."""
+    title = str(track_name or "")
+    title = re.sub(
+        r"[\(\[][^\(\)\[\]]*?\b(?:feat(?:uring)?|ft\.?|prod\.?|w/)"
+        r"[^\(\)\[\]]*[\)\]]",
+        " ",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"\s*(?:[-–—|]\s*)?(?:feat(?:uring)?|ft\.?|prod\.?|w/)\s+.*$",
+        " ",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return _normalize_match_text(title)
+
+
+def _artist_identity_sets(row: pd.Series) -> tuple[set[str], set[str]]:
+    names = {
+        _normalize_match_text(name)
+        for name in _split_artist_field(
+            row.get("artists", row.get("primary_artist", "")),
+            fallback=str(row.get("primary_artist", "")),
+        )
+        if _normalize_match_text(name)
+    }
+    ids = {
+        value.strip()
+        for value in str(row.get("artist_ids", "")).split(",")
+        if value.strip() and value.strip().lower() not in {"nan", "none"}
+    }
+    primary_id = str(row.get("primary_artist_id", "")).strip()
+    if primary_id and primary_id.lower() not in {"nan", "none"}:
+        ids.add(primary_id)
+    return names, ids
+
+
+def _normalized_lyrics(row: pd.Series) -> str:
+    for column in ("plain_lyrics", "synced_lyrics", "lyrics"):
+        value = row.get(column)
+        if isinstance(value, str) and value.strip():
+            normalized = _normalize_match_text(value)
+            if len(normalized) >= 100:
+                return normalized
+    return ""
+
+
+def _base_track_title(track_name: str) -> str:
+    title = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", str(track_name or ""))
+    title = re.sub(r"^\s*\d{1,2}\s*[.\-:_]?\s+", "", title)
+    return canonical_track_title(title)
+
+
+def _title_match_evidence(left_name: str, right_name: str) -> tuple[bool, float]:
+    left_title = canonical_track_title(left_name)
+    right_title = canonical_track_title(right_name)
+    if not left_title or not right_title:
+        return False, 0.0
+    if left_title == right_title:
+        return True, 1.0
+
+    left_base = _base_track_title(left_name)
+    right_base = _base_track_title(right_name)
+    if left_base and left_base == right_base and len(left_base) >= 4:
+        return True, 1.0
+
+    ratio = SequenceMatcher(
+        None,
+        left_title,
+        right_title,
+        autojunk=False,
+    ).ratio()
+    left_tokens = set(left_title.split())
+    right_tokens = set(right_title.split())
+    union = left_tokens | right_tokens
+    token_overlap = len(left_tokens & right_tokens) / len(union) if union else 0.0
+    return ratio >= 0.88 or token_overlap >= 0.80, max(ratio, token_overlap)
+
+
+def are_duplicate_song_rows(
+    left: pd.Series,
+    right: pd.Series,
+    audio_similarity: float | None = None,
+) -> bool:
+    """Return True only when title plus metadata identify the same recording."""
+    title_compatible, title_similarity = _title_match_evidence(
+        left.get("track_name", ""),
+        right.get("track_name", ""),
+    )
+
+    left_names, left_ids = _artist_identity_sets(left)
+    right_names, right_ids = _artist_identity_sets(right)
+    artists_related = bool(left_names & right_names or left_ids & right_ids)
+
+    left_lrclib = str(left.get("lrclib_id", "")).strip()
+    right_lrclib = str(right.get("lrclib_id", "")).strip()
+    same_lrclib = (
+        left_lrclib == right_lrclib
+        and left_lrclib.lower() not in {"", "nan", "none"}
+    )
+
+    left_duration = pd.to_numeric(
+        pd.Series([left.get("track_duration_ms")]), errors="coerce"
+    ).iloc[0]
+    right_duration = pd.to_numeric(
+        pd.Series([right.get("track_duration_ms")]), errors="coerce"
+    ).iloc[0]
+    duration_delta = (
+        abs(float(left_duration) - float(right_duration))
+        if pd.notna(left_duration) and pd.notna(right_duration)
+        else None
+    )
+    duration_close = duration_delta is not None and duration_delta <= 4_000
+    duration_cross_artist_close = duration_delta is not None and duration_delta <= 10_000
+
+    left_lyrics = _normalized_lyrics(left)
+    right_lyrics = _normalized_lyrics(right)
+    exact_lyrics = bool(left_lyrics and left_lyrics == right_lyrics)
+    fuzzy_lyrics = False
+    if left_lyrics and right_lyrics and not exact_lyrics:
+        length_ratio = min(len(left_lyrics), len(right_lyrics)) / max(
+            len(left_lyrics), len(right_lyrics)
+        )
+        if length_ratio >= 0.85:
+            fuzzy_lyrics = (
+                SequenceMatcher(None, left_lyrics, right_lyrics, autojunk=False).ratio()
+                >= 0.96
+            )
+
+    audio_match = audio_similarity is not None and audio_similarity >= 0.985
+    high_audio_match = audio_similarity is not None and audio_similarity >= 0.995
+    alias_match = (
+        artists_related
+        and high_audio_match
+        and duration_delta is not None
+        and duration_delta <= 4_000
+        and (exact_lyrics or fuzzy_lyrics)
+    )
+    if not title_compatible:
+        return alias_match
+
+    if artists_related:
+        return (
+            same_lrclib
+            or exact_lyrics
+            or fuzzy_lyrics
+            or (
+                duration_close
+                and audio_match
+                and title_similarity >= 0.75
+            )
+        )
+    return same_lrclib or (
+        duration_cross_artist_close
+        and high_audio_match
+        and (
+            (title_similarity >= 0.82 and (exact_lyrics or fuzzy_lyrics))
+            or title_similarity >= 0.97
+        )
+    )
+
+
+def _row_quality_rank(row: pd.Series) -> tuple:
+    artists = _split_artist_field(
+        row.get("artists", row.get("primary_artist", "")),
+        fallback=str(row.get("primary_artist", "")),
+    )
+    view_count = pd.to_numeric(
+        pd.Series([row.get("view_count")]), errors="coerce"
+    ).iloc[0]
+    metadata_columns = (
+        "synced_lyrics",
+        "plain_lyrics",
+        "lrclib_id",
+        "album_id",
+        "track_duration_ms",
+        "youtube_id",
+    )
+    metadata_count = sum(
+        pd.notna(row.get(column)) and str(row.get(column)).strip().lower() not in {"", "nan"}
+        for column in metadata_columns
+    )
+    title = str(row.get("track_name", ""))
+    album = str(row.get("album_name", ""))
+    title_key = canonical_track_title(title)
+    album_key = canonical_track_title(album)
+    single_title_penalty = int(not album_key or album_key != title_key)
+    compilation_penalty = int(
+        bool(
+            re.search(
+                r"\b(?:best|collection|tuyen tap|gala|playlist|tap \d+|vol\.?\s*\d+)\b",
+                _normalize_match_text(album),
+                re.IGNORECASE,
+            )
+        )
+    )
+    duration = pd.to_numeric(
+        pd.Series([row.get("track_duration_ms")]), errors="coerce"
+    ).iloc[0]
+    short_penalty = int(pd.notna(duration) and duration < 120_000)
+    annotation_penalty = int(
+        bool(re.search(r"\b(?:feat(?:uring)?|ft\.?|prod\.?|w/)\b", title, re.I))
+    )
+    return (
+        int(is_non_original_version(title, row.get("album_name", ""))),
+        -int(pd.notna(view_count)),
+        -float(view_count) if pd.notna(view_count) else 0.0,
+        single_title_penalty,
+        compilation_penalty,
+        short_penalty,
+        -len(artists),
+        -metadata_count,
+        annotation_penalty,
+        -float(duration) if pd.notna(duration) else 0.0,
+        len(title),
+    )
+
+
+def _merge_artist_credits(winner: pd.Series, members: list[pd.Series]) -> pd.Series:
+    merged = winner.copy()
+    ordered_pairs: list[tuple[str, str]] = []
+    seen_names: set[str] = set()
+    for row in [winner, *members]:
+        names = _split_artist_field(
+            row.get("artists", row.get("primary_artist", "")),
+            fallback=str(row.get("primary_artist", "")),
+        )
+        ids = [
+            value.strip()
+            for value in str(row.get("artist_ids", "")).split(",")
+        ]
+        for index, name in enumerate(names):
+            normalized = _normalize_match_text(name)
+            if not normalized or normalized in seen_names:
+                continue
+            artist_id = ids[index] if index < len(ids) else ""
+            if artist_id.lower() in {"nan", "none"}:
+                artist_id = ""
+            ordered_pairs.append((name, artist_id))
+            seen_names.add(normalized)
+    if ordered_pairs:
+        merged["artists"] = ", ".join(name for name, _ in ordered_pairs)
+        if "artist_ids" in winner.index:
+            merged["artist_ids"] = ",".join(artist_id for _, artist_id in ordered_pairs)
+    clean_titles = [
+        str(row.get("track_name", ""))
+        for row in [winner, *members]
+        if not re.search(
+            r"\b(?:feat(?:uring)?|ft\.?|prod\.?|w/)\b",
+            str(row.get("track_name", "")),
+            re.IGNORECASE,
+        )
+    ]
+    if clean_titles:
+        merged["track_name"] = min(clean_titles, key=len)
+    return merged
+
+
+def _audio_similarity(
+    left_track_id,
+    right_track_id,
+    audio_embeddings: dict[str, list[float]] | None,
+) -> float | None:
+    if not audio_embeddings:
+        return None
+    left = audio_embeddings.get(str(left_track_id))
+    right = audio_embeddings.get(str(right_track_id))
+    if left is None or right is None:
+        return None
+    left_vector = np.asarray(left, dtype=np.float32)
+    right_vector = np.asarray(right, dtype=np.float32)
+    denominator = float(np.linalg.norm(left_vector) * np.linalg.norm(right_vector))
+    if denominator == 0:
+        return None
+    return float(np.dot(left_vector, right_vector) / denominator)
+
+
+def _audio_neighbor_pairs(
+    df: pd.DataFrame,
+    audio_embeddings: dict[str, list[float]] | None,
+    neighbors: int = 6,
+    min_similarity: float = 0.995,
+) -> list[tuple[int, int, float]]:
+    if not audio_embeddings or len(df) < 2:
+        return []
+    indexes = [
+        index
+        for index, track_id in df["track_id"].items()
+        if str(track_id) in audio_embeddings
+    ]
+    if len(indexes) < 2:
+        return []
+
+    matrix = np.asarray(
+        [audio_embeddings[str(df.at[index, "track_id"])] for index in indexes],
+        dtype=np.float32,
+    )
+    neighbor_count = min(neighbors + 1, len(indexes))
+    from sklearn.neighbors import NearestNeighbors
+
+    model = NearestNeighbors(
+        n_neighbors=neighbor_count,
+        metric="cosine",
+        algorithm="brute",
+        n_jobs=-1,
+    )
+    model.fit(matrix)
+    distances, neighbor_positions = model.kneighbors(matrix)
+    pair_scores: dict[tuple[int, int], float] = {}
+    for source_position, (row_distances, row_neighbors) in enumerate(
+        zip(distances, neighbor_positions)
+    ):
+        for distance, candidate_position in zip(row_distances, row_neighbors):
+            if candidate_position == source_position:
+                continue
+            similarity = 1.0 - float(distance)
+            if similarity < min_similarity:
+                continue
+            left_index = indexes[source_position]
+            right_index = indexes[candidate_position]
+            pair = tuple(sorted((left_index, right_index)))
+            pair_scores[pair] = max(pair_scores.get(pair, -1.0), similarity)
+    return [
+        (left_index, right_index, similarity)
+        for (left_index, right_index), similarity in pair_scores.items()
+    ]
+
+
+def deduplicate_song_entities(
+    df: pd.DataFrame,
+    audio_embeddings: dict[str, list[float]] | None = None,
+) -> tuple[pd.DataFrame, int]:
+    """Collapse duplicate recordings across swapped primary artists/credits."""
+    if df.empty or "track_name" not in df.columns:
+        return df.copy(), 0
+
+    working = df.copy().reset_index(drop=True)
+    working["_entity_title"] = working["track_name"].apply(canonical_track_title)
+    indexes = list(working.index)
+    parent = {index: index for index in indexes}
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left_index, right_index):
+        left_root, right_root = find(left_index), find(right_index)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for title, group in working.groupby("_entity_title", sort=False, dropna=False):
+        if not title or len(group) < 2:
+            continue
+        group_indexes = list(group.index)
+        for position, left_index in enumerate(group_indexes):
+            for right_index in group_indexes[position + 1:]:
+                similarity = _audio_similarity(
+                    working.loc[left_index].get("track_id"),
+                    working.loc[right_index].get("track_id"),
+                    audio_embeddings,
+                )
+                if are_duplicate_song_rows(
+                    working.loc[left_index],
+                    working.loc[right_index],
+                    audio_similarity=similarity,
+                ):
+                    union(left_index, right_index)
+
+    for left_index, right_index, similarity in _audio_neighbor_pairs(
+        working,
+        audio_embeddings,
+    ):
+        if find(left_index) == find(right_index):
+            continue
+        if are_duplicate_song_rows(
+            working.loc[left_index],
+            working.loc[right_index],
+            audio_similarity=similarity,
+        ):
+            union(left_index, right_index)
+
+    components: dict[int, list[int]] = {}
+    for index in indexes:
+        components.setdefault(find(index), []).append(index)
+
+    kept_rows: list[pd.Series] = []
+    removed = 0
+    for component_indexes in components.values():
+        component = [
+            working.loc[index].drop(labels=["_entity_title"])
+            for index in component_indexes
+        ]
+        if len(component) == 1:
+            kept_rows.append(component[0])
+            continue
+        winner = min(component, key=_row_quality_rank)
+        members = [
+            row for row in component
+            if str(row.get("track_id")) != str(winner.get("track_id"))
+        ]
+        kept_rows.append(_merge_artist_credits(winner, members))
+        removed += len(component) - 1
+
+    result = pd.DataFrame(kept_rows, columns=df.columns)
+    return result.reset_index(drop=True), removed
+
+
+def _apply_keep_mask(df: pd.DataFrame, keep_mask) -> pd.DataFrame:
+    if isinstance(keep_mask, pd.Series):
+        mask = keep_mask.astype(bool)
+    else:
+        mask = pd.Series(list(keep_mask), index=df.index, dtype=bool)
+    return df.loc[mask].copy()
+
+
+def has_vn_evidence(text: str) -> bool:
+    if not text or not isinstance(text, str):
+        return False
+    if _VN_UNIQUE_CHARS & set(text):
+        return True
+    tokens = set(text.lower().split())
+    if _VN_HINT_WORDS & tokens:
+        return True
+    return bool(_VN_HINT_WORDS_ASCII & set(_normalize_match_text(text).split()))
+
+
+def profanity_stats(text: str) -> tuple[int, int, int]:
+    if not text or not isinstance(text, str):
+        return 0, 0, 0
+    hard_hits = len(_PROFANITY_HARD_RE.findall(text))
+    mild_hits = len(_PROFANITY_MILD_RE.findall(text))
+    score = hard_hits * 4 + mild_hits
+    return hard_hits, mild_hits, score
+
+
+def is_profane_lyrics(text: str) -> bool:
+    hard_hits, mild_hits, score = profanity_stats(text)
+    if hard_hits >= 3:
+        return True
+    if mild_hits >= 10:
+        return True
+    return score >= 15
+
+
+def is_profane_title(text: str) -> bool:
+    if not text or not isinstance(text, str):
+        return False
+    return bool(_TITLE_PROFANITY_RE.search(text))
+
+
+def is_seasonal_track(track_name: str, album_name: str = "", lyrics_text: str = "") -> bool:
+    tn_norm = _normalize_match_text(track_name)
+    an_norm = _normalize_match_text(album_name)
+    lyrics_norm = _normalize_match_text(lyrics_text)
+
+    if re.search(r"\bdau truong\b.*\bmua xuan\b", tn_norm):
+        return False
+
+    if (
+        _SEASONAL_TET_STRONG_RE.search(tn_norm)
+        or _SEASONAL_XUAN_TITLE_CONTEXT_RE.search(tn_norm)
+        or _SEASONAL_NOEL_STRONG_RE.search(tn_norm)
+        or _SEASONAL_ALBUM_STRONG_RE.search(an_norm)
+        or (
+            len(_SEASONAL_LYRICS_MARKER_RE.findall(lyrics_norm)) >= 2
+            and _SEASONAL_LYRICS_CONTEXT_RE.search(f"{tn_norm} {an_norm}")
+        )
+    ):
+        return True
+
+    return bool(
+        _SEASONAL_XUAN_RE.search(tn_norm)
+        and (
+            _SEASONAL_HINT_RE.search(an_norm)
+            or _SEASONAL_LYRICS_STRONG_RE.search(lyrics_norm)
+        )
+    )
+
+
+def is_old_genre_track(track_name: str, album_name: str = "", genres_value="") -> bool:
+    """Detect explicit old-genre evidence at track/album/genre level."""
+    searchable = " ".join(
+        _normalize_match_text(value)
+        for value in (track_name, album_name, genres_value)
+        if value is not None and not pd.isna(value)
+    )
+    return bool(_OLD_GENRE_TEXT_RE.search(searchable))
+
+
+def foreign_lyrics_language(text: str) -> str | None:
+    """Return a high-confidence non-Vietnamese lyrics language, if any."""
+    if not text or not isinstance(text, str):
+        return None
+    cleaned = re.sub(r"\[[^\]]+\]|♪", " ", text).strip()
+    if len(cleaned) < 120:
+        return None
+    try:
+        from langdetect import DetectorFactory, LangDetectException, detect_langs
+
+        DetectorFactory.seed = 0
+        languages = detect_langs(cleaned[:6000])
+    except Exception:
+        return None
+    if not languages:
+        return None
+    top = languages[0]
+    vi_probability = next(
+        (language.prob for language in languages if language.lang == "vi"),
+        0.0,
+    )
+    if top.lang != "vi" and top.prob >= 0.85 and vi_probability < 0.10:
+        return top.lang
+    return None
+
+
+def is_known_foreign_identity_release(
+    primary_artist: str,
+    album_name: str,
+) -> bool:
+    artist = _clean_artist_name(primary_artist).lower()
+    album = _normalize_match_text(album_name)
+    if artist in _FOREIGN_LANGUAGE_ARTIST_BLOCKLIST:
+        return True
+    return artist == "orange" and album in _KNOWN_ARTIST_COLLISION_ALBUMS
+
+
+def catalog_quality_rejection_reason(row, audio_record: dict | None = None) -> str | None:
+    """Return a high-confidence catalog/audio rejection reason."""
+    track_id = str(row.get("track_id", ""))
+    artist_id = str(row.get("primary_artist_id", "")).strip()
+    title = str(row.get("track_name", ""))
+    album = str(row.get("album_name", ""))
+    context = f"{title} {album}"
+    duration_ms = pd.to_numeric(
+        pd.Series([row.get("track_duration_ms")]), errors="coerce"
+    ).iloc[0]
+    duration_s = float(duration_ms) / 1000 if pd.notna(duration_ms) else None
+
+    if track_id in _KNOWN_WRONG_CONTENT_TRACK_IDS:
+        return "verified_wrong_content"
+    if artist_id in _LEGACY_IDENTITY_ARTIST_IDS:
+        return "legacy_artist_identity"
+    if artist_id in _SCORE_COMPOSER_ARTIST_IDS:
+        return "soundtrack_score_catalog"
+    if _normalize_match_text(album) in _LEGACY_RELEASE_ALBUMS_BY_ARTIST_ID.get(
+        artist_id, set()
+    ):
+        return "legacy_release"
+    if _PROGRAM_AUDIO_RE.search(context):
+        return "fragment_or_program_excerpt"
+    if _FRAGMENT_AUDIO_RE.search(context) and (
+        duration_s is None or duration_s < 180
+    ):
+        return "fragment_or_program_excerpt"
+
+    values = dict(audio_record or {})
+    for key in (
+        "actual_duration_s",
+        "instrumental_probability",
+        "voice_probability",
+        "yamnet_speech_mean",
+        "yamnet_singing_mean",
+        "yamnet_music_mean",
+        "speech_dominant_fraction",
+        "low_music_fraction",
+    ):
+        if key not in values and key in row:
+            values[key] = row.get(key)
+
+    def number(key: str) -> float | None:
+        value = pd.to_numeric(pd.Series([values.get(key)]), errors="coerce").iloc[0]
+        return float(value) if pd.notna(value) else None
+
+    instrumental = number("instrumental_probability")
+    voice = number("voice_probability")
+    singing = number("yamnet_singing_mean")
+    speech = number("yamnet_speech_mean")
+    speech_fraction = number("speech_dominant_fraction")
+    music = number("yamnet_music_mean")
+    low_music = number("low_music_fraction")
+    actual_duration = number("actual_duration_s")
+    if actual_duration is not None and actual_duration > MAX_DURATION_MS / 1000:
+        return "actual_duration_out_of_range"
+
+    if instrumental is not None and (
+        instrumental >= 0.82
+        or (
+            instrumental >= 0.70
+            and singing is not None
+            and singing < 0.018
+        )
+    ):
+        return "instrumental_audio"
+    if (
+        speech_fraction is not None
+        and speech_fraction >= 0.30
+        and (singing is None or singing < 0.04)
+    ) or (
+        speech is not None
+        and speech >= 0.18
+        and (music is None or speech > music * 0.30)
+    ):
+        return "spoken_audio"
+    if (
+        low_music is not None
+        and low_music >= 0.55
+        and (voice is None or voice < 0.65)
+    ):
+        return "non_music_audio"
+    return None
+
+
+def is_allowed_short_track(row) -> bool:
+    """Keep only explicit editorial exceptions below MIN_DURATION_MS."""
+    track_id = str(row.get("track_id", "")).strip()
+    if track_id in _SHORT_TRACK_ALLOWLIST_IDS:
+        return True
+    return _normalize_match_text(row.get("track_name", "")) in _SHORT_TRACK_ALLOWLIST_TITLES
+
+
+def is_non_original_version(track_name: str, album_name: str = "") -> bool:
+    """Detect live/remix/cover/lofi/acoustic variants in title or album."""
+    title = str(track_name or "")
+    album = str(album_name or "")
+    title_match = bool(
+        _NON_ORIGINAL_STRONG_RE.search(title)
+        or _NON_ORIGINAL_CONTEXT_RE.search(title)
+    )
+    album_match = bool(
+        _NON_ORIGINAL_STRONG_RE.search(album)
+        or _NON_ORIGINAL_CONTEXT_RE.search(album)
+        or re.search(r"\btour(?:\s+\d{4})?\b", album, re.IGNORECASE)
+    )
+    if album_match and _NON_ORIGINAL_WHITELIST_RE.search(album):
+        album_match = False
+    return title_match or album_match
+
+
+def is_low_value_soundtrack_release(
+    track_name: str,
+    album_name: str,
+    artist_names: list[str],
+    known_artists: set[str],
+    view_count=None,
+    hot_source=None,
+) -> bool:
+    """Reject soundtrack score/deep cuts while preserving verified vocal artists."""
+    context = f"{track_name or ''} {album_name or ''}"
+    if not _SOUNDTRACK_RE.search(context):
+        return False
+    normalized_artists = {_clean_artist_name(name).lower() for name in artist_names}
+    if normalized_artists & known_artists:
+        return False
+    views = pd.to_numeric(pd.Series([view_count]), errors="coerce").iloc[0]
+    if pd.notna(views) and views >= VIEW_COUNT_MIN:
+        return False
+    if pd.notna(hot_source) and str(hot_source).strip():
+        return False
+    return True
 
 
 def run_filter(input_path: Path | None = None,
@@ -67,7 +1052,6 @@ def run_filter(input_path: Path | None = None,
         json_fallback = CHECKPOINT_DIR / "tracks_collected.json"
         if json_fallback.exists():
             print(f"  ⚠️ {input_path.name} not found — reconstructing from tracks_collected.json")
-            import json
             with open(json_fallback, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             tracks = raw.get("tracks", raw) if isinstance(raw, dict) and "tracks" in raw else raw
@@ -145,6 +1129,11 @@ def run_filter(input_path: Path | None = None,
         for key, variants in stripped_groups.items():
             if len(variants) <= 1:
                 continue
+            # Diacritics can distinguish different people even when stripping
+            # produces the same ASCII text (Bích Phương vs Bích Phượng).
+            # Only unify this group when an actual ASCII spelling is present.
+            if all(_has_vn_diacritics(name) for name, _ in variants):
+                continue
             # Prefer version with diacritics; among those, pick with most tracks
             with_diacritics = [(n, c) for n, c in variants if _has_vn_diacritics(n)]
             if with_diacritics:
@@ -169,6 +1158,11 @@ def run_filter(input_path: Path | None = None,
 
             for aid, variants in id_counts.items():
                 if len(variants) <= 1:
+                    continue
+                stripped_names = {_strip_vn(name) for name, _ in variants}
+                if len(stripped_names) == 1 and all(
+                    _has_vn_diacritics(name) for name, _ in variants
+                ):
                     continue
                 with_d = [(n, c) for n, c in variants if _has_vn_diacritics(n)]
                 canonical = max(with_d, key=lambda x: x[1])[0] if with_d else max(variants, key=lambda x: x[1])[0]
@@ -222,10 +1216,62 @@ def run_filter(input_path: Path | None = None,
 
         df["_n"] = df["track_name"].astype(str).apply(_norm_dedup)
         df["_a"] = df["primary_artist"].astype(str).apply(_norm_dedup)
+        # Prefer the studio/original row when duplicate title+artist entries
+        # include live/remix/acoustic/OST variants.
+        df["_variant_rank"] = df.apply(
+            lambda row: int(
+                is_non_original_version(
+                    row.get("track_name", ""),
+                    row.get("album_name", ""),
+                )
+            ),
+            axis=1,
+        )
+        df["_pop_rank"] = (
+            pd.to_numeric(df[pop_col], errors="coerce").fillna(-1)
+            if pop_col in df.columns
+            else -1
+        )
+        df["_view_rank"] = (
+            pd.to_numeric(df["view_count"], errors="coerce").fillna(-1)
+            if "view_count" in df.columns
+            else -1
+        )
+        df = df.sort_values(
+            ["_variant_rank", "_pop_rank", "_view_rank"],
+            ascending=[True, False, False],
+            kind="stable",
+        )
         df = df.drop_duplicates(subset=["_n", "_a"], keep="first")
-        df = df.drop(columns=["_n", "_a"])
+        df = df.drop(
+            columns=["_n", "_a", "_variant_rank", "_pop_rank", "_view_rank"]
+        )
     removed = before - len(df)
     msg = f"[Filter 3] Duplicate name+artist (diacritics-normalized): removed {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 3b. Dedup the same recording across credit/uploader variants ────
+    before = len(df)
+    audio_embeddings = None
+    audio_embeddings_path = PROJECT_ROOT / "data" / "audio_embeddings.json"
+    if audio_embeddings_path.exists():
+        try:
+            with audio_embeddings_path.open(encoding="utf-8") as handle:
+                all_audio_embeddings = json.load(handle)
+            input_ids = set(df["track_id"].astype(str))
+            audio_embeddings = {
+                track_id: vector
+                for track_id, vector in all_audio_embeddings.items()
+                if track_id in input_ids
+            }
+        except Exception as e:
+            print(f"  ⚠️ Audio embeddings unavailable for cross-artist dedup: {e}")
+    df, removed = deduplicate_song_entities(df, audio_embeddings=audio_embeddings)
+    msg = (
+        f"[Filter 3b] Duplicate song entities (feat/credit/primary variants): "
+        f"removed {removed:,} → {len(df):,}"
+    )
     print(f"  {msg}")
     report_lines.append(msg)
 
@@ -237,14 +1283,16 @@ def run_filter(input_path: Path | None = None,
         # Keep tracks with NaN duration (will get real duration from MP3 later)
         has_dur = df[dur_col].notna()
         in_range = df[dur_col].between(MIN_DURATION_MS, MAX_DURATION_MS)
-        df = df[~has_dur | in_range]
+        allowed_short = df.apply(is_allowed_short_track, axis=1)
+        df = df[~has_dur | in_range | (allowed_short & df[dur_col].lt(MIN_DURATION_MS))]
         removed = before - len(df)
-        msg = f"[Filter 4] Duration out of range (<30s or >6m): removed {removed:,} → {len(df):,}"
+        msg = f"[Filter 4] Duration out of range (<2m30s except allowlist, or >6m): removed {removed:,} → {len(df):,}"
         print(f"  {msg}")
         report_lines.append(msg)
 
     # ── 5. Vietnamese re-verification (with discovered-artist protection) ─
     before = len(df)
+    _discovered_vn_artists: set = set()  # hoisted so Filter 7b can access it
     try:
         from tools.collect_data import VietnameseDetector
         from collections import Counter
@@ -259,13 +1307,26 @@ def run_filter(input_path: Path | None = None,
             if artist and artist != "nan" and VietnameseDetector.has_vietnamese_chars(track_name):
                 artist_vn_count[artist] += 1
         discovered_vn_artists = {a for a, c in artist_vn_count.items() if c >= 3}
+        _discovered_vn_artists = discovered_vn_artists  # hoist to outer scope
         print(f"    (discovered {len(discovered_vn_artists):,} VN artists with ≥3 VN-char tracks)")
 
         keep_mask = []
         recovered = 0
         for _, row in df.iterrows():
-            artist_names = str(row.get("artists", row.get("primary_artist", ""))).split(", ")
+            artist_names = _split_artist_field(
+                row.get("artists", row.get("primary_artist", "")),
+                fallback=str(row.get("primary_artist", "")),
+            )
             album_name = str(row.get("album_name", ""))
+            # Direct Vietnamese evidence is stronger than the discovered-artist
+            # threshold and keeps this stage stable after deduplication.
+            if (
+                has_vn_evidence(str(row.get("track_name", "")))
+                or has_vn_evidence(album_name)
+                or any(has_vn_evidence(artist) for artist in artist_names)
+            ):
+                keep_mask.append(True)
+                continue
             is_vn, reason = VietnameseDetector.is_vietnamese(
                 str(row.get("track_name", "")), artist_names, album_name,
                 discovered_artists=discovered_vn_artists,
@@ -277,7 +1338,7 @@ def run_filter(input_path: Path | None = None,
                     is_vn = True
                     recovered += 1
             keep_mask.append(is_vn)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
         if recovered:
             print(f"    (recovered {recovered} tracks via discovered-artist protection)")
     except ImportError:
@@ -294,11 +1355,15 @@ def run_filter(input_path: Path | None = None,
         keep_mask = []
         for _, row in df.iterrows():
             track_name = str(row.get("track_name", ""))
-            artist = str(row.get("primary_artist", row.get("artists", "")))
+            artist_names = _split_artist_field(
+                row.get("artists", row.get("primary_artist", "")),
+                fallback=str(row.get("primary_artist", "")),
+            )
+            artist = ", ".join(artist_names)
             album = str(row.get("album_name", ""))
             is_child = VietnameseDetector.is_children_music(track_name, artist, album)
             keep_mask.append(not is_child)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
     except ImportError:
         print("  ⚠️ Could not import VietnameseDetector — skipping children filter")
     removed = before - len(df)
@@ -313,10 +1378,20 @@ def run_filter(input_path: Path | None = None,
         from tools.collect_data import VietnameseDetector
         keep_mask = []
         for _, row in df.iterrows():
-            artist = str(row.get("primary_artist", "")).strip()
-            is_channel = VietnameseDetector.is_non_artist_channel(artist)
+            primary_artist = _clean_artist_name(str(row.get("primary_artist", "")))
+            artist_names = _split_artist_field(
+                row.get("artists", primary_artist),
+                fallback=primary_artist,
+            )
+            # Channel detection is only reliable on the primary artist field.
+            # Featured artists often include collectives / aliases / uploader-style
+            # names and should not remove an otherwise valid track.
+            if primary_artist:
+                is_channel = VietnameseDetector.is_non_artist_channel(primary_artist)
+            else:
+                is_channel = any(VietnameseDetector.is_non_artist_channel(a) for a in artist_names)
             keep_mask.append(not is_channel)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
     except ImportError:
         print("  ⚠️ Could not import VietnameseDetector — skipping channel filter")
     removed = before - len(df)
@@ -325,16 +1400,35 @@ def run_filter(input_path: Path | None = None,
     report_lines.append(msg)
 
     # ── 6c. Old-genre artist filter ──────────────────────────────────────
-    # Remove tracks from bolero/nhạc vàng/trữ tình/quê hương artists
+    # Remove old-genre artists and explicit bolero/nhạc vàng/cải lương
+    # releases, including releases by otherwise current artists.
     before = len(df)
     try:
         from tools.collect_data import VietnameseDetector
         keep_mask = []
         for _, row in df.iterrows():
-            artist = str(row.get("primary_artist", "")).strip()
-            is_old = VietnameseDetector.is_old_genre_blocked([artist])
+            artist_names = _split_artist_field(
+                row.get("artists", row.get("primary_artist", "")),
+                fallback=str(row.get("primary_artist", "")),
+            )
+            genre_value = next(
+                (
+                    row.get(col)
+                    for col in ("artist_genres", "spotify_genres", "genres")
+                    if col in df.columns and pd.notna(row.get(col))
+                ),
+                "",
+            )
+            is_old = (
+                VietnameseDetector.is_old_genre_blocked(artist_names)
+                or is_old_genre_track(
+                    row.get("track_name", ""),
+                    row.get("album_name", ""),
+                    genre_value,
+                )
+            )
             keep_mask.append(not is_old)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
     except ImportError:
         print("  ⚠️ Could not import VietnameseDetector — skipping old-genre filter")
     removed = before - len(df)
@@ -347,98 +1441,78 @@ def run_filter(input_path: Path | None = None,
     # piano, version, remake, OST, soundtrack, etc.
     before = len(df)
     try:
-        import re as _re
-
-        # Variant keywords — use \b word-boundaries to avoid false
-        # positives (e.g. "Touliver" must NOT match "live").
-        _VKW = (
-            r'remix|lofi|lo-fi|lo fi|acoustic|piano|'
-            r'live|live session|live at|'
-            r'minishow|moodshow|liveshow|in concert|concert|'
-            r'session|sessions|deep cuts|'
-            r'version|ver\.|speed up|sped up|slowed|reverb|'
-            r'mashup|rapcoustic|drill|house|vinahouse|edm|ballad ver|cover|chill|'
-            r'extended|instrumental|karaoke|beat|stripped|'
-            r'unplugged|orchestral|orchestra|symphony|remaster|demo|radio edit|'
-            r'rework|flip|bootleg|vip mix|dub|trap|future bass|'
-            r'tropical|deep house|progressive|hardstyle|techno|'
-            r'nightcore|8d|bass boosted|phonk|uk garage|'
-            r'rock version|tiktok|original soundtrack|'
-            r'remake|bonus track|bonus|film version|short version'
-        )
-
-        # 1) Parenthesized / bracketed: "Song (Remix)" or "Song [Lofi]"
-        _VAR_PAREN = _re.compile(
-            r'[\(\[][^\)\]]*\b(?:' + _VKW + r')\b[^\)\]]*[\)\]]',
-            _re.IGNORECASE,
-        )
-        # 2) Dash-separated: "Song - Remix", "Song - SS Remix"
-        _VAR_DASH = _re.compile(
-            r'\s+-\s+(?:[A-Za-z0-9\u00C0-\u024F\s]*\s+)?'
-            r'\b(?:' + _VKW + r')\b',
-            _re.IGNORECASE,
-        )
-        # 3) Bare suffix: "SONG NAME REMIX"
-        _VAR_SUFFIX = _re.compile(
-            r'\s+(?:remix|lofi|acoustic|karaoke|cover|instrumental|remaster)\s*$',
-            _re.IGNORECASE,
-        )
-        # 4) Trailing ", Live" at end of title (catches "- From …, Live")
-        _VAR_TRAILING_LIVE = _re.compile(
-            r',\s*Live\s*$', _re.IGNORECASE,
-        )
-        # 5) Soundtrack: (From "..."), (Theme Song From ...), OST
-        _VAR_FROM = _re.compile(
-            r'[\(\[](?:Theme\s+Song\s+)?[Ff]rom\s+\S',
-            _re.IGNORECASE,
-        )
-        _VAR_OST = _re.compile(
-            r'\bOST\b|Original\s+(?:Motion\s+Picture\s+)?Soundtrack',
-            _re.IGNORECASE,
-        )
-        # 7) Mashup/Medley/Liên Khúc at start of title
-        _VAR_MASHUP_PREFIX = _re.compile(
-            r'^(?:Mashup|Medley|Liên Khúc)\b',
-            _re.IGNORECASE,
-        )
-
-        def _is_variant(title: str) -> bool:
-            return bool(
-                _VAR_PAREN.search(title)
-                or _VAR_DASH.search(title)
-                or _VAR_SUFFIX.search(title)
-                or _VAR_TRAILING_LIVE.search(title)
-                or _VAR_FROM.search(title)
-                or _VAR_OST.search(title)
-                or _VAR_MASHUP_PREFIX.search(title)
+        keep_original = [
+            not is_non_original_version(
+                row.get("track_name", ""),
+                row.get("album_name", ""),
             )
-
-        # Live/concert album detection — remove tracks from live albums
-        _LIVE_ALBUM_RE = _re.compile(
-            r'\b(?:live|concert|liveshow|live show|session|sessions|dạ khúc)\b',
-            _re.IGNORECASE,
-        )
-        # Whitelist album names that contain these words but are NOT live
-        _LIVE_ALBUM_WHITELIST = _re.compile(
-            r'\bALIVE\b|\bTouliver\b|\bProd\.?\b',
-            _re.IGNORECASE,
-        )
-
-        def _is_live_album(album_name: str) -> bool:
-            if not album_name or album_name == 'nan':
-                return False
-            if _LIVE_ALBUM_WHITELIST.search(album_name):
-                return False
-            return bool(_LIVE_ALBUM_RE.search(album_name))
-
-        # Remove by track title OR live album
-        mask_title = df['track_name'].fillna('').apply(lambda t: not _is_variant(str(t)))
-        mask_album = df['album_name'].fillna('').apply(lambda a: not _is_live_album(str(a)))
-        df = df[mask_title & mask_album]
+            for _, row in df.iterrows()
+        ]
+        df = _apply_keep_mask(df, keep_original)
     except Exception as e:
         print(f"  ⚠️ Variant filter error: {e}")
     removed = before - len(df)
     msg = f"[Filter 6d] Non-original versions removed: {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 6d2. Remove low-value soundtrack scores/deep cuts ──────────────
+    # "Original Soundtrack" alone does not make a vocal song a variant.
+    # Keep verified artists and hot releases, but reject obscure score rows.
+    before = len(df)
+    try:
+        from tools.collect_data import VietnameseDetector
+
+        known_artists_6d2 = {name.lower() for name in VietnameseDetector.KNOWN_ARTISTS}
+        keep_mask_6d2 = []
+        for _, row in df.iterrows():
+            artist_names = _split_artist_field(
+                row.get("artists", row.get("primary_artist", "")),
+                fallback=str(row.get("primary_artist", "")),
+            )
+            is_low_value_score = is_low_value_soundtrack_release(
+                row.get("track_name", ""),
+                row.get("album_name", ""),
+                artist_names,
+                known_artists_6d2,
+                row.get("view_count"),
+                row.get("hot_source"),
+            )
+            keep_mask_6d2.append(not is_low_value_score)
+        df = _apply_keep_mask(df, keep_mask_6d2)
+    except Exception as e:
+        print(f"  ⚠️ Soundtrack score filter error: {e}")
+    removed = before - len(df)
+    msg = f"[Filter 6d2] Low-value soundtrack scores removed: {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 6d3. Verified catalog/audio quality gate ─────────────────────────
+    # Duration alone is not a rejection signal. Combine identity/release
+    # evidence with the offline audio audit for instrumental, speech, and
+    # non-music files.
+    before = len(df)
+    audio_audit_by_id: dict[str, dict] = {}
+    audio_audit_path = PROJECT_ROOT / "data" / "catalog_audio_quality_audit.csv"
+    if audio_audit_path.exists():
+        try:
+            audio_audit = pd.read_csv(audio_audit_path)
+            audio_audit_by_id = {
+                str(row["track_id"]): row.to_dict()
+                for _, row in audio_audit.iterrows()
+            }
+        except Exception as e:
+            print(f"  ⚠️ Audio quality audit unavailable: {e}")
+    quality_reasons = [
+        catalog_quality_rejection_reason(
+            row,
+            audio_audit_by_id.get(str(row.get("track_id", ""))),
+        )
+        for _, row in df.iterrows()
+    ]
+    df = _apply_keep_mask(df, [reason is None for reason in quality_reasons])
+    removed = before - len(df)
+    msg = f"[Filter 6d3] Verified bad/legacy/audio content: removed {removed:,} → {len(df):,}"
     print(f"  {msg}")
     report_lines.append(msg)
 
@@ -450,17 +1524,135 @@ def run_filter(input_path: Path | None = None,
         keep_mask = []
         for _, row in df.iterrows():
             artist = str(row.get("primary_artist", "")).strip()
-            artists_str = str(row.get("artists", artist))
-            artist_list = [a.strip() for a in artists_str.split(",")]
+            artist_list = _split_artist_field(row.get("artists", artist), fallback=artist)
             is_foreign = VietnameseDetector.is_foreign_blocked(artist_list)
             keep_mask.append(not is_foreign)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
     except ImportError:
         print("  ⚠️ Could not import VietnameseDetector — skipping foreign filter")
     removed = before - len(df)
     msg = f"[Filter 6e] Foreign artists: removed {removed:,} → {len(df):,}"
     print(f"  {msg}")
     report_lines.append(msg)
+
+    # ── 6f. Seasonal music filter (Tết + Giáng Sinh/Noel) ────────────────
+    # Removes holiday-specific songs that don't fit everyday listening.
+    # Uses stronger title/album patterns plus lyric evidence when available.
+    before = len(df)
+    try:
+        lyrics_col_6f = next(
+            (c for c in ["plain_lyrics", "synced_lyrics", "lyrics"] if c in df.columns),
+            None,
+        )
+        mask_seasonal = [
+            not is_seasonal_track(
+                row.get("track_name", ""),
+                row.get("album_name", ""),
+                row.get(lyrics_col_6f, "") if lyrics_col_6f else "",
+            )
+            for _, row in df.iterrows()
+        ]
+        df = _apply_keep_mask(df, mask_seasonal)
+    except Exception as e:
+        print(f"  ⚠️ Seasonal filter error: {e}")
+    removed = before - len(df)
+    msg = f"[Filter 6f] Seasonal music (Tết + Giáng Sinh/Noel): removed {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 6g. Release year filter (≥ 2013, target 9x/GenZ) ────────────────
+    # Soft filter: tracks with KNOWN release year < 2013 are dropped.
+    # Tracks without a year are KEPT (year will be resolved later via
+    # yt-dlp upload_date in Phase 3). Uses 'year' column first, falls back
+    # to first 4 chars of 'release_date'.
+    before = len(df)
+    # Priority: release year metadata, then the source upload date resolved
+    # after MP3 download.
+    album_year_path = PROJECT_ROOT / "data" / "album_release_year_audit.csv"
+    if "album_id" in df.columns and album_year_path.exists():
+        try:
+            album_years = pd.read_csv(
+                album_year_path,
+                usecols=["album_id", "resolved_year"],
+            ).drop_duplicates("album_id", keep="last")
+            year_lookup = dict(
+                zip(
+                    album_years["album_id"].astype(str),
+                    pd.to_numeric(album_years["resolved_year"], errors="coerce"),
+                )
+            )
+            df["album_release_year"] = df["album_id"].astype(str).map(year_lookup)
+        except Exception as e:
+            print(f"  ⚠️ Album release-year audit unavailable: {e}")
+    _year_columns = [
+        'year', 'release_date', 'album_release_year', 'upload_year', 'upload_date'
+    ]
+    _year_col = next((c for c in _year_columns if c in df.columns), None)
+    if _year_col:
+        def _extract_year(val) -> int | None:
+            if pd.isna(val):
+                return None
+            s = str(val).strip()
+            if not s or s in ('nan', 'None', '0', '<NA>'):
+                return None
+            try:
+                return int(s[:4])
+            except (ValueError, TypeError):
+                return None
+
+        _years = df[_year_col].apply(_extract_year)
+        # If a secondary column can fill in NaN years, merge them
+        for _fallback in _year_columns:
+            if _fallback != _year_col and _fallback in df.columns:
+                _fill = df[_fallback].apply(_extract_year)
+                _years = _years.where(_years.notna(), _fill)
+        _known_old = _years.notna() & (_years < RELEASE_YEAR_MIN)
+        _n_unknown = int(_years.isna().sum())
+        df = df[~_known_old]
+        removed = before - len(df)
+        _src = '+'.join(c for c in _year_columns if c in df.columns)
+        msg = (
+            f"[Filter 6g] Release year < {RELEASE_YEAR_MIN} (cols: {_src}): removed {removed:,} "
+            f"({_n_unknown:,} with unknown year kept) → {len(df):,}"
+        )
+    else:
+        removed = 0
+        msg = f"[Filter 6g] Release year: no year/release_date/upload_year column — skipped → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 6h. Profanity / vulgar track title filter ────────────────────────
+    # Chỉ loại tên bài có từ tục rõ ràng.
+    before = len(df)
+    try:
+        keep_mask_6h = []
+        for _, row in df.iterrows():
+            tn = str(row.get("track_name", ""))
+            keep_mask_6h.append(not is_profane_title(tn))
+        df = _apply_keep_mask(df, keep_mask_6h)
+    except Exception as e:
+        print(f"  ⚠️ Profanity filter error: {e}")
+    removed = before - len(df)
+    msg = f"[Filter 6h] Profanity in track title: removed {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 6i. Profanity-heavy lyrics filter ────────────────────────────────
+    # When lyrics are present, remove tracks with either any hard profanity
+    # or very frequent mild slang. This is stricter than title-only checks
+    # but still avoids dropping tracks for one casual "vcl"/"đéo".
+    lyrics_col_6i = next(
+        (c for c in ["plain_lyrics", "synced_lyrics", "lyrics"] if c in df.columns),
+        None,
+    )
+    if lyrics_col_6i:
+        before = len(df)
+        mask_clean_lyrics = df[lyrics_col_6i].apply(lambda text: not is_profane_lyrics(text))
+        df = _apply_keep_mask(df, mask_clean_lyrics)
+        removed = before - len(df)
+        msg = f"[Filter 6i] Profanity-heavy lyrics: removed {removed:,} → {len(df):,}"
+        print(f"  {msg}")
+        report_lines.append(msg)
 
     # ── 7. Foreign-language dominant tracks ───────────────────────────────
     # Tracks where foreign characters (CJK/Korean/Thai) OUTNUMBER VN chars.
@@ -486,13 +1678,96 @@ def run_filter(input_path: Path | None = None,
                 keep_mask.append(False)
             else:
                 keep_mask.append(True)
-        df = df[keep_mask]
+        df = _apply_keep_mask(df, keep_mask)
     except ImportError:
         pass
     removed = before - len(df)
     msg = f"[Filter 7] Foreign-dominant tracks: removed {removed:,} → {len(df):,}"
     print(f"  {msg}")
     report_lines.append(msg)
+
+    # ── 7b. Pure-ASCII foreign track filter ──────────────────────────────
+    # Catches foreign (Western/Latin) tracks that have NO Vietnamese markers
+    # in either track name OR artist name, and whose artist is not a known
+    # or discovered Vietnamese artist.
+    # Example caught: "Shape of You" by Ed Sheeran (zero VN chars, not known VN artist)
+    # Example kept:   "Run Now" by Binz (Binz in KNOWN_ARTISTS → kept)
+    before = len(df)
+    try:
+        from tools.collect_data import VietnameseDetector
+
+        _known_lower_7b = {k.lower() for k in VietnameseDetector.KNOWN_ARTISTS}
+
+        keep_mask_7b = []
+        for _, row in df.iterrows():
+            tn  = str(row.get('track_name',     ''))
+            art = str(row.get('primary_artist', ''))
+            # Fast pass: any VN evidence in title or any artist field → keep
+            if has_vn_evidence(tn) or has_vn_evidence(art):
+                keep_mask_7b.append(True)
+                continue
+            # Check ALL artists in the comma-separated artists column
+            # (catches feat. artists that are known VN artists even if primary isn't)
+            all_artists = [
+                a.lower()
+                for a in _split_artist_field(row.get("artists", art), fallback=art)
+            ]
+            if any(has_vn_evidence(a) for a in all_artists):
+                keep_mask_7b.append(True)
+                continue
+            if any(a in _discovered_vn_artists or a in _known_lower_7b for a in all_artists):
+                keep_mask_7b.append(True)
+                continue
+            # Pure ASCII + no known/discovered VN artist anywhere → likely foreign
+            keep_mask_7b.append(False)
+        df = _apply_keep_mask(df, keep_mask_7b)
+    except Exception as e:
+        print(f"  ⚠️ Pure-ASCII foreign filter error: {e}")
+    removed = before - len(df)
+    msg = f"[Filter 7b] Pure-ASCII foreign tracks: removed {removed:,} → {len(df):,}"
+    print(f"  {msg}")
+    report_lines.append(msg)
+
+    # ── 7c. Foreign-language lyrics filter ───────────────────────────────
+    # Catches English/foreign songs that slip through because the artist is
+    # Vietnamese or mixed-VN collab, but the lyrics themselves show no
+    # Vietnamese evidence.
+    lyrics_col_7c = next(
+        (c for c in ["plain_lyrics", "synced_lyrics", "lyrics"] if c in df.columns),
+        None,
+    )
+    if lyrics_col_7c:
+        before = len(df)
+        from tools.collect_data import VietnameseDetector
+
+        _known_lower_7c = {k.lower() for k in VietnameseDetector.KNOWN_ARTISTS}
+
+        keep_mask_7c = []
+        for _, row in df.iterrows():
+            lyrics_text = row.get(lyrics_col_7c, "")
+            primary_artist = _clean_artist_name(str(row.get("primary_artist", ""))).lower()
+            instrumental = bool(row.get("instrumental", False))
+            primary_is_vn = (
+                primary_artist in _discovered_vn_artists
+                or primary_artist in _known_lower_7c
+                or has_vn_evidence(primary_artist)
+            )
+            foreign_language = foreign_lyrics_language(lyrics_text)
+            known_foreign_release = is_known_foreign_identity_release(
+                primary_artist,
+                row.get("album_name", ""),
+            )
+            keep_mask_7c.append(
+                instrumental
+                or foreign_language is None
+                or (primary_is_vn and not known_foreign_release)
+            )
+        df = _apply_keep_mask(df, keep_mask_7c)
+
+        removed = before - len(df)
+        msg = f"[Filter 7c] Foreign-language lyrics: removed {removed:,} → {len(df):,}"
+        print(f"  {msg}")
+        report_lines.append(msg)
 
     # ── 8. Low-quality / obscure artist filter ───────────────────────────
     # Two-layer approach:
@@ -581,7 +1856,7 @@ def run_filter(input_path: Path | None = None,
             'lilgee phạm', 'võ ê vo', 'ngân ngân',
             'đinh hoàng quốc', 'tezzy', 'dang minh',
             'dex', 'gia quý', 'huỳnh văn',
-            'thoại nghi', 'ngọc phước', 'billy100',
+            'ngọc phước', 'billy100',
             'tedd', 'giang trang', 'liêm hiếu',
             'cece trương', 'bùi dương thái hà',
             'flo d', 'bro6ty', 'vink', 'shanhao',
@@ -684,7 +1959,6 @@ def run_filter(input_path: Path | None = None,
             'hoài anh kiệt', 'hương giang', 'đặng dinh', 'hkt',
             'trạm cảm xúc', 'đinh tiến đạt', 'phung ngoc huy',
             'nguyễn thùy linh', 'tuấn nghĩa', 'hồng sơn',
-            'mỹ anh',  # old trữ tình singer (not Mỹ Linh's daughter)
             'emily',   # French artist (not Vietnamese Emily)
             'dick & dee dee', 'the beach', 'conego',  # non-Vietnamese
             'grab', 'bdmedia', 'doctor nature',  # not real artists
@@ -815,7 +2089,7 @@ def run_filter(input_path: Path | None = None,
             'tóc tiên', 'miu lê', 'trịnh thăng bình',
             'trung quân', 'trung quân idol',
             'văn mai hương', 'uyên linh', 'hương tràm',
-            'đinh mạnh ninh', 'phương mỹ chi', 'thái trinh',
+            'đinh mạnh ninh', 'thái trinh',
             'song luân', 'khắc việt', 'hồ quang hiếu',
             'maya', 'nguyên hà', 'phạm toàn thắng',
             'jun phạm', 'dương hoàng yến', 'gil lê',
@@ -865,7 +2139,7 @@ def run_filter(input_path: Path | None = None,
             'vĩnh hoàng', 'đĩa than hồng', 'swan nguyễn',
             "a 'namese", 'nam duong', 'neko land',
             'pixel neko', '(s)trong', 'blak ray',
-            'vy jacko', 'mylina', 'mopius', 'mcee blue',
+            'vy jacko', 'mopius', 'mcee blue',
             'chiulinh', 'vcc left hand', 'superc',
             'v.o.x', 'maiquinn', 'tyt', 'p$mall', 'lizay',
             'limitlxss', 'cashmel', 'pain a.k.a dai ca p',
@@ -901,6 +2175,16 @@ def run_filter(input_path: Path | None = None,
     # B) Compute artist-level max popularity (only when pop column exists)
     pop_col = "track_popularity" if "track_popularity" in df.columns else "popularity"
     has_pop = pop_col in df.columns
+    _views_f8 = (
+        pd.to_numeric(df["view_count"], errors="coerce")
+        if "view_count" in df.columns
+        else pd.Series(float("nan"), index=df.index)
+    )
+    _hot_source_f8 = (
+        df["hot_source"].notna()
+        if "hot_source" in df.columns
+        else pd.Series(False, index=df.index)
+    )
     if has_pop:
         df[pop_col] = pd.to_numeric(df[pop_col], errors='coerce')
         all_null = df[pop_col].isna().all()
@@ -908,6 +2192,14 @@ def run_filter(input_path: Path | None = None,
         artist_max_pop = df.groupby(
             df['primary_artist'].astype(str).str.strip().str.lower()
         )[pop_col].max()
+    else:
+        all_null = True
+
+    _artist_keys_f8 = df["primary_artist"].astype(str).str.strip().str.lower()
+    _row_hot_f8 = _hot_source_f8 | (_views_f8 >= VIEW_COUNT_MIN)
+    if has_pop:
+        _row_hot_f8 |= df[pop_col] >= TRACK_POP_MIN
+    artist_has_hot_signal = _row_hot_f8.groupby(_artist_keys_f8).any()
 
     keep_mask = []
     for _, row in df.iterrows():
@@ -915,22 +2207,29 @@ def run_filter(input_path: Path | None = None,
         art_stripped = _norm_f8(art_lower)
 
         # A) Blocklist check (exact + diacritics-stripped) — ALWAYS runs
-        if art_lower in _ARTIST_BLOCKLIST or art_stripped in _BLOCKLIST_STRIPPED:
+        # Current artists only bypass stale manual names; they still face
+        # artist- and track-level popularity checks.
+        is_current = VietnameseDetector.is_current_artist([art_lower])
+        if (
+            not is_current
+            and (art_lower in _ARTIST_BLOCKLIST or art_stripped in _BLOCKLIST_STRIPPED)
+        ):
             keep_mask.append(False)
             continue
 
         # B) Artist max popularity check — if their BEST track < 15, likely obscure
-        #    Only runs when popularity column exists
+        #    A hot track on YouTube/chart overrides a low Spotify score.
         if has_pop and not all_null:
             max_pop = artist_max_pop.get(art_lower, 0)
-            if max_pop < 15:
+            has_hot_track = bool(artist_has_hot_signal.get(art_lower, False))
+            if max_pop < 15 and not has_hot_track:
                 keep_mask.append(False)
             else:
                 keep_mask.append(True)
         else:
             keep_mask.append(True)
 
-    df = df[keep_mask]
+    df = _apply_keep_mask(df, keep_mask)
     removed = before - len(df)
     msg = f"[Filter 8] Low-quality/obscure artists (blocklist + max_pop<15): removed {removed:,} → {len(df):,}"
     print(f"  {msg}")
@@ -972,9 +2271,80 @@ def run_filter(input_path: Path | None = None,
         print(f"  {msg}")
         report_lines.append(msg)
 
-    # ── 8c. Per-artist track cap ────────────────────────────────────────
-    # DISABLED: no per-artist cap — keep all tracks per artist.
-    # MAX_TRACKS_PER_ARTIST = 50
+    # ── 8c. Per-track popularity threshold ──────────────────────────────
+    # Drops individual tracks with very low Spotify popularity (< TRACK_POP_MIN).
+    # Separate from artist-level filter 8B: an artist can pass artist-level
+    # quality check but still have many obscure deep-cuts we don't want.
+    # Soft filter: only fires when popularity data IS present and non-zero.
+    # Tracks from ZingMP3 chart (hot_source flag) are exempt.
+    _pop_col_8c = "track_popularity" if "track_popularity" in df.columns else "popularity"
+    if _pop_col_8c in df.columns:
+        _pop_8c = pd.to_numeric(df[_pop_col_8c], errors='coerce')
+        _has_pop_data = _pop_8c.notna().any() and (_pop_8c.fillna(0) > 0).any()
+        if _has_pop_data:
+            before = len(df)
+            _known_low_pop = _pop_8c.notna() & (_pop_8c < TRACK_POP_MIN)
+            # A song can be a genuine YouTube hit before Spotify catches up.
+            if "view_count" in df.columns:
+                _views_for_pop = pd.to_numeric(df["view_count"], errors="coerce")
+                _known_low_pop &= ~(_views_for_pop >= VIEW_COUNT_MIN)
+            # Exempt tracks flagged as coming from hot chart sources
+            if 'hot_source' in df.columns:
+                _known_low_pop = _known_low_pop & df['hot_source'].isna()
+            df = df[~_known_low_pop]
+            removed = before - len(df)
+            msg = f"[Filter 8c] Low per-track popularity (< {TRACK_POP_MIN}): removed {removed:,} → {len(df):,}"
+            print(f"  {msg}")
+            report_lines.append(msg)
+
+    # ── 8d. YouTube view threshold after MP3 download ───────────────────
+    # Phase 1 YTMusic rows often lack Spotify popularity. Phase 3 enriches
+    # view_count via yt-dlp, so a second filter pass can reject obscure songs.
+    if "view_count" in df.columns:
+        _views_8d = pd.to_numeric(df["view_count"], errors="coerce")
+        _pop_for_views = (
+            pd.to_numeric(df[_pop_col_8c], errors="coerce")
+            if _pop_col_8c in df.columns
+            else pd.Series(float("nan"), index=df.index)
+        )
+        if _views_8d.notna().any():
+            before = len(df)
+            _known_low_views = _views_8d.notna() & (_views_8d < VIEW_COUNT_MIN)
+            _release_year_8d = pd.Series(float("nan"), index=df.index)
+            for column in ("year", "upload_year", "upload_date", "release_date"):
+                if column not in df.columns:
+                    continue
+                parsed_year = df[column].apply(
+                    lambda value: (
+                            int(match.group(0))
+                        if (
+                            pd.notna(value)
+                            and (match := re.search(r"\b(19|20)\d{2}\b", str(value)))
+                        )
+                        else None
+                    )
+                )
+                _release_year_8d = _release_year_8d.where(
+                    _release_year_8d.notna(),
+                    parsed_year,
+                )
+            _recent_with_momentum = (
+                (_release_year_8d >= RECENT_RELEASE_YEAR_MIN)
+                & (_views_8d >= RECENT_VIEW_COUNT_MIN)
+            )
+            _remove_for_views = _known_low_views & ~_recent_with_momentum
+            _remove_for_views &= ~(_pop_for_views >= TRACK_POP_MIN)
+            if "hot_source" in df.columns:
+                _remove_for_views &= df["hot_source"].isna()
+            df = df[~_remove_for_views]
+            removed = before - len(df)
+            msg = (
+                f"[Filter 8d] Low YouTube views (< {VIEW_COUNT_MIN:,}, no popularity override): "
+                f"removed {removed:,}; releases from {RECENT_RELEASE_YEAR_MIN} keep at "
+                f"{RECENT_VIEW_COUNT_MIN:,}+ → {len(df):,}"
+            )
+            print(f"  {msg}")
+            report_lines.append(msg)
 
     # ── 9. Remove tracks without audio features (post-Phase 5) ───────────
     # Only applied if phase5 columns exist (i.e. running after Phase 5).

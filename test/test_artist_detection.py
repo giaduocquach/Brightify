@@ -49,6 +49,19 @@ def test_known_artist_normalization():
         (["Mr Siro"], True, "Mr Siro with space"),
         (["Andree Right Hand"], True, "Andree Right Hand"),
         (["RPT MCK"], True, "RPT MCK"),
+        (["MYLINA"], True, "MYLINA recent artist"),
+        (["Saabirose"], True, "Saabirose recent rapper"),
+        (["A1J"], True, "A1J recent singer"),
+        (["OLEW"], True, "OLEW recent singer-songwriter"),
+        (["Sơn.K"], True, "Sơn.K recent singer"),
+        (["Captain Boy"], True, "ATSH Captain Boy"),
+        (["CONGB"], True, "ATSH CONGB"),
+        (["Cody Nam Võ"], True, "ATSH Cody Nam Võ"),
+        (["7dnight"], True, "Rap Việt finalist"),
+        (["Blacka"], True, "Rap Việt finalist"),
+        (["Khắc Việt"], True, "active 9x-era singer"),
+        (["Hồ Quang Hiếu"], True, "active 9x-era singer"),
+        (["Haisam"], True, "Hải Sâm ASCII alias"),
         # Non-VN artists should NOT match
         (["Taylor Swift"], False, "Taylor Swift (foreign)"),
         (["BTS"], False, "BTS (foreign)"),
@@ -82,6 +95,24 @@ def test_known_artist_normalization():
     
     print(f"\n  Result: {passed}/{passed+failed} passed")
     return results, failed == 0
+
+
+def test_current_artists_not_old_genre_blocked():
+    """Current artists restored from stale blocklist entries must remain eligible."""
+    for artist in [
+        "Phương Mỹ Chi", "Mỹ Anh", "Khắc Việt", "Hồ Quang Hiếu",
+        "Lê Bảo Bình", "Đình Dũng", "Đinh Tùng Huy", "Huy Vạc",
+        "Isaac", "Quốc Thiên", "Song Luân", "Jun Phạm",
+        "Ngô Kiến Huy", "Cường Seven", "Phạm Anh Duy",
+    ]:
+        assert not VietnameseDetector.is_old_genre_blocked([artist]), artist
+    assert VietnameseDetector.is_old_genre_blocked(["Chế Linh"])
+
+
+def test_current_artists_override_stale_non_artist_entries():
+    """Show artists previously confused with channels must remain eligible."""
+    for artist in ["Captain Boy", "Đỗ Phú Quí", "Blacka", "Nhâm Phương Nam"]:
+        assert not VietnameseDetector.is_non_artist_channel(artist), artist
 
 
 def test_discovered_artists():

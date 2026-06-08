@@ -22,24 +22,36 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'songs',
-        sa.Column('fade_out_cue_s', sa.Float(), nullable=True,
-                  comment='Outro start (s) — last structural boundary before silence')
-    )
-    op.add_column(
-        'songs',
-        sa.Column('fade_in_cue_s', sa.Float(), nullable=True,
-                  comment='Intro end (s) — first structural boundary after silence')
-    )
-    op.add_column(
-        'songs',
-        sa.Column('downbeat_times_json', sa.Text(), nullable=True,
-                  comment='JSON array of downbeat timestamps (for beat-aligned mixing)')
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("songs")}
+    if "fade_out_cue_s" not in columns:
+        op.add_column(
+            'songs',
+            sa.Column('fade_out_cue_s', sa.Float(), nullable=True,
+                      comment='Outro start (s) — last structural boundary before silence')
+        )
+    if "fade_in_cue_s" not in columns:
+        op.add_column(
+            'songs',
+            sa.Column('fade_in_cue_s', sa.Float(), nullable=True,
+                      comment='Intro end (s) — first structural boundary after silence')
+        )
+    if "downbeat_times_json" not in columns:
+        op.add_column(
+            'songs',
+            sa.Column('downbeat_times_json', sa.Text(), nullable=True,
+                      comment='JSON array of downbeat timestamps (for beat-aligned mixing)')
+        )
 
 
 def downgrade():
-    op.drop_column('songs', 'downbeat_times_json')
-    op.drop_column('songs', 'fade_in_cue_s')
-    op.drop_column('songs', 'fade_out_cue_s')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("songs")}
+    if "downbeat_times_json" in columns:
+        op.drop_column('songs', 'downbeat_times_json')
+    if "fade_in_cue_s" in columns:
+        op.drop_column('songs', 'fade_in_cue_s')
+    if "fade_out_cue_s" in columns:
+        op.drop_column('songs', 'fade_out_cue_s')

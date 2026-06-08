@@ -1,7 +1,7 @@
 """Backfill integrated LUFS for all existing songs that have a local MP3.
 
-Reads from music_files/{track_id}.mp3 (path resolved from Song.mp3_path or default),
-runs pyloudnorm ITU-R BS.1770 meter, writes Song.loudness_lufs.
+Reads from music_files/{track_id}.mp3, runs pyloudnorm ITU-R BS.1770 meter,
+writes Song.loudness_lufs.
 
 Usage:
     source .venv/bin/activate
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -32,16 +31,17 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import config as cfg
 from db.engine import SessionLocal
 from db.models import Song
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger("backfill_lufs")
 
-MUSIC_DIR = ROOT / "music_files"
+MUSIC_DIR = cfg.MUSIC_DIR
 
 
-def _measure_one(track_id: str, mp3_path: str | None) -> tuple[str, float | None, str | None]:
+def _measure_one(track_id: str) -> tuple[str, float | None, str | None]:
     """Return (track_id, lufs, error). lufs is None on failure."""
     try:
         import librosa
@@ -51,16 +51,9 @@ def _measure_one(track_id: str, mp3_path: str | None) -> tuple[str, float | None
 
     # Resolve mp3 path
     candidate = None
-    if mp3_path and os.path.isabs(mp3_path) and os.path.exists(mp3_path):
-        candidate = mp3_path
-    else:
-        default = MUSIC_DIR / f"{track_id}.mp3"
-        if default.exists():
-            candidate = str(default)
-        elif mp3_path:
-            rel = ROOT / mp3_path
-            if rel.exists():
-                candidate = str(rel)
+    default = MUSIC_DIR / f"{track_id}.mp3"
+    if default.exists():
+        candidate = str(default)
 
     if not candidate:
         return track_id, None, "mp3_missing"
@@ -86,7 +79,7 @@ def main():
     args = ap.parse_args()
 
     session = SessionLocal()
-    q = session.query(Song.track_id, Song.mp3_path).filter(Song.has_mp3.is_(True))
+    q = session.query(Song.track_id).filter(Song.has_mp3.is_(True))
     if not args.force:
         q = q.filter(Song.loudness_lufs.is_(None))
     if args.limit:
@@ -103,13 +96,13 @@ def main():
 
     results: list[tuple[str, float | None, str | None]] = []
     if args.workers <= 1:
-        for i, (tid, mp3) in enumerate(rows):
-            results.append(_measure_one(tid, mp3))
+        for i, (tid,) in enumerate(rows):
+            results.append(_measure_one(tid))
             if (i + 1) % 25 == 0:
                 log.info(f"  measured {i+1}/{total}")
     else:
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(_measure_one, tid, mp3): tid for tid, mp3 in rows}
+            futures = {ex.submit(_measure_one, tid): tid for (tid,) in rows}
             done = 0
             for fut in as_completed(futures):
                 results.append(fut.result())

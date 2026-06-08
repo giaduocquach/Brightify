@@ -1,15 +1,13 @@
-"""AI recommendation API routes (color, mood, lyrics, image)."""
+"""AI recommendation API routes (color, mood, lyrics)."""
 
 import logging
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-from PIL import Image
-from io import BytesIO
 
 import config
 from api.utils import dataframe_to_dict
@@ -20,8 +18,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/recommend", tags=["AI Recommendations"])
 
 _recommender = None
-_image_analyzer = None
-_init_image_fn = None
 
 
 def _enrich_album_art(song: dict):
@@ -46,16 +42,9 @@ def _enrich_album_art(song: dict):
         song['album_art_url'] = None
 
 
-def init(recommender, image_analyzer, init_image_fn):
-    global _recommender, _image_analyzer, _init_image_fn
+def init(recommender):
+    global _recommender
     _recommender = recommender
-    _image_analyzer = image_analyzer
-    _init_image_fn = init_image_fn
-
-
-def set_image_analyzer(analyzer):
-    global _image_analyzer
-    _image_analyzer = analyzer
 
 
 # ============================================================================
@@ -93,13 +82,6 @@ class RecommendationResponse(BaseModel):
     count: int
     message: Optional[str] = None
 
-
-class ImageRecommendationResponse(BaseModel):
-    success: bool
-    image_analysis: Dict[str, Any]
-    results: List[Dict[str, Any]]
-    count: int
-    message: Optional[str] = None
 
 
 _dataframe_to_dict = dataframe_to_dict
@@ -191,89 +173,6 @@ async def search_by_lyrics(request: LyricsSearchRequest):
         raise HTTPException(status_code=500, detail="Lyrics search failed")
 
 
-@router.post("/image", response_model=ImageRecommendationResponse)
-async def recommend_by_image(
-    file: UploadFile = File(...),
-    top_k: int = Form(default=10, ge=1, le=50),
-    diversity_penalty: float = Form(default=0.15, ge=0.0, le=1.0),
-):
-    """Recommend songs based on uploaded image using CLIP + color analysis"""
-    global _image_analyzer
-
-    allowed = {'image/jpeg', 'image/png', 'image/webp', 'image/bmp', 'image/tiff'}
-    if file.content_type not in allowed:
-        raise HTTPException(status_code=400, detail=f"Unsupported: {file.content_type}")
-
-    # Check Content-Length header first to reject oversized uploads early
-    MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB
-    if file.size is not None and file.size > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
-
-    # Read in chunks to prevent memory exhaustion from malicious uploads
-    chunks = []
-    total = 0
-    while True:
-        chunk = await file.read(64 * 1024)  # 64KB chunks
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > MAX_IMAGE_BYTES:
-            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
-        chunks.append(chunk)
-    contents = b''.join(chunks)
-
-    if _image_analyzer is None:
-        try:
-            _init_image_fn()
-            from api.recommend import _image_analyzer as _ia
-        except Exception:
-            raise HTTPException(status_code=503, detail="Image analysis unavailable")
-
-    if _image_analyzer is None:
-        raise HTTPException(status_code=503, detail="Image model failed to load")
-
-    try:
-        Image.MAX_IMAGE_PIXELS = 25_000_000  # 25MP limit against decompression bomb
-        image = Image.open(BytesIO(contents))
-        analysis = _image_analyzer.analyze_image(image)
-        results = _recommender.recommend_by_image(
-            image_analysis=analysis, top_k=top_k, diversity_penalty=diversity_penalty,
-        )
-
-        summary = {
-            'dominant_colors': analysis['dominant_colors'],
-            'color_weights': [round(w, 3) for w in analysis['color_weights']],
-            'mood_label': analysis['mood_label'],
-            'mood_description': analysis['mood_description'],
-            'valence': round(analysis['valence'], 3),
-            'arousal': round(analysis['arousal'], 3),
-            'brightness': round(analysis['brightness'], 3),
-            'saturation': round(analysis['saturation'], 3),
-            'warmth': round(analysis['warmth'], 3),
-            'contrast': round(analysis['contrast'], 3),
-            'top_emotions': dict(sorted(analysis['emotion_scores'].items(), key=lambda x: -x[1])[:5]),
-            'top_scenes': dict(sorted(analysis['scene_scores'].items(), key=lambda x: -x[1])[:3]),
-            # Enhanced analysis fields
-            'content_type': analysis.get('content_type', 'unknown'),
-            'has_person': analysis.get('has_person', False),
-            'person_confidence': round(analysis.get('person_confidence', 0), 3),
-            'expression': analysis.get('expression'),
-            'lighting': analysis.get('lighting'),
-            'color_variety': round(analysis.get('color_variety', 0), 3),
-        }
-
-        return ImageRecommendationResponse(
-            success=True,
-            image_analysis=summary,
-            results=_dataframe_to_dict(results),
-            count=len(results),
-            message=analysis['mood_description'],
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Image analysis failed")
-        raise HTTPException(status_code=500, detail="Image analysis failed")
 
 
 # ============================================================================

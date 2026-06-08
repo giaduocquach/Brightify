@@ -7,6 +7,8 @@ from typing import List, Dict, Any
 import numpy as np
 import pandas as pd
 
+import config as cfg
+
 
 def sanitize_for_json(obj):
     """Convert numpy/pandas types to JSON-serializable Python types."""
@@ -42,7 +44,7 @@ _albumart_cache = None
 def _get_albumart_cache():
     global _albumart_cache
     if _albumart_cache is None:
-        art_dir = Path(__file__).parent.parent / 'album_art'
+        art_dir = cfg.ALBUM_ART_DIR
         if art_dir.exists():
             _albumart_cache = {f.stem for f in art_dir.glob('*.jpg')}
         else:

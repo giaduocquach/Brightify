@@ -99,10 +99,7 @@ def build_color_gt(
 
     for hex_color in QUERY_COLORS:
         try:
-            va_result = color_mapper.color_to_valence_arousal(hex_color)
-            # color_to_valence_arousal returns (valence, arousal, confidence)
-            valence = float(va_result[0])
-            arousal = float(va_result[1])
+            valence, arousal = color_mapper.hsl_to_va(hex_color)
         except Exception:
             skipped.append(hex_color)
             continue

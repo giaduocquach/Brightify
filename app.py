@@ -10,6 +10,7 @@ load_dotenv()
 
 import logging_config  # noqa: F401 — sets up loguru + stdlib intercept
 from loguru import logger
+import config as cfg
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,6 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from core.recommendation_engine import get_recommender
-from core.image_analysis import get_image_analyzer
 
 from api import music as music_routes
 from api import recommend as recommend_routes
@@ -30,15 +30,11 @@ from api.rate_limit import RateLimitMiddleware, set_redis as _rl_set_redis
 static_path = Path(__file__).parent / "static"
 static_path.mkdir(exist_ok=True)
 
-music_path = Path(__file__).parent / "music_files"
-music_path.mkdir(exist_ok=True)
-album_art_path = Path(__file__).parent / "album_art"
-album_art_path.mkdir(exist_ok=True)
-artist_images_path = Path(__file__).parent / "artist_images"
-artist_images_path.mkdir(exist_ok=True)
+music_path = cfg.MUSIC_DIR
+album_art_path = cfg.ALBUM_ART_DIR
+artist_images_path = cfg.ARTIST_IMAGES_DIR
 
 recommender = None
-image_analyzer = None
 
 
 def init_recommender():
@@ -85,19 +81,17 @@ def _hydrate_crossfade_columns(rec):
         logger.warning(f"[crossfade] DB hydration failed (using CSV defaults): {e}")
 
 
-def init_image_analyzer():
-    global image_analyzer
-    if image_analyzer is None:
-        try:
-            image_analyzer = get_image_analyzer()
-            recommend_routes.set_image_analyzer(image_analyzer)
-        except Exception:
-            pass
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Brightify v7.2 — Starting up...")
+    logger.info(
+        "Serving paths: data={} music={} album_art={} artist_images={}",
+        cfg.DATA_DIR,
+        music_path,
+        album_art_path,
+        artist_images_path,
+    )
 
     # ── Redis (optional — graceful fallback when unavailable) ──────────────
     _redis_client = None
@@ -118,10 +112,9 @@ async def lifespan(app: FastAPI):
 
     # ── Core modules ───────────────────────────────────────────────────────
     init_recommender()
-    init_image_analyzer()
     music_routes.init(recommender, music_path, artist_images_path)
-    recommend_routes.init(recommender, image_analyzer, init_image_analyzer)
-    system_routes.init(recommender, image_analyzer)
+    recommend_routes.init(recommender)
+    system_routes.init(recommender)
     logger.info("All systems ready")
 
     yield
