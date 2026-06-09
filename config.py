@@ -77,27 +77,28 @@ VNSBERT_EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
 # ============================================================================
 # Audio Features
 # ============================================================================
+# Active signals in RECO_SONG_WEIGHTS_MERT: mert(0.82) + va(0.12) + lyrics(0.06)
+# timbral/rhythmic/tonal slots all weight=0 (Essentia degenerate at 44.1kHz).
+# Features kept: used in VA computation, UI display, or journey scoring.
+# Features removed from AUDIO_FEATURES vs legacy:
+#   acousticness, speechiness, instrumentalness, liveness — weight=0, not used in ranking
+#   timbre_bright — weight=0 (Essentia degenerate)
+#   audio_embedding(400-dim), voice_gender, mood_tags, instrument_tags — kept in catalog
+#     but not in AUDIO_FEATURES (used separately via cover filter / instrument_tag_matrix)
 AUDIO_FEATURES = [
-    'valence',           # Musical positivity (0-1)
-    'energy',            # Intensity and activity (0-1)
-    'danceability',      # How suitable for dancing (0-1)
-    'acousticness',      # Acoustic vs electronic (0-1)
-    'instrumentalness',  # Vocal presence (0-1)
-    'speechiness',       # Spoken words detection (0-1)
-    'liveness',          # Audience presence (0-1)
-    'tempo',             # BPM (beats per minute)
-    'loudness',          # Overall loudness in dB
-    'key',               # Musical key (0-11)
-    'mode',              # Major (1) or Minor (0)
-    'arousal',           # DEAM arousal (0-1), complements energy
-    'timbre_bright',     # Timbre brightness (0=dark, 1=bright)
+    'valence',       # Musical positivity — used in song_va (V-A signal)
+    'energy',        # Intensity — used in song_va arousal estimation
+    'danceability',  # For UI display + journey scoring
+    'tempo',         # BPM — for tempo_coherence metric + UI
+    'loudness',      # For UI display
+    'key',           # Musical key (0-11) — for Camelot/harmonic mix
+    'mode',          # Major (1) / Minor (0) — color mapping, valence proxy
+    'arousal',       # DEAM arousal (MERT-probe, R²=0.58) — song_va primary
 ]
 
-# Normalized features (0-1 scale)
+# Normalized features (0-1 scale) — subset of AUDIO_FEATURES
 NORMALIZED_FEATURES = [
-    'valence', 'energy', 'danceability', 'acousticness',
-    'instrumentalness', 'speechiness', 'liveness',
-    'arousal', 'timbre_bright'
+    'valence', 'energy', 'danceability', 'arousal',
 ]
 
 # ============================================================================
