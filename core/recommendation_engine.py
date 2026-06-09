@@ -745,12 +745,100 @@ class MusicRecommender:
             })
         return out
 
-    # Vietnamese display names for the 8 CLAP emotion labels (for the bridge chip)
+    # Vietnamese display names for the 8 CLAP emotion labels
     _EMO_VI = {
         'happy': 'Vui vẻ', 'excited': 'Phấn khích', 'peaceful': 'Bình yên',
         'calm': 'Thư thái', 'melancholic': 'U sầu', 'sad': 'Buồn',
         'tense': 'Căng thẳng', 'angry': 'Giận dữ',
     }
+
+    def _build_similar_why(self, seed_idx: int, rec_indices: list) -> list:
+        """Per-recommendation "why this song" for recommend_by_song.
+
+        Verbalises the 3 active signal scores (MERT audio, V-A mood, lyrics)
+        for each recommended song vs the seed. No fabrication — all values are
+        computed directly from the embedding matrices used in ranking.
+
+        Returns list of dicts, one per rec, JSON-safe.
+        """
+        _sv = RECO_SONG_VA_SIGMA_V
+        _sa = RECO_SONG_VA_SIGMA_A
+        _has_fe = 'fused_emotion' in self.df.columns
+
+        seed_emo = ''
+        if _has_fe:
+            _fe = self.df['fused_emotion'].iloc[seed_idx]
+            seed_emo = '' if pd.isna(_fe) else str(_fe).lower()
+
+        # Precompute seed vectors
+        seed_mert   = self.mert_matrix[seed_idx] if self.mert_matrix is not None else None
+        seed_lyrics = self.embeddings_normalized[seed_idx] if self.embeddings_normalized is not None else None
+        seed_va     = self.song_va[seed_idx]
+
+        out = []
+        for i in rec_indices:
+            i = int(i)
+
+            # MERT audio score
+            mert_score = 0.5
+            if seed_mert is not None:
+                raw = float(self.mert_matrix[i] @ seed_mert)
+                mert_score = round((raw + 1.0) / 2.0, 3)   # [-1,1] → [0,1]
+
+            # V-A mood score
+            dv = float(self.song_va[i, 0] - seed_va[0])
+            da = float(self.song_va[i, 1] - seed_va[1])
+            va_score = round(float(np.exp(-0.5 * ((dv / _sv)**2 + (da / _sa)**2))), 3)
+
+            # Lyrics score
+            lyrics_score = 0.5
+            if seed_lyrics is not None:
+                raw_l = float(self.embeddings_normalized[i] @ seed_lyrics)
+                lyrics_score = round((raw_l + 1.0) / 2.0, 3)
+
+            # Emotion labels
+            rec_emo = ''
+            if _has_fe:
+                _fe2 = self.df['fused_emotion'].iloc[i]
+                rec_emo = '' if pd.isna(_fe2) else str(_fe2).lower()
+
+            seed_emo_vi = self._EMO_VI.get(seed_emo, seed_emo)
+            rec_emo_vi  = self._EMO_VI.get(rec_emo,  rec_emo)
+
+            # Build Vietnamese reason — dominant signal first
+            same_mood = (seed_emo and rec_emo and seed_emo == rec_emo)
+            if mert_score >= 0.95:
+                if same_mood:
+                    reason = f"Âm nhạc rất gần — cùng tâm trạng {rec_emo_vi or ''} và chất nhạc"
+                else:
+                    reason = "Âm nhạc rất tương đồng (timbre, nhịp điệu, hòa âm)"
+                top_signal = "audio"
+            elif va_score >= 0.70 and same_mood:
+                reason = f"Cùng tâm trạng {rec_emo_vi or ''} và phong cách âm nhạc tương tự"
+                top_signal = "mood"
+            elif mert_score >= 0.90:
+                reason = "Phong cách âm nhạc tương tự — cùng thể loại và cảm giác"
+                top_signal = "audio"
+            elif lyrics_score >= 0.85 and mert_score >= 0.88:
+                reason = "Cùng phong cách nhạc và chủ đề lời bài hát"
+                top_signal = "audio+lyrics"
+            else:
+                reason = "Âm nhạc và tâm trạng tương tự"
+                top_signal = "audio"
+
+            out.append({
+                'reason':        reason,
+                'top_signal':    top_signal,
+                'audio_score':   mert_score,
+                'mood_score':    va_score,
+                'lyrics_score':  lyrics_score,
+                'seed_emotion':  seed_emo,
+                'seed_emotion_vi': seed_emo_vi,
+                'song_emotion':  rec_emo,
+                'song_emotion_vi': rec_emo_vi,
+                'same_mood':     same_mood,
+            })
+        return out
 
     def color_emotion_bridge(self, color_hexes):
         """Return the colour→emotion bridge for UI display (no song matching).
@@ -921,8 +1009,13 @@ class MusicRecommender:
         # the right ranking function here.  RRF pre-filtering hurts recall because
         # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
         # max_per_artist is an optional operator hard-cap (default 0 = no cap).
-        return self._fast_rank(final_scores, top_k, diversity_penalty,
-                               max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
+        result = self._fast_rank(final_scores, top_k, diversity_penalty,
+                                 max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
+        if not result.empty and 'original_index' in result.columns:
+            result = result.copy()
+            result['why'] = self._build_similar_why(
+                song_idx, result['original_index'].tolist())
+        return result
     def _rrf_candidates(
         self,
         score_arrays: list,

@@ -587,6 +587,8 @@ async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, l
         for idx, row in df_results.iterrows():
             s = _song_to_dict(row, row.get('original_index', idx))
             s['similarity_score'] = round(float(row.get('similarity_score', 0)), 4)
+            if 'why' in row and row['why'] is not None:
+                s['why'] = row['why']
             songs.append(s)
 
         # Source song info for context
