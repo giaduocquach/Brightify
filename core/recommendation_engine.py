@@ -166,6 +166,29 @@ class MusicRecommender:
             if self.instrument_tag_matrix is not None:
                 logger.info(f"[TAG] Instrument tag matrix: {self.instrument_tag_matrix.shape}")
 
+        # Cover/duplicate filter — exclude same-song versions from recommendations
+        self._cover_index: dict = {}  # track_id → set of cover track_ids
+        if ENABLE_COVER_FILTER and os.path.exists(COVER_INDEX_FILE):
+            try:
+                import json as _json
+                raw = _json.load(open(COVER_INDEX_FILE))
+                # Build reverse lookup: original_index → set of indices to exclude
+                tid_to_idx = {str(row["track_id"]): i
+                              for i, row in self.df[["track_id"]].iterrows()}
+                self._cover_exclude: dict = {}  # int idx → set of int idxs
+                for tid, covers in raw.items():
+                    i = tid_to_idx.get(str(tid))
+                    if i is None:
+                        continue
+                    excl = {tid_to_idx[str(c)] for c in covers if str(c) in tid_to_idx}
+                    if excl:
+                        self._cover_exclude[i] = excl
+                logger.info(f"[COVER] Loaded cover index: {len(self._cover_exclude)} songs have covers")
+            except Exception as e:
+                logger.warning(f"[COVER] Load failed: {e}")
+        else:
+            self._cover_exclude: dict = {}
+
         logger.info(f"Recommender ready — {self.n_songs:,} songs loaded")
 
     def _build_instrument_matrix(self) -> 'np.ndarray | None':
@@ -1045,8 +1068,11 @@ class MusicRecommender:
         )
         final_scores = base + (w[7] * mert_sim if use_mert and len(w) > 7 else 0)
 
-        # Exclude reference song
+        # Exclude reference song and its covers/duplicates
         final_scores[song_idx] = -1
+        if ENABLE_COVER_FILTER and self._cover_exclude:
+            for cover_idx in self._cover_exclude.get(song_idx, set()):
+                final_scores[cover_idx] = -1
 
         # No RRF for recommend_by_song: the multi-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because

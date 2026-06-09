@@ -156,6 +156,11 @@ RECO_SONG_WEIGHTS = {
 # Adopted at λ=0.03 (conservative: max 3% boost, no regression at any metric).
 ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "True") == "True"
 TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
+# Cover/duplicate filter (2026-06-09): exclude versions of the same song from recommendations.
+# Built by tools/detect_cover_songs.py — lyrics-first approach (VN-SBERT cosine > 0.92).
+# Catches: same song different title/case, feat. versions, cross-lingual (April Lie / Tháng Tư).
+ENABLE_COVER_FILTER = os.environ.get("ENABLE_COVER_FILTER", "True") == "True"
+COVER_INDEX_FILE    = str(DATA_DIR / "cover_index.json")
 
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 75% (audio), lyrics 15% (genre cue), V-A 10% (mood).
