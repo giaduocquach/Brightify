@@ -114,7 +114,7 @@ def detect_covers(
     # MERT collapses for same-artist productions → high false positive with MERT-only.
     # Strategy: use LYRICS as the primary signal, MERT as confirmation.
     batch_size = 512
-    stats = {"lyrics_exact": 0, "lyrics_high_mert": 0, "title_match": 0}
+    stats = {"lyrics_exact": 0, "title_match": 0}
 
     for start in range(0, n, batch_size):
         end = min(start + batch_size, n)
@@ -123,31 +123,16 @@ def detect_covers(
 
         for bi, i in enumerate(range(start, end)):
             row_lyr = cos_lyr[bi]
-            # Only check j > i, require lyrics > 0.92 as primary filter
-            candidates = np.where(row_lyr[i+1:] > 0.92)[0] + i + 1
+            # ONLY Layer 1: lyr > 0.97 = near-identical lyrics text = same song in DB.
+            # Layer 2 (lyr > 0.92 AND mert > 0.93) REMOVED — high false positive rate:
+            # Same-artist songs with consistent writing style (Hà Anh Tuấn, 1nG, etc.)
+            # score lyr > 0.92 for completely different songs → wrong grouping.
+            candidates = np.where(row_lyr[i+1:] > 0.97)[0] + i + 1
 
             for j in candidates:
-                lc = float(row_lyr[j])
-                if (i, j) in cover_pairs:
-                    continue
-
-                mc = float(mert[i] @ mert[j])
-                reason = None
-
-                # Layer 1: Near-identical lyrics (same song regardless of audio)
-                # Catches: same song different case/title, same lyrics in DB
-                if lc >= 0.97:
-                    reason = "lyrics_exact"
-                    stats["lyrics_exact"] += 1
-
-                # Layer 2: Very high lyrics + high MERT (same song, different version)
-                # MERT > 0.93 as confirmation that audio is also similar
-                elif lc >= 0.92 and mc >= 0.93:
-                    reason = "lyrics_high_mert"
-                    stats["lyrics_high_mert"] += 1
-
-                if reason:
+                if (i, j) not in cover_pairs:
                     cover_pairs.add((i, j))
+                    stats["lyrics_exact"] += 1
 
     # Layer 3: Title-based detection (catches cross-lingual: April Lie)
     # Same normalized title + same primary artist
@@ -171,7 +156,7 @@ def detect_covers(
 
     if verbose:
         print(f"\n[covers] Total cover pairs: {len(cover_pairs)}")
-        print(f"  lyrics_exact: {stats['lyrics_exact']}, lyrics_high_mert: {stats['lyrics_high_mert']}, title_match: {stats['title_match']}")
+        print(f"  lyrics_exact: {stats['lyrics_exact']}, title_match: {stats['title_match']}")
 
     # Build index: for each song, list of songs it should not be recommended alongside
     index: Dict[str, List[str]] = defaultdict(list)
