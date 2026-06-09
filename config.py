@@ -148,6 +148,13 @@ RECO_SONG_WEIGHTS = {
     "with_lyrics": [0.0, 0.0, 0.0, 0.20, 0.10, 0.0, 0.0],
 }
 
+# Tag signal: MTG-Jamendo instrument tags (40-dim cosine) as post-ranking bonus.
+# Fixed sample rate bug (44.1→16kHz) on 2026-06-09: instrument_tags now discriminative.
+# Applied as: score = base_score * (1 + TAG_BONUS_WEIGHT * instrument_cosine)
+# Additive-multiplier keeps existing weights unchanged; tag signal boosts/not kills.
+ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "False") == "True"  # off until eval confirms
+TAG_BONUS_WEIGHT   = 0.08   # instrument cosine can boost score by up to 8%
+
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 75% (audio), lyrics 15% (genre cue), V-A 10% (mood).
 RECO_SONG_WEIGHTS_MERT = {

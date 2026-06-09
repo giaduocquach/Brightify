@@ -157,7 +157,43 @@ class MusicRecommender:
 
 
 
+        # Instrument tag signal (MTG-Jamendo, 40-dim, fixed 16kHz 2026-06-09)
+        # Pre-compute L2-normalised instrument vector for each song.
+        # Applied as multiplicative bonus in recommend_by_song when ENABLE_TAG_SIGNAL=True.
+        self.instrument_tag_matrix = None
+        if ENABLE_TAG_SIGNAL and 'instrument_tags' in self.df.columns:
+            self.instrument_tag_matrix = self._build_instrument_matrix()
+            if self.instrument_tag_matrix is not None:
+                logger.info(f"[TAG] Instrument tag matrix: {self.instrument_tag_matrix.shape}")
+
         logger.info(f"Recommender ready — {self.n_songs:,} songs loaded")
+
+    def _build_instrument_matrix(self) -> 'np.ndarray | None':
+        """Build (N, 40) L2-normalised instrument probability matrix from instrument_tags JSON."""
+        import json as _json
+        from tools.extract_audio_features import MTG_INST_LABELS  # 40 instrument names
+        n_inst = len(MTG_INST_LABELS)
+        inst_idx = {name: i for i, name in enumerate(MTG_INST_LABELS)}
+        matrix = np.zeros((self.n_songs, n_inst), dtype=np.float32)
+        n_loaded = 0
+        for i, v in enumerate(self.df['instrument_tags'].values):
+            if not isinstance(v, str) or not v.strip():
+                continue
+            try:
+                d = _json.loads(v)
+                for name, score in d.items():
+                    if name in inst_idx:
+                        matrix[i, inst_idx[name]] = float(score)
+                n_loaded += 1
+            except Exception:
+                continue
+        if n_loaded < self.n_songs * 0.5:
+            logger.warning(f"[TAG] Only {n_loaded}/{self.n_songs} songs have instrument tags — disabling")
+            return None
+        # L2-normalise rows
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return matrix / norms
 
     def _normalize_audio_features(self):
         """Normalize audio features to [0, 1]"""
@@ -1004,6 +1040,17 @@ class MusicRecommender:
 
         # Exclude reference song
         final_scores[song_idx] = -1
+
+        # Instrument tag bonus (MTG-Jamendo 40-dim cosine, additive multiplier).
+        # Applied only when ENABLE_TAG_SIGNAL=True and tags were loaded successfully.
+        # score = base * (1 + TAG_BONUS_WEIGHT * inst_cosine)  → boosts up to +8%.
+        # Multiplicative keeps existing fusion weights intact; doesn't kill a song.
+        if ENABLE_TAG_SIGNAL and self.instrument_tag_matrix is not None:
+            q_inst = self.instrument_tag_matrix[song_idx]
+            inst_cos = self.instrument_tag_matrix @ q_inst          # (N,) in [-1,1]
+            inst_cos = (inst_cos + 1.0) / 2.0                       # → [0,1]
+            final_scores = final_scores * (1.0 + TAG_BONUS_WEIGHT * inst_cos)
+            final_scores[song_idx] = -1
 
         # No RRF for recommend_by_song: the multi-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because

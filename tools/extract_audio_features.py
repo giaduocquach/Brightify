@@ -124,6 +124,33 @@ MODEL_REGISTRY = {
         "input_node": "model/Placeholder",
         "output_node": "model/Identity",
     },
+
+    # MTG-Jamendo Mood/Theme (56 classes, EffNet-Discogs head, REQUIRES 16kHz input).
+    # At 44.1kHz (original pipeline) → 99% "corporate" (degenerate).
+    # At 16kHz → discriminative mood labels (epic, meditative, emotional, etc.).
+    # Re-added 2026-06-09 with 16kHz fix (patch_tags_16k).
+    "mtg_jamendo_moodtheme": {
+        "url": (
+            f"{MODEL_BASE_URL}/classification-heads/mtg_jamendo_moodtheme/"
+            "mtg_jamendo_moodtheme-discogs-effnet-1.pb"
+        ),
+        "type": "effnet_head",
+        "input_node": "model/Placeholder",
+        "output_node": "model/Sigmoid",
+    },
+
+    # MTG-Jamendo Instrument (40 classes, EffNet-Discogs head, REQUIRES 16kHz input).
+    # At 44.1kHz → 98% "trumpet" (degenerate).
+    # At 16kHz → meaningful instrument mix (guitar, piano, saxophone, beat, etc.).
+    "mtg_jamendo_instrument": {
+        "url": (
+            f"{MODEL_BASE_URL}/classification-heads/mtg_jamendo_instrument/"
+            "mtg_jamendo_instrument-discogs-effnet-1.pb"
+        ),
+        "type": "effnet_head",
+        "input_node": "model/Placeholder",
+        "output_node": "model/Sigmoid",
+    },
 }
 
 # Loaded model instances (lazy singleton)
@@ -745,6 +772,175 @@ def _extract_danceability_16k(mp3_path: Path) -> float | None:
         return None
 
 
+# ── MTG-Jamendo label sets ───────────────────────────────────────────────────
+MTG_MOOD_LABELS = [
+    "action","adventure","advertising","background","ballad","children","christmas",
+    "commercial","cool","corporate","dark","deep","documentary","drama","dramatic",
+    "dream","emotional","energetic","epic","fast","film","fun","funny","game",
+    "groovy","happy","heavy","holiday","horror","inspiring","love","meditative",
+    "melancholic","melodic","motivational","nature","party","positive","powerful",
+    "relaxing","retro","romantic","sad","sexy","slow","soft","soundscape","space",
+    "sport","summer","trailer","travel","upbeat","uplifting",
+]
+MTG_INST_LABELS = [
+    "accordion","acousticguitar","bass","beat","bell","bongo","brass","cello",
+    "clarinet","classicalguitar","computer","doublebass","drummachine","drums",
+    "electricguitar","electricpiano","flute","guitar","harp","horn","keyboard",
+    "organ","pad","percussion","piano","pipeorgan","rhodes","sampler","saxophone",
+    "strings","synthesizer","trombone","trumpet","ukulele","vibraphone","violin",
+    "voice","wind","woodwind",
+]
+
+
+def _extract_tags_16k(mp3_path: Path) -> dict:
+    """Extract MTG-Jamendo mood/instrument tags at the correct 16kHz sample rate.
+
+    EffNet-Discogs requires 16kHz input. At 44.1kHz (original pipeline) the
+    embeddings were nearly constant → 99% "corporate" / 98% "trumpet" (degenerate).
+    At 16kHz: discriminative. Returns {"mood_tags": JSON, "instrument_tags": JSON}.
+
+    Patch script: python -m tools.extract_audio_features --patch-tags
+    """
+    audio = _load_audio_16k(mp3_path)
+    if audio is None:
+        return {}
+    try:
+        import essentia.standard as es
+        effnet_path = str(_ensure_model("discogs_effnet"))
+        effnet = es.TensorflowPredictEffnetDiscogs(
+            graphFilename=effnet_path, output="PartitionedCall:1"
+        )
+        embeddings = effnet(audio)
+
+        result = {}
+
+        # Mood/theme tags
+        mood_model = _get_model("mtg_jamendo_moodtheme")
+        if mood_model is not None:
+            preds = mood_model(embeddings)
+            avg = np.mean(preds, axis=0) if preds.ndim == 2 else preds
+            threshold = 0.07  # keep tags above 7% probability
+            mood_tags = {
+                MTG_MOOD_LABELS[i]: round(float(avg[i]), 3)
+                for i in range(min(len(avg), len(MTG_MOOD_LABELS)))
+                if float(avg[i]) >= threshold
+            }
+            mood_tags = dict(sorted(mood_tags.items(), key=lambda x: -x[1])[:8])
+            if mood_tags:
+                result["mood_tags"] = json.dumps(mood_tags, ensure_ascii=False)
+
+        # Instrument tags
+        inst_model = _get_model("mtg_jamendo_instrument")
+        if inst_model is not None:
+            preds = inst_model(embeddings)
+            avg = np.mean(preds, axis=0) if preds.ndim == 2 else preds
+            threshold = 0.10
+            inst_tags = {
+                MTG_INST_LABELS[i]: round(float(avg[i]), 3)
+                for i in range(min(len(avg), len(MTG_INST_LABELS)))
+                if float(avg[i]) >= threshold
+            }
+            inst_tags = dict(sorted(inst_tags.items(), key=lambda x: -x[1])[:8])
+            if inst_tags:
+                result["instrument_tags"] = json.dumps(inst_tags, ensure_ascii=False)
+
+        return result
+    except Exception as e:
+        log.debug(f"  tags 16kHz failed for {mp3_path}: {e}")
+        return {}
+
+
+def _tags_worker(args: tuple) -> tuple:
+    """Worker for tags patch — returns (track_id, {mood_tags, instrument_tags})."""
+    tid, mp3_path_str = args
+    try:
+        return (tid, _extract_tags_16k(Path(mp3_path_str)))
+    except Exception:
+        return (tid, {})
+
+
+def patch_tags(
+    workers: int = 1,
+    checkpoint_interval: int = 50,
+    limit: int | None = None,
+) -> None:
+    """Re-extract MTG-Jamendo mood/instrument tags at correct 16kHz sample rate.
+
+    Fixes the degenerate tags caused by feeding 44.1kHz audio to EffNet-Discogs
+    (which expects 16kHz). Updates both phase5_features.csv and PROCESSED_FILE.
+
+    Usage: python -m tools.extract_audio_features --patch-tags [--workers N]
+    """
+    import multiprocessing, sys
+    sys.path.insert(0, str(PROJECT_ROOT))
+    import config as _cfg
+
+    targets = [p for p in [OUTPUT_CSV, Path(_cfg.PROCESSED_FILE)] if p.exists()]
+    if not targets:
+        log.error("No CSV found. Run full extraction first.")
+        return
+
+    mp3_files = {f.stem: f for f in MUSIC_DIR.glob("*.mp3")}
+
+    for csv_path in targets:
+        log.info(f"\n{'='*60}\n  patch_tags → {csv_path.name}\n{'='*60}")
+        df = pd.read_csv(str(csv_path))
+        for col in ("mood_tags", "instrument_tags"):
+            if col not in df.columns:
+                df[col] = None
+
+        pending = [
+            (str(row["track_id"]), str(mp3_files[str(row["track_id"])]))
+            for _, row in df.iterrows()
+            if str(row["track_id"]) in mp3_files
+        ]
+        if limit:
+            pending = pending[:limit]
+        log.info(f"  Tracks to patch: {len(pending)}  workers={workers}")
+
+        stats = {"ok": 0, "fail": 0}
+        completed = 0
+
+        def _apply(tid, tags):
+            nonlocal completed
+            if not tags:
+                stats["fail"] += 1
+            else:
+                mask = df["track_id"].astype(str) == str(tid)
+                for col, val in tags.items():
+                    df.loc[mask, col] = val
+                stats["ok"] += 1
+            completed += 1
+            if completed % checkpoint_interval == 0:
+                df.to_csv(str(csv_path), index=False)
+                ok_r = stats['ok']/max(completed,1)*100
+                log.info(f"  {completed}/{len(pending)}  ok={stats['ok']} fail={stats['fail']} ({ok_r:.0f}%)")
+
+        if workers == 1:
+            for task in pending:
+                tid, tags = _tags_worker(task)
+                _apply(tid, tags)
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(workers) as pool:
+                for tid, tags in pool.imap_unordered(_tags_worker, pending, chunksize=4):
+                    _apply(tid, tags)
+
+        df.to_csv(str(csv_path), index=False)
+        log.info(f"  Done: ok={stats['ok']} fail={stats['fail']} → {csv_path}")
+
+    # Quick discriminativeness check
+    try:
+        df_check = pd.read_csv(str(targets[-1]))
+        from tools.backtest_v2.ground_truth.mood_tags_weak import discriminativeness_check
+        result = discriminativeness_check(df_check)
+        log.info(f"  §7.3 gate: verdict={result.get('verdict')}  "
+                 f"top1_frac={result.get('top1_frac', 0):.3f}  "
+                 f"distinct={result.get('distinct_top_tags', 0)}")
+    except Exception as e:
+        log.debug(f"  §7.3 check failed: {e}")
+
+
 def _dance_worker(args: tuple) -> tuple:
     """Worker for danceability patch — returns (track_id, danceability | None)."""
     tid, mp3_path_str = args
@@ -1299,6 +1495,7 @@ def main():
     parser.add_argument("--patch", action="store_true", help="Fast patch: only extract NEW features (timbre+DEAM) for existing CSV")
     parser.add_argument("--patch-dance", action="store_true", help="Re-extract danceability at correct 16kHz sample rate")
     parser.add_argument("--patch-dance-db", action="store_true", help="Push patched danceability to DB (run after --patch-dance)")
+    parser.add_argument("--patch-tags", action="store_true", help="Re-extract MTG-Jamendo mood/instrument tags at correct 16kHz sample rate")
     parser.add_argument("--force", action="store_true", help="Re-extract all tracks, even already-done ones (for --patch-dance)")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Parallel workers (default: 1, use 2-4 for speed)")
     parser.add_argument("--checkpoint-interval", type=int, default=50, help="Save checkpoint every N tracks (default: 50)")
@@ -1328,6 +1525,12 @@ def main():
             checkpoint_interval=args.checkpoint_interval,
             limit=args.limit,
             force=getattr(args, "force", False),
+        )
+    elif args.patch_tags:
+        patch_tags(
+            workers=args.workers or 1,
+            checkpoint_interval=args.checkpoint_interval,
+            limit=args.limit,
         )
     elif args.patch:
         patch_new_features(
