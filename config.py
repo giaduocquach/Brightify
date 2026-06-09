@@ -50,7 +50,13 @@ RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" 
 
 INPUT_FILE = str(DATA_DIR / "vietnamese_music_complete_dataset_full.csv")
 PROCESSED_FILE = str(DATA_DIR / "vietnamese_music_processed_full.csv")
-EMBEDDINGS_FILE = str(DATA_DIR / "vietnamese_music_embeddings_full.npy")
+# VN Sentence-BERT (dangvantuan/vietnamese-embedding) replaces PhoBERT mean-pool.
+# PhoBERT mean-pool avg pairwise cosine = 0.856 (anisotropic — cosine nearly meaningless).
+# VN-SBERT SimCSE contrastive-trained: avg cosine = 0.544 — proper cosine geometry.
+# At 15% weight the aggregate metric improvement is small (MERT 75% dominates) but
+# the lyrics component now contributes real semantic signal rather than anisotropic noise.
+EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
+EMBEDDINGS_FILE_PHOBERT = str(DATA_DIR / "vietnamese_music_embeddings_full.npy")  # kept for ablation
 EMBEDDINGS_META_FILE = str(DATA_DIR / "embeddings_metadata.json")
 ARTIST_IMAGES_DATA_FILE = str(DATA_DIR / "artist_images.json")
 PHASE1_ARTISTS_FILE = str(CHECKPOINTS_DIR / "phase1_artists.csv")
@@ -62,6 +68,11 @@ CROSSFADE_FEATURES_FILE = str(DATA_DIR / "crossfade_features.json")
 PHOBERT_MODEL = 'vinai/phobert-base-v2'  # PhoBERT v2 (RoBERTa-base, 135M params, AGPL-3.0)
 MAX_SEQUENCE_LENGTH = 512  # Maximum tokens for BERT
 BATCH_SIZE = 32  # Batch size for embedding generation
+# VN Sentence-BERT (dangvantuan/vietnamese-embedding): SimCSE contrastive-trained on VN.
+# avg pairwise cosine 0.587 vs PhoBERT mean-pool 0.856 → much less anisotropic → better retrieval.
+# Switch: set EMBEDDINGS_FILE = VNSBERT_EMBEDDINGS_FILE after eval confirms improvement.
+VNSBERT_MODEL          = "dangvantuan/vietnamese-embedding"
+VNSBERT_EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
 
 # ============================================================================
 # Audio Features

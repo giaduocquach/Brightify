@@ -218,6 +218,9 @@ def main() -> int:
     ap.add_argument("--proj", action="store_true",
                     help="A/B test: add 'proj' configs using SimCSE metric head "
                          "projected embeddings (128-dim)")
+    ap.add_argument("--vnsbert", action="store_true",
+                    help="A/B test lyrics: swap embeddings_normalized with "
+                         "VN Sentence-BERT (data/vnsbert_embeddings.npy)")
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -268,6 +271,22 @@ def main() -> int:
                 # stash matrix so we can swap it in the loop below
                 configs[f"__proj_matrix_{proj_key}"] = praw / pnrm
 
+    # VN Sentence-BERT lyrics swap
+    vnsbert_matrix = None
+    orig_lyrics_emb = cat.rec.embeddings_normalized
+    if args.vnsbert:
+        vnsbert_path = "data/vnsbert_embeddings.npy"
+        if os.path.exists(vnsbert_path):
+            vraw = np.load(vnsbert_path).astype(np.float32)
+            vnrm = np.linalg.norm(vraw, axis=1, keepdims=True)
+            vnrm[vnrm == 0] = 1.0
+            vnsbert_matrix = vraw / vnrm
+            print(f"[intrinsic] VN-SBERT lyrics loaded: {vnsbert_matrix.shape}")
+            # Add VN-SBERT variant: same weights as current v2 but with better lyrics emb
+            configs["vnsbert (v2 weights)"] = [0.0, 0.0, 0.0, 0.15, 0.10, 0.0, 0.0, 0.75]
+        else:
+            print(f"[intrinsic] WARNING: {vnsbert_path} not found — run extract_vnsbert_embeddings.py")
+
     results: Dict[str, dict] = {}
     for name, w in configs.items():
         t0 = time.time()
@@ -275,6 +294,11 @@ def main() -> int:
         # Skip internal __proj_matrix__ stash entries
         if name.startswith("__"):
             continue
+        # Swap lyrics embeddings for VN-SBERT configs
+        if vnsbert_matrix is not None and name.startswith("vnsbert"):
+            cat.rec.embeddings_normalized = vnsbert_matrix
+        else:
+            cat.rec.embeddings_normalized = orig_lyrics_emb
         # Swap MERT matrix for multilayer / projected configs
         orig_mert = None
         swap_matrix = None
@@ -291,6 +315,9 @@ def main() -> int:
             cat.rec.mert_matrix = orig_mert
         elapsed = time.time() - t0
         print(f"           done in {elapsed:.1f}s")
+
+    # Restore original lyrics embeddings
+    cat.rec.embeddings_normalized = orig_lyrics_emb
 
     print_table(results, args.top_k)
 
