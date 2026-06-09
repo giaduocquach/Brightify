@@ -42,9 +42,13 @@ from typing import Dict, List, Optional
 import numpy as np
 
 JUDGE_BACKEND = os.environ.get("BRIGHTIFY_MUSICAL_JUDGE", "qwen3").strip().lower()
-MODEL_PRIMARY = "qwen3:8b"
-OLLAMA        = "http://localhost:11434/api/generate"
-GEMINI_MODEL  = "models/gemini-2.5-flash"
+MODEL_PRIMARY  = "qwen3:8b"
+OLLAMA         = "http://localhost:11434/api/generate"
+GEMINI_MODEL   = "models/gemini-2.5-flash"
+OPENAI_MODEL   = "gpt-4o-mini"
+# Throttle intervals (seconds between calls)
+_GEMINI_MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "4.2"))
+_OPENAI_MIN_INTERVAL = float(os.environ.get("OPENAI_MIN_INTERVAL", "2.0"))
 
 GT_DIR  = "var/runtime/backtest/ground_truth"
 GT_FILE = os.path.join(GT_DIR, "similar_musical_gt_v1.json")
@@ -144,6 +148,55 @@ def _call_gemini(prompt: str, max_retries: int = 4) -> Optional[int]:
     return None
 
 
+_OPENAI_STATE = {"client": None, "last": 0.0}
+
+
+def _openai_client():
+    if _OPENAI_STATE["client"] is None:
+        from dotenv import load_dotenv
+        load_dotenv(os.path.join(os.getcwd(), ".env"))
+        api_key = os.environ.get("OpenAI_API_KEY", os.environ.get("OPENAI_API_KEY", "")).strip()
+        if not api_key:
+            return None
+        from openai import OpenAI
+        _OPENAI_STATE["client"] = OpenAI(api_key=api_key)
+    return _OPENAI_STATE["client"]
+
+
+def _call_openai(prompt: str, max_retries: int = 3) -> Optional[int]:
+    """GPT-4o-mini judge. Throttled + retry on 429. Returns 0-3 or None.
+
+    CrossMuSim (Huawei 2025) used GPT-4o-mini for music description generation/judging.
+    gpt-4o-mini: cheap (~$0.15/1M tokens), reliable JSON output, 500 RPM tier-1 limit.
+    """
+    client = _openai_client()
+    if client is None:
+        return None
+    for attempt in range(max_retries):
+        wait = _OPENAI_MIN_INTERVAL - (time.time() - _OPENAI_STATE["last"])
+        if wait > 0:
+            time.sleep(wait)
+        _OPENAI_STATE["last"] = time.time()
+        try:
+            resp = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt + "\nTrả về JSON duy nhất."}],
+                temperature=0.0,
+                max_tokens=20,
+                response_format={"type": "json_object"},
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            m = re.search(r'"score"\s*:\s*([0-3])', text) or re.search(r'\b([0-3])\b', text)
+            return int(m.group(1)) if m else None
+        except Exception as e:
+            msg = str(e)
+            if ("429" in msg or "rate_limit" in msg.lower()) and attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))
+                continue
+            return None
+    return None
+
+
 def _judge(seed_title, seed_feat, seed_lyrics, cand_title, cand_feat, cand_lyrics) -> Optional[int]:
     prompt = PROMPT.format(
         seed_title=seed_title or "", seed_feat=seed_feat or "(không rõ)",
@@ -153,6 +206,8 @@ def _judge(seed_title, seed_feat, seed_lyrics, cand_title, cand_feat, cand_lyric
     )
     if JUDGE_BACKEND == "gemini":
         return _call_gemini(prompt)
+    if JUDGE_BACKEND == "openai":
+        return _call_openai(prompt)
     return _call_ollama(MODEL_PRIMARY, prompt)
 
 

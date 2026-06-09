@@ -220,6 +220,9 @@ def main() -> int:
     ap.add_argument("--vnsbert", action="store_true",
                     help="A/B test lyrics: swap embeddings_normalized with "
                          "VN Sentence-BERT (data/vnsbert_embeddings.npy)")
+    ap.add_argument("--desc", action="store_true",
+                    help="A/B test: use description embeddings (TF-IDF keywords + emotion) "
+                         "instead of raw lyrics (data/description_embeddings.npy)")
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -270,6 +273,20 @@ def main() -> int:
                 # stash matrix so we can swap it in the loop below
                 configs[f"__proj_matrix_{proj_key}"] = praw / pnrm
 
+    # Description embeddings swap (--desc flag)
+    if args.desc:
+        desc_path = "data/description_embeddings.npy"
+        if os.path.exists(desc_path):
+            draw = np.load(desc_path).astype(np.float32)
+            dnrm = np.linalg.norm(draw, axis=1, keepdims=True); dnrm[dnrm==0]=1
+            configs["desc (6%)"]  = [0.0, 0.0, 0.0, 0.06, 0.12, 0.0, 0.0, 0.82]
+            configs["desc (15%)"] = [0.0, 0.0, 0.0, 0.15, 0.10, 0.0, 0.0, 0.75]
+            configs["desc (20%)"] = [0.0, 0.0, 0.0, 0.20, 0.10, 0.0, 0.0, 0.70]
+            configs["__desc_matrix"] = draw / dnrm
+            print(f"[intrinsic] description embeddings loaded: {draw.shape}  avg_cos≈0.206")
+        else:
+            print(f"[intrinsic] WARNING: {desc_path} not found — run extract_description_embeddings.py")
+
     # VN Sentence-BERT lyrics swap
     vnsbert_matrix = None
     orig_lyrics_emb = cat.rec.embeddings_normalized
@@ -290,9 +307,15 @@ def main() -> int:
     for name, w in configs.items():
         t0 = time.time()
         print(f"[intrinsic] evaluating '{name}'…", flush=True)
-        # Skip internal __proj_matrix__ stash entries
+        # Skip internal stash entries
         if name.startswith("__"):
             continue
+        # Swap lyrics embeddings for description configs
+        desc_mat = configs.get("__desc_matrix")
+        if desc_mat is not None and name.startswith("desc"):
+            cat.rec.embeddings_normalized = desc_mat
+        else:
+            cat.rec.embeddings_normalized = orig_lyrics_emb
         # Swap lyrics embeddings for VN-SBERT configs
         if vnsbert_matrix is not None and name.startswith("vnsbert"):
             cat.rec.embeddings_normalized = vnsbert_matrix
