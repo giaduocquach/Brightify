@@ -1004,16 +1004,21 @@ class MusicRecommender:
         da = self.song_va[:, 1] - query_va[1]
         va_sim = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
 
-        # === Signal 6: Emotion profile similarity ===
-        # Source: color_to_emotion_probs(color_hex), where color_hex is SYNTHESIZED from
-        # the song's own audio V-A/tempo/mode (NOT album art) → redundant with V-A signal.
-        # E-EMO-RESOURCE 2026-06 tested lexicon.analyze_lyrics() as replacement:
-        # REJECTED (editorial Δ=-0.026 CI[-0.032,-0.019], LLM-judge Δ=-0.500).
+        # === Signal 6: Instrument tag similarity (MTG-Jamendo 40-dim, 16kHz fixed 2026-06-09) ===
+        # Slot 5 (previously "emotion profile" from color_hex, weight=0) repurposed.
+        # Instrument cosine similarity: songs sharing same instruments score higher.
+        # Literature: MusiCNN (arXiv:2409.08987) outperforms MERT because trained on
+        # instrument/genre tags → explicit instrument similarity is a meaningful signal.
+        # Weight tuned via sensitivity analysis (see config.RECO_SONG_WEIGHTS_MERT).
         # Root cause: lexicon bag-of-words is redundant with PhoBERT (signal 4, w=0.499)
         # and much noisier (word count ≠ evoked emotion; metaphor/negation not handled).
         # Color-based vec acts as weak genre/aesthetic tie-breaker — less harmful.
-        query_emotion = self.song_emotion_vec[song_idx]
-        emotion_sim = self.song_emotion_vec @ query_emotion
+        # Instrument tag cosine: (N,) in [0,1]
+        inst_sim = np.zeros(self.n_songs)
+        if self.instrument_tag_matrix is not None and w[5] != 0:
+            q_inst = self.instrument_tag_matrix[song_idx]
+            raw_inst = self.instrument_tag_matrix @ q_inst   # [-1,1]
+            inst_sim = (raw_inst + 1.0) / 2.0               # → [0,1]
 
         # === Signal 7: Mood category coherence (McFee & Lanckriet 2011) ===
         query_mood = self._mood_labels[song_idx]
@@ -1026,31 +1031,22 @@ class MusicRecommender:
             mert_sim = self.mert_matrix @ self.mert_matrix[song_idx]  # (n_songs,)
             mert_sim = (mert_sim + 1.0) / 2.0                         # [-1,1] → [0,1]
 
-        # === Adaptive fusion (Laurier et al. 2009) — weights resolved above ===
+        # === Adaptive fusion — weights resolved above ===
+        # Signal layout: [timbral, rhythmic, tonal, lyrics, va, instrument_tag, mood, mert]
+        # Slot 5 repurposed from "emotion" (always 0, redundant) to "instrument_tag" 2026-06-09.
         base = (
             w[0] * timbral_sim +
             w[1] * rhythmic_sim +
             w[2] * tonal_sim +
             w[3] * lyrics_sim +
             w[4] * va_sim +
-            w[5] * emotion_sim +
+            w[5] * inst_sim +       # instrument tag cosine (slot 5, additive in Σw=1)
             w[6] * mood_match
         )
         final_scores = base + (w[7] * mert_sim if use_mert and len(w) > 7 else 0)
 
         # Exclude reference song
         final_scores[song_idx] = -1
-
-        # Instrument tag bonus (MTG-Jamendo 40-dim cosine, additive multiplier).
-        # Applied only when ENABLE_TAG_SIGNAL=True and tags were loaded successfully.
-        # score = base * (1 + TAG_BONUS_WEIGHT * inst_cosine)  → boosts up to +8%.
-        # Multiplicative keeps existing fusion weights intact; doesn't kill a song.
-        if ENABLE_TAG_SIGNAL and self.instrument_tag_matrix is not None:
-            q_inst = self.instrument_tag_matrix[song_idx]
-            inst_cos = self.instrument_tag_matrix @ q_inst          # (N,) in [-1,1]
-            inst_cos = (inst_cos + 1.0) / 2.0                       # → [0,1]
-            final_scores = final_scores * (1.0 + TAG_BONUS_WEIGHT * inst_cos)
-            final_scores[song_idx] = -1
 
         # No RRF for recommend_by_song: the multi-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because
