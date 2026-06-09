@@ -152,8 +152,10 @@ RECO_SONG_WEIGHTS = {
 # Fixed sample rate bug (44.1→16kHz) on 2026-06-09: instrument_tags now discriminative.
 # Applied as: score = base_score * (1 + TAG_BONUS_WEIGHT * instrument_cosine)
 # Additive-multiplier keeps existing weights unchanged; tag signal boosts/not kills.
-ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "False") == "True"  # off until eval confirms
-TAG_BONUS_WEIGHT   = 0.08   # instrument cosine can boost score by up to 8%
+# Intrinsic eval (80 seeds, 2026-06-09): λ=0.03 → Symmetry +0.013 ✓, 0 regressions.
+# Adopted at λ=0.03 (conservative: max 3% boost, no regression at any metric).
+ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "True") == "True"
+TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
 
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 75% (audio), lyrics 15% (genre cue), V-A 10% (mood).
