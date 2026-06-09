@@ -215,8 +215,16 @@ COLOR_SCORE_VA_SIGMA_V = 0.20   # Gaussian RBF bandwidth — valence axis (wide)
 COLOR_SCORE_VA_SIGMA_A = 0.14   # Gaussian RBF bandwidth — arousal axis (narrow)
 
 # recommend_by_song — V-A RBF (isotropic, E-VA-SPLIT gate-rejected 2026-06).
-RECO_SONG_VA_SIGMA_V = 0.20
-RECO_SONG_VA_SIGMA_A = 0.20
+# Heteroscedastic V-A Gaussian for recommend_by_song (2026-06-09).
+# Scientific basis: arousal ~80% audio-predictable, valence ~17% (Delbouys 2018;
+#   Eerola & Anderson arXiv:2302.13321 r≈0.81 vs r≈0.17).
+# Smaller σ = sharper kernel = songs must be CLOSE in that axis to score high.
+# Larger σ  = wider kernel  = more lenient match in that axis.
+# → σ_A < σ_V: trust arousal (reliable) more tightly; be lenient on valence (noisy).
+# Previous E-VA-SPLIT (2026-06) tested only σ_A=0.14 at V-A weight=0.032 → REJECTED
+#   because 3.2% weight is too small for σ change to surface in ranking. Now weight=0.10.
+RECO_SONG_VA_SIGMA_V = 0.22   # valence — wider (less reliable, ~17% audio-predictable)
+RECO_SONG_VA_SIGMA_A = 0.14   # arousal — narrower (more reliable, ~80% audio-predictable)
 
 # V23 — Mood JOURNEY: 2 colours → waypoint-sample songs along V-A path A→B
 # (Iso-Principle, Starcke 2024 d=0.52). Replaces "Hành trình" tab (merged).

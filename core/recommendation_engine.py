@@ -868,14 +868,17 @@ class MusicRecommender:
         lyrics_sim = (lyrics_sim + 1) / 2
 
         # === Signal 5: V-A proximity (Russell 1980 Circumplex) ===
-        # Isotropic σ=0.20 — E-VA-SPLIT 2026-06 tested heteroscedastic σ_A=0.14
-        # (arousal more reliable per MERT probe); gate REJECTED (editorial Δ=-0.001
-        # CI[-0.005,+0.002], LLM-judge Δ=-0.031 — no improvement on this catalog).
-        # Root cause: V-A weight=0.032 is too small for σ change to surface cleanly.
+        # Heteroscedastic Gaussian RBF: per-axis σ reflecting reliability of each dim.
+        # Delbouys 2018: arousal ~80% audio-predictable (σ_A narrow = trust it);
+        #               valence ~17% audio-predictable (σ_V wide = lenient).
+        # Note: E-VA-SPLIT 2026-06 tested σ_A=0.14 at VA weight=0.032 → REJECTED
+        # (too small weight for σ change to surface). Now weight=0.10 — retested 2026-06-09.
         query_va = self.song_va[song_idx]
-        va_diff  = self.song_va - query_va
-        va_dist  = np.sqrt(np.sum(va_diff ** 2, axis=1))
-        va_sim   = np.exp(-(va_dist ** 2) / (2 * 0.20 ** 2))
+        _sv = RECO_SONG_VA_SIGMA_V
+        _sa = RECO_SONG_VA_SIGMA_A
+        dv = self.song_va[:, 0] - query_va[0]
+        da = self.song_va[:, 1] - query_va[1]
+        va_sim = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
 
         # === Signal 6: Emotion profile similarity ===
         # Source: color_to_emotion_probs(color_hex), where color_hex is SYNTHESIZED from
