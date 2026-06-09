@@ -699,8 +699,17 @@ class MusicRecommender:
                    if self.artist_col else None)
         selected: list[int] = []
 
-        # Evenly-spaced waypoints from P1 (t=0) to P2 (t=1)
-        ts = np.linspace(0.0, 1.0, top_k)
+        # Ease-in-ease-out waypoints (sigmoid schedule) based on Iso-Principle.
+        # Starcke 2024 (d=0.52): mood transitions work better with slow start,
+        # faster middle, slow end. Saari 2016: "10-15% shift per step" implies
+        # faster middle transitions. Sigmoid replaces linear for smoother affective arc.
+        # ts_raw = sigmoid(linspace(-3,3)) normalised to [0,1]
+        try:
+            from scipy.special import expit as _expit
+            ts_raw = _expit(np.linspace(-3.0, 3.0, top_k))
+            ts = (ts_raw - ts_raw[0]) / (ts_raw[-1] - ts_raw[0])
+        except ImportError:
+            ts = np.linspace(0.0, 1.0, top_k)   # fallback
         waypoints = p1[None, :] + ts[:, None] * (p2 - p1)[None, :]  # (K, 2)
 
         for wp in waypoints:

@@ -135,11 +135,60 @@ def main() -> int:
     print(f"T3 DISTRIBUTION  catalog Q3={q_pct['Q3_sad_melancholic']}% sad  "
           f"neutral-grey→Q3={res_q3_pct:.0f}% {'✓' if skew_ok else '⚠ skewed'}")
 
+    # ── T4: CROSS-QUADRANT PURITY (hard-negative test) ───────────────────────
+    # Bài học từ similar-song: editorial GT tautological khi scorer = V-A-only.
+    # Test khó hơn: màu Q1 (vui) → recs KHÔNG được chứa >30% bài Q3 (buồn).
+    # Logic: nếu hệ thống hoạt động đúng, màu vui không trả về nhiều bài buồn.
+    # Anchor: Russell 1980 quadrant structure; cross-quadrant = violation of bridge.
+    quadrant_seeds = {
+        'Q1_happy': ['#F3C300', '#F38400', '#FFB7C5'],   # yellow, orange, pink
+        'Q2_tense': ['#BE0032', '#9C4F96'],               # red, purple
+        'Q3_sad':   ['#222222', '#80461B'],               # black, brown
+        'Q4_calm':  ['#008856', '#0067A5', '#3AB09E'],    # green, blue, turquoise
+    }
+    opposite_q = {'Q1_happy': 'Q3', 'Q2_tense': 'Q4', 'Q3_sad': 'Q1', 'Q4_calm': 'Q2'}
+    def song_quadrant(v, a):
+        if v >= 0.5 and a >= 0.5: return 'Q1'
+        if v < 0.5  and a >= 0.5: return 'Q2'
+        if v < 0.5  and a < 0.5:  return 'Q3'
+        return 'Q4'
+
+    t4_details = {}
+    t4_violations = []
+    for q_name, hexes in quadrant_seeds.items():
+        opp = opposite_q[q_name]
+        for hx in hexes:
+            va_recs = top_va.get(hx)
+            if va_recs is None: continue
+            opp_frac = float(sum(1 for v, a in va_recs if song_quadrant(v, a) == opp) / len(va_recs))
+            t4_details[hx] = {'query_q': q_name[:2], 'opposite_q': opp, 'opp_frac': round(opp_frac, 3)}
+            if opp_frac > 0.30:   # >30% opposite quadrant = violation
+                t4_violations.append((hx, q_name, opp_frac))
+
+    t4_pass = len(t4_violations) == 0
+    t4_violation_rate = len(t4_violations) / max(sum(len(v) for v in quadrant_seeds.values()), 1)
+    report['T4_cross_quadrant'] = {
+        'violation_threshold': 0.30,
+        'n_violations': len(t4_violations),
+        'violation_rate': round(t4_violation_rate, 3),
+        'violations': [(hx, q, round(f, 3)) for hx, q, f in t4_violations],
+        'per_color': t4_details,
+        'pass': t4_pass,
+        'note': ('Cross-quadrant purity: Q1-seed recs should not contain >30% Q3 songs. '
+                 'Catches tautological editorial GT by testing harder negatives. '
+                 'Anchor: Russell 1980 quadrant structure; Kriegeskorte 2009 circular inference.'),
+    }
+    print(f"T4 CROSS-QUADRANT PURITY  violations={len(t4_violations)}/{sum(len(v) for v in quadrant_seeds.values())} "
+          f"{'✓' if t4_pass else '✗'}")
+    if t4_violations:
+        for hx, q, f in t4_violations:
+            print(f"  ⚠ {hx} ({q}): {f:.0%} opposite-quadrant recs")
+
     # ── SUMMARY ──────────────────────────────────────────────────────────────
-    passed = sum(report[t]['pass'] for t in ('T1_monotonicity','T2_commensurability','T3_distribution'))
-    report['summary'] = {'tests_passed': f'{passed}/3',
-                         'all_pass': passed == 3}
-    print(f"\nSTRUCTURAL BATTERY: {passed}/3 tests passed")
+    passed = sum(report[t]['pass'] for t in ('T1_monotonicity','T2_commensurability','T3_distribution','T4_cross_quadrant'))
+    report['summary'] = {'tests_passed': f'{passed}/4',
+                         'all_pass': passed == 4}
+    print(f"\nSTRUCTURAL BATTERY: {passed}/4 tests passed")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     json.dump(report, open(OUT, 'w'), indent=2)
     print(f"saved → {OUT}")

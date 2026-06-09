@@ -254,7 +254,24 @@ RECO_SONG_VA_SIGMA_A = 0.14   # arousal — narrower (more reliable, ~80% audio-
 
 # V23 — Mood JOURNEY: 2 colours → waypoint-sample songs along V-A path A→B
 # (Iso-Principle, Starcke 2024 d=0.52). Replaces "Hành trình" tab (merged).
+# V25 — Ease-in-ease-out sigmoid waypoint schedule (2026-06-09):
+#   Replaces linear spacing with sigmoid (scipy.special.expit) for smoother
+#   affective arc: slow start, faster middle, slow end. Saari 2016: "10-15%/step".
 COLOR_JOURNEY_ENABLED = True
+
+# ── VALIDATION CLAIMS (R6, 2026-06-09) ─────────────────────────────────────
+# What IS validated:
+#   - Color→V-A mapping: ICEAS centroids (Jonauskaite 2020, n=4598, 30 countries)
+#   - V-A emotion bridge: Palmer 2013 r=.89-.99, Whiteford 2018 PARAFAC
+#   - Structural battery T1-T4 ALL PASS: monotonicity, commensurability,
+#     distribution, cross-quadrant purity
+#   - Journey: KS=0.136, monotonicity ρ=0.896, Iso-Principle (Starcke 2024)
+# What is NOT validated:
+#   - Color-emotion mapping for Vietnamese listeners (ICEAS global, not VN-specific)
+#   - Song valence labels: Gemini-based, corroborated weakly by XLM-R (ρ=0.263)
+#   - Color→song-match gold-set study (future work, needs 3 listeners × 2h)
+# Reference: Jonauskaite 2025 (128-year review): universal patterns exist but
+#   "nation predicted above universals" — Vietnamese red=luck vs global red=anger.
 
 
 
