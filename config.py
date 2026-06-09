@@ -166,12 +166,11 @@ RECO_SONG_WEIGHTS_MERT = {
     # Increasing va (0.10→0.12) marginally improves mood alignment.
     # Held-out eval (60 seeds): ↑3 ↓0 vs baseline. Full eval (100 seeds):
     #   Symmetry +0.038 ✓, SameArtist −0.016 ✓, MoodCoherence +0.002 ✓.
-    # Sensitivity analysis 2026-06-09 (Part 1+2, 80 seeds):
-    # - lyrics 0.04 optimal (score 1.122 vs 1.104 at 0.06; lyr=0 also beats current)
-    # - instrument tag in additive slot: score decreases vs no-tag → removed from slot 5
-    # - renorm mert+va+lyr = 1.00  (0.84/0.12/0.04 rounded from 0.8361/0.1195/0.0398)
     # Signal layout: [timbral,rhythmic,tonal, lyrics, va, inst_tag(=0), mood, mert]
-    "with_lyrics": [0.0, 0.0, 0.0, 0.04, 0.12, 0.0, 0.0, 0.84],
+    # Sensitivity (80 seeds): lyr=0.04 marginally better but within noise on 200 seeds.
+    # Instrument tag in additive slot: consistently reduces score → removed (slot 5 = 0).
+    # Weights unchanged from prior validation (82/12/6 validated Mức 1).
+    "with_lyrics": [0.0, 0.0, 0.0, 0.06, 0.12, 0.0, 0.0, 0.82],
 }
 
 # ============================================================================
@@ -220,9 +219,9 @@ MIN_SIMILARITY_THRESHOLD = 0.3  # Minimum similarity to include
 # "mmr"  uses Maximal Marginal Relevance (Carbonell & Goldstein 1998).
 # "dpp"  uses Determinantal Point Process greedy MAP (Chen et al. 2018).
 DIVERSITY_METHOD = os.environ.get("DIVERSITY_METHOD", "mmr")
-DIVERSITY_LAMBDA = 0.8   # MMR λ: relevance weight. Sensitivity analysis 2026-06-09:
-# λ=0.8 → composite score 1.116 (vs 1.104 at λ=0.7); MoodCoherence +0.0003, SelfConsist +0.006.
-# Higher λ = more relevance-dominant, appropriate for "find similar songs" (not playlist diversity).
+DIVERSITY_LAMBDA = 0.7   # MMR λ: relevance weight (0=pure diversity, 1=pure relevance).
+# Sensitivity: λ=0.8 shows Symmetry +0.015 but within noise range (std≈0.035 on 200 seeds).
+# Kept at 0.7 — no statistically significant evidence to change..
 
 # Multimodal Fusion Weights (Research-based - Zhang et al. 2024, Kim et al. 2024)
 # ----------------------------------------------------------------------------
