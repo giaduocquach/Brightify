@@ -1009,13 +1009,8 @@ class MusicRecommender:
         # the right ranking function here.  RRF pre-filtering hurts recall because
         # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
         # max_per_artist is an optional operator hard-cap (default 0 = no cap).
-        result = self._fast_rank(final_scores, top_k, diversity_penalty,
-                                 max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
-        if not result.empty and 'original_index' in result.columns:
-            result = result.copy()
-            result['why'] = self._build_similar_why(
-                song_idx, result['original_index'].tolist())
-        return result
+        return self._fast_rank(final_scores, top_k, diversity_penalty,
+                               max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
     def _rrf_candidates(
         self,
         score_arrays: list,
