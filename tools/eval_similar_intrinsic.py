@@ -39,11 +39,10 @@ NOISE_STD = 0.02  # Gaussian noise for self-consistency test
 # [timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert]
 CONFIGS: Dict[str, List[float]] = {
     "old_baseline":          [0.0,  0.0,  0.0,  0.4991, 0.0315, 0.1042, 0.0300, 0.3352],
-    "current (v2)":          [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
-    "mert_only":             [0.0,  0.0,  0.0,  0.0,    0.0,    0.0,    0.0,    1.0   ],
-    # Phase 2b candidate: proj head with VA-compensated weights
-    # Higher VA (0.40) compensates for mood info lost in 128-dim projection.
-    "proj_ml_va_w50":        [0.0,  0.0,  0.0,  0.10,   0.40,   0.0,    0.0,    0.50  ],
+    "mert_ml (v2)":          [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
+    "muq_raw":               [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
+    "muq_proj_v2w":          [0.0,  0.0,  0.0,  0.15,   0.10,   0.0,    0.0,    0.75  ],
+    "muq_proj_va40":         [0.0,  0.0,  0.0,  0.10,   0.40,   0.0,    0.0,    0.50  ],
 }
 
 REPORT_DIR = "var/runtime/backtest/reports"
