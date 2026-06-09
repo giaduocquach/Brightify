@@ -77,11 +77,12 @@ def _encode_mp3(mp3_path: str) -> np.ndarray | None:
             return None
 
         inputs = _CLAP_PROC(
-            audios=wav, sampling_rate=CLAP_SR, return_tensors="pt"
+            audio=wav, sampling_rate=CLAP_SR, return_tensors="pt"
         )
         with torch.no_grad():
-            emb = _CLAP_MODEL.get_audio_features(**inputs)
-            emb = emb.cpu().numpy()[0]
+            out = _CLAP_MODEL.get_audio_features(**inputs)
+            emb_t = out if isinstance(out, torch.Tensor) else out.pooler_output
+            emb = emb_t.cpu().numpy()[0]
 
         n = float(np.linalg.norm(emb))
         return emb.astype(np.float32) / n if n > 1e-9 else emb.astype(np.float32)
@@ -102,9 +103,11 @@ def run(workers: int = 1, resume: bool = True) -> None:
     _init_clap()
     import torch
     dummy = np.zeros(int(CLAP_SR * CLIP_DUR), dtype=np.float32)
-    inputs = _CLAP_PROC(audios=dummy, sampling_rate=CLAP_SR, return_tensors="pt")
+    inputs = _CLAP_PROC(audio=dummy, sampling_rate=CLAP_SR, return_tensors="pt")
     with torch.no_grad():
-        dim = _CLAP_MODEL.get_audio_features(**inputs).shape[1]
+        out = _CLAP_MODEL.get_audio_features(**inputs)
+        out_t = out if isinstance(out, torch.Tensor) else out.pooler_output
+        dim = out_t.shape[1]
     log.info(f"[CLAP] Embedding dim: {dim}")
 
     # Resume
