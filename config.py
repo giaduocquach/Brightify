@@ -472,7 +472,7 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6a.json")  # V6a: A=80%MERT+20%NRC-VAD (no LLM arousal); V=v5d Gemini-blend (P2 will replace)
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6b.json")  # V6b: A=80%MERT+20%NRC-VAD; V=20%MERT+70%NRC-VAD+10%EmoBank — no LLM; r(V,A)=0.140
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
