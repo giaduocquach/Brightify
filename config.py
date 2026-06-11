@@ -244,7 +244,9 @@ COLOR_SCORE_VA_SIGMA_A = 0.14   # Gaussian RBF bandwidth — arousal axis (narro
 # recommend_by_song — V-A RBF (isotropic, E-VA-SPLIT gate-rejected 2026-06).
 # Heteroscedastic V-A Gaussian for recommend_by_song (2026-06-09).
 # Scientific basis: arousal ~80% audio-predictable, valence ~17% (Delbouys 2018;
-#   Eerola & Anderson arXiv:2302.13321 r≈0.81 vs r≈0.17).
+#   Eerola & Anderson 2026 ACM 3796518, MER meta 34 studies: arousal r=.81 > valence r=.67).
+#   arXiv:2302.13321 = Krols et al "Multi-Modality in Music" — confirms multimodal > audio
+#   for valence; NOT the source of r=.81/.67.
 # Smaller σ = sharper kernel = songs must be CLOSE in that axis to score high.
 # Larger σ  = wider kernel  = more lenient match in that axis.
 # → σ_A < σ_V: trust arousal (reliable) more tightly; be lenient on valence (noisy).
@@ -260,17 +262,62 @@ RECO_SONG_VA_SIGMA_A = 0.14   # arousal — narrower (more reliable, ~80% audio-
 #   affective arc: slow start, faster middle, slow end. Saari 2016: "10-15%/step".
 COLOR_JOURNEY_ENABLED = True
 
-# ── VALIDATION CLAIMS (R6, 2026-06-09) ─────────────────────────────────────
+# R1 (V26): CIELAB-Lch valence hybrid — default off, enable after gate passes.
+# Gate: color_eval_rigor TE must not regress + T1 monotonicity must improve.
+# Experiment: tools/phase3_cielab_experiment.py — valence r=.852 vs HSL .759,
+#   monotonicity L*→V 0.81 vs 0.44. Arousal stays Whiteford-HSL regardless.
+# Requires colormath (HAS_COLORMATH). Falls back to HSL if unavailable.
+COLOR_VALENCE_CIELAB = False
+# A5 (V27): Oklab valence hybrid — no colormath needed, better perceptual uniformity.
+# Enable after tools/phase3_cielab_experiment.py confirms r_oklab > r_cielab AND gate passes.
+COLOR_VALENCE_OKLAB = True   # C1 (V28): catalog calibration applied in hsl_to_va()
+
+# A4 (V27): redness×saturation interaction in arousal formula.
+# FPSYG 2025 (doi:10.3389/fpsyg.2025.1593928): red+high-sat → max arousal.
+# Enable only after color_eval_rigor gate passes.
+COLOR_AROUSAL_INTERACTION = True
+
+# A3 (V27): Calibration reranking — boost underrepresented V-A quadrant after MMR.
+# gate FAILED 2026-06-10: TE 0.0466→0.0570, ordering fail; reverted + superseded by C1.
+COLOR_CALIBRATION_RERANK = False
+COLOR_CALIBRATION_ALPHA  = 0.3
+
+# C1 (V28): Catalog-relative V-A calibration — fix scale mismatch between color model
+# (Jonauskaite absolute scale) and catalog V-A (MERT-compressed, A max ~0.72).
+# Linear rescale: V_cal = V_p5 + (V_p95-V_p5)*V_raw, same for A.
+# Percentiles computed from song_va at startup. Preserves ranking; fixes OOD queries.
+COLOR_VA_CATALOG_CALIBRATE = True
+
+# P2 (V29): V-A space MMR for intra-list diversity improvement.
+# Applies a second MMR pass using V-A embeddings after _fast_rank.
+# Fixes low ILD for red (0.019) and black (0.011) vs blue (0.059) reference.
+# lambda_=0.5: balanced relevance-diversity (vs default 0.7 relevance-heavy).
+# Gate: ILD(red)>=0.030, ILD(black)>=0.025, TE not regress.
+COLOR_MMR_VA_DIVERSITY = True
+COLOR_MMR_VA_LAMBDA    = 0.5
+
+# P3 (V29): Adaptive RBF sigma for sparse V-A regions (white TE=0.054).
+# Widens sigma when fewer than 200 songs are within radius 0.05 of query V-A.
+# Gate: white TE < 0.050, TE overall not regress.
+COLOR_ADAPTIVE_SIGMA = False
+
+# ── VALIDATION CLAIMS (R6, 2026-06-10 updated) ──────────────────────────────
 # What IS validated:
 #   - Color→V-A mapping: ICEAS centroids (Jonauskaite 2020, n=4598, 30 countries)
 #   - V-A emotion bridge: Palmer 2013 r=.89-.99, Whiteford 2018 PARAFAC
+#   - Emotion mediation: PLOS ONE 2015 pone.0144013 (60–75% variance explained,
+#     beats audio-only 3/4 colour dimensions)
+#   - MER meta ACM 3796518 (Eerola & Anderson 2026): arousal r=.81 > valence r=.67;
+#     NN not better than linear/tree at V-A regression
 #   - Structural battery T1-T4 ALL PASS: monotonicity, commensurability,
 #     distribution, cross-quadrant purity
-#   - Journey: KS=0.136, monotonicity ρ=0.896, Iso-Principle (Starcke 2024)
+#   - Targeting-error 0.043 CI[0.028,0.061]; 5-6× better than 5 baselines (FDR pass)
+#   - Journey: KS=0.135, monotonicity ρ=0.896, Iso-Principle (Starcke 2024)
 # What is NOT validated:
 #   - Color-emotion mapping for Vietnamese listeners (ICEAS global, not VN-specific)
 #   - Song valence labels: Gemini-based, corroborated weakly by XLM-R (ρ=0.263)
 #   - Color→song-match gold-set study (future work, needs 3 listeners × 2h)
+#   - Offline targeting-error ≠ user satisfaction (offline-online r≈.28, Dacrema 2021)
 # Reference: Jonauskaite 2025 (128-year review): universal patterns exist but
 #   "nation predicted above universals" — Vietnamese red=luck vs global red=anger.
 
@@ -425,7 +472,7 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v5c.json")  # B3: Gemini valence + quantile-mapped arousal (2026-06-04)
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6a.json")  # V6a: A=80%MERT+20%NRC-VAD (no LLM arousal); V=v5d Gemini-blend (P2 will replace)
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================

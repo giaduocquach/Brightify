@@ -25,7 +25,7 @@ class AdvancedColorMapper:
     - Continuous hue-to-emotion mapping (not discrete ranges)
     """
 
-    def __init__(self, use_vietnamese_adaptation: bool = True):
+    def __init__(self, use_vietnamese_adaptation: bool = False):
         self.use_vietnamese_adaptation = use_vietnamese_adaptation
 
         # Emotion-color profiles aligned with CLAP fused_emotion labels (8 labels).
@@ -221,6 +221,44 @@ class AdvancedColorMapper:
         hr = np.deg2rad(h)
         return np.array([np.cos(hr) * s01, np.sin(hr) * s01, l01])
 
+    def _cielab_features(self, hex_color: str) -> Optional[np.ndarray]:
+        """[L/100, a/128, b/128, C/128, cos(h), sin(h)] — CIELAB features for valence regression.
+
+        Returns None if colormath unavailable (caller falls back to HSL).
+        Matches feature vector used in tools/phase3_cielab_experiment.py.
+        """
+        if not HAS_COLORMATH:
+            return None
+        rgb = self.hex_to_rgb(hex_color)
+        srgb = sRGBColor(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
+        lab = convert_color(srgb, LabColor)
+        L, a, b = float(lab.lab_l), float(lab.lab_a), float(lab.lab_b)
+        C = float(np.sqrt(a ** 2 + b ** 2))
+        h = float(np.arctan2(b, a))
+        return np.array([L / 100, a / 128, b / 128, C / 128, np.cos(h), np.sin(h)])
+
+    def _oklab_features(self, hex_color: str) -> np.ndarray:
+        """[L, a/0.4, b/0.4, C/0.4, cos(h), sin(h)] in Oklab space.
+
+        No colormath required — pure sRGB→XYZ→LMS→Oklab transform.
+        Better perceptual uniformity than CIELAB (eliminates blue hue shift).
+        Active when config.COLOR_VALENCE_OKLAB=True AND _W_VALENCE_OKLAB is set.
+        """
+        rgb = self.hex_to_rgb(hex_color)
+        r, g, b = [(c / 255) ** 2.2 for c in rgb]
+        X = 0.4124 * r + 0.3576 * g + 0.1805 * b
+        Y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        Z = 0.0193 * r + 0.1192 * g + 0.9505 * b
+        l_ = (0.8189 * X + 0.3619 * Y - 0.1288 * Z) ** (1 / 3)
+        m_ = (0.0329 * X + 0.9293 * Y + 0.0361 * Z) ** (1 / 3)
+        s_ = (0.0482 * X + 0.2643 * Y + 0.6338 * Z) ** (1 / 3)
+        L  =  0.2104 * l_ + 0.7936 * m_ - 0.0040 * s_
+        a  =  1.9779 * l_ - 2.4285 * m_ + 0.4505 * s_
+        b_ =  0.0259 * l_ + 0.7827 * m_ - 0.8086 * s_
+        C  = float(np.sqrt(a ** 2 + b_ ** 2))
+        h  = float(np.arctan2(b_, a))
+        return np.array([L, a / 0.4, b_ / 0.4, C / 0.4, np.cos(h), np.sin(h)])
+
     def color_to_emotion_probs(self, hex_color: str) -> Dict[str, float]:
         """Color → emotion distribution by interpolating the empirical ICEAS table.
 
@@ -261,6 +299,21 @@ class AdvancedColorMapper:
         'angry':       (0.12, 0.92),
     }
 
+    # CIELAB-Lch valence coefficients — from tools/phase3_cielab_experiment.py (LOO-CV).
+    # Features: [L/100, a/128, b/128, C/128, cos(h), sin(h)].
+    # LOO-CV r=0.852 vs HSL r=0.759; monotonicity L*→V 0.81 vs 0.44.
+    # Active only when config.COLOR_VALENCE_CIELAB=True AND colormath is available.
+    _W_VALENCE_CIELAB = np.array([0.707, -0.636, -0.101, 0.554, 0.142, -0.049])
+
+    # Oklab valence coefficients — phase3_cielab_experiment.py (LOO-CV, 2026-06-10).
+    # Features: [L, a/0.4, b/0.4, C/0.4, cos(h), sin(h)].
+    # LOO-CV r=0.8729 vs CIELAB r=0.8524 vs HSL r=0.7592; mono L→V=0.770 vs 0.444.
+    # Active only when config.COLOR_VALENCE_OKLAB=True.
+    _W_VALENCE_OKLAB = np.array([0.686, -0.7459, 0.0369, 0.4956, 0.1458, -0.0404])
+
+    # C1 (V28): catalog-relative calibration params (set via set_va_calibration()).
+    _va_cal: Optional[dict] = None
+
     def hsl_to_va(self, hex_color: str) -> Tuple[float, float]:
         """Color → (valence, arousal) in [0,1].
 
@@ -271,15 +324,14 @@ class AdvancedColorMapper:
           redness r_s=.755, saturation .720, darkness −.549 → 0.37 / 0.36 / 0.27.
           Validated externally: ICEAS/Jonauskaite 2020 arousal Pearson +0.64. Kept as-is.
 
-        VALENCE — recalibrated 2026-06 against ICEAS/Jonauskaite 2020 human norms
-          (8615 ppl/colour, 37 nations). The old `0.52·L + 0.48·yellowness` correlated
-          only r=0.26 with humans (made blue/purple too negative, grey too positive,
-          and ignored chroma). Refit on the 12 ICEAS colours:
-            chromatic:   v = 0.05 + 0.40·L + 0.55·S − 0.19·redness
-            achromatic:  v = 0.20 + 0.41·L
-          Saturation (chroma) is the strongest valence predictor (Wilms & Oberfeld 2018);
-          redness's small negative term reflects deep-red→anger. In-sample Pearson 0.85,
-          leave-one-out CV 0.77 (vs 0.26 before). See docs/PLAN_COLOR_BACKTEST_V15.md.
+        VALENCE — three modes (Oklab > CIELAB > HSL fallback):
+          HSL (default): v = 0.05 + 0.40·L + 0.55·S − 0.19·redness
+            LOO-CV r=0.77, monotonicity L→V=0.44.
+          CIELAB-Lch (COLOR_VALENCE_CIELAB): Ridge on [L*,a*,b*,C*,cos h,sin h]
+            LOO-CV r=0.852, monotonicity L*→V=0.81. (phase3_cielab_experiment.py)
+          Oklab (COLOR_VALENCE_OKLAB): Ridge on [L,a/0.4,b/0.4,C/0.4,cos h,sin h]
+            No colormath; better perceptual uniformity than CIELAB (Ottosson 2020).
+          Achromatic branch (s<0.12) always uses v = 0.20 + 0.41·L.
 
         Perceptual axis from hue: redness = (1+cos h)/2 → red=1, cyan=0 (a* proxy).
         """
@@ -288,16 +340,57 @@ class AdvancedColorMapper:
 
         if s01 < 0.12:
             # Achromatic (grey/white/black): hue meaningless → lightness drives both.
-            # Valence: ICEAS-fit (grey/black low even when light, only white rises).
-            # Arousal: bright→peaceful (low A); dark→sad/tense (higher A).
             valence = float(np.clip(0.20 + 0.41 * l01, 0, 1))
             arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
         else:
             h_rad = np.deg2rad(h)
             redness = (1 + np.cos(h_rad)) / 2
-            valence = float(np.clip(0.05 + 0.40*l01 + 0.55*s01 - 0.19*redness, 0, 1))
-            arousal = float(np.clip(0.37*redness + 0.36*s01 + 0.27*(1-l01), 0, 1))
+            # AROUSAL: Whiteford-HSL + redness×saturation interaction (A4, V27).
+            # Base: Whiteford 2018 weights (redness r_s=.755, sat .720, dark .549 → 0.37/0.36/0.27).
+            # Interaction: FPSYG 2025 (doi:10.3389/fpsyg.2025.1593928) — red+high-sat → max arousal.
+            # Coefficients re-normalised to sum≈1: 0.32+0.31+0.23+0.14=1.00.
+            from config import COLOR_AROUSAL_INTERACTION
+            if COLOR_AROUSAL_INTERACTION:
+                arousal = float(np.clip(
+                    0.32 * redness + 0.31 * s01 + 0.23 * (1 - l01) + 0.14 * redness * s01,
+                    0, 1))
+            else:
+                arousal = float(np.clip(0.37 * redness + 0.36 * s01 + 0.27 * (1 - l01), 0, 1))
+            # VALENCE: Oklab > CIELAB > HSL (first available + enabled path wins).
+            from config import COLOR_VALENCE_CIELAB, COLOR_VALENCE_OKLAB
+            oklab_feat  = self._oklab_features(hex_color) if COLOR_VALENCE_OKLAB else None
+            cielab_feat = self._cielab_features(hex_color) if COLOR_VALENCE_CIELAB else None
+            if oklab_feat is not None and self._W_VALENCE_OKLAB is not None:
+                valence = float(np.clip(float(oklab_feat @ self._W_VALENCE_OKLAB), 0, 1))
+            elif cielab_feat is not None:
+                valence = float(np.clip(float(cielab_feat @ self._W_VALENCE_CIELAB), 0, 1))
+            else:
+                valence = float(np.clip(0.05 + 0.40 * l01 + 0.55 * s01 - 0.19 * redness, 0, 1))
+
+        # C1 (V28): Catalog-relative calibration — applied after all valence/arousal
+        # computation. Injected by recommender via set_va_calibration(); no-op if not set.
+        if self._va_cal is not None:
+            cal = self._va_cal
+            valence = float(np.clip(cal['v5'] + (cal['v95'] - cal['v5']) * valence, 0, 1))
+            arousal = float(np.clip(cal['a5'] + (cal['a95'] - cal['a5']) * arousal, 0, 1))
+
+        # A2 (V28): Vietnamese cultural red overlay — applied post-calibration.
+        # In VN context red = Tết/luck/celebration (positive), contrasting Western anger.
+        # Oklab calibrated gives red V≈0.457 (Q2). +0.06 shift puts saturated red into Q1.
+        # Vigier 2019 (n=85 VN): red→love 29%, anger 35% — mixed, capped small boost.
+        # Guard: achromatic branch (s01<0.12) doesn't set redness; overlay is ~0 anyway.
+        if self.use_vietnamese_adaptation and s01 >= 0.12:
+            valence = float(np.clip(valence + 0.06 * redness * s01, 0, 1))
+
         return valence, arousal
+
+    def set_va_calibration(self, v5: float, v95: float, a5: float, a95: float) -> None:
+        """Inject catalog-relative calibration params (C1, V28).
+
+        Called by MusicRecommender._compute_va_calibration() after song_va is finalized.
+        Once set, hsl_to_va() maps raw [0,1] predictions to [v5,v95]×[a5,a95] catalog support.
+        """
+        self._va_cal = {'v5': v5, 'v95': v95, 'a5': a5, 'a95': a95}
 
     def compute_similarity(self, c1: str, c2: str, method: str = 'hybrid') -> float:
         """

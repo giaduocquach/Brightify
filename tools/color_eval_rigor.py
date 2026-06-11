@@ -35,7 +35,18 @@ from scipy import stats as ss
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TOP_K = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+import argparse as _ap
+_parser = _ap.ArgumentParser(description="V-A targeting error + construct validity eval")
+_parser.add_argument("top_k", nargs="?", type=int, default=10)
+_parser.add_argument("--save-baseline", metavar="PATH",
+                     help="Save report copy to PATH (e.g. va_baseline_v5d.json)")
+_parser.add_argument("--emotions-file", metavar="PATH",
+                     help="Override RELABELED_EMOTIONS_FILE before engine init")
+_parser.add_argument("--no-vn-overlay", action="store_true",
+                     help="Test with use_vietnamese_adaptation=False")
+_args = _parser.parse_args()
+
+TOP_K = _args.top_k
 OUT   = "var/runtime/backtest/reports/color_eval_rigor.json"
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
@@ -124,6 +135,21 @@ def euclidean_te(idxs: list[int], song_va: np.ndarray,
     return float(np.mean(np.linalg.norm(pts - color_va, axis=1)))
 
 
+def compute_ild(idxs: list[int], song_va: np.ndarray) -> float:
+    """Mean pairwise Euclidean distance in V-A space (Intra-List Diversity).
+
+    Informational metric only — not a gate. Reference: blue=0.066 (best),
+    pink=0.013 (densest Q1 region). Higher = more diverse V-A spread.
+    """
+    if len(idxs) < 2:
+        return 0.0
+    pts = song_va[np.array(idxs, int)]
+    n = len(pts)
+    dists = [float(np.linalg.norm(pts[i] - pts[j]))
+             for i in range(n) for j in range(i + 1, n)]
+    return float(np.mean(dists))
+
+
 def mahalanobis_te(idxs: list[int], song_va: np.ndarray,
                    color_va: np.ndarray, cov_inv: np.ndarray) -> float:
     """Mean Mahalanobis distance from colour's V-A to each result's V-A."""
@@ -170,13 +196,52 @@ def journey_calibration(p1: np.ndarray, p2: np.ndarray,
     }
 
 
+# ── Construct validity helpers ───────────────────────────────────────────────
+
+def gini_coef(values: np.ndarray) -> float:
+    """Gini coefficient of a 1D array (0=uniform, 1=concentrated at one value)."""
+    v = np.sort(np.abs(values.flatten()))
+    n = len(v)
+    if n == 0 or v.sum() == 0:
+        return 0.0
+    idx = np.arange(1, n + 1)
+    return float((2 * (idx * v).sum() / (n * v.sum())) - (n + 1) / n)
+
+
+def coverage_va(song_va: np.ndarray, n_bins: int = 10) -> float:
+    """Fraction of n_bins×n_bins grid cells in [0,1]² containing ≥1 song."""
+    v_idx = np.minimum((np.clip(song_va[:, 0], 0, 1) * n_bins).astype(int), n_bins - 1)
+    a_idx = np.minimum((np.clip(song_va[:, 1], 0, 1) * n_bins).astype(int), n_bins - 1)
+    occupied = set(zip(v_idx.tolist(), a_idx.tolist()))
+    return round(len(occupied) / (n_bins * n_bins), 4)
+
+
+def entropy_va(song_va: np.ndarray, n_bins: int = 10) -> float:
+    """Normalized Shannon entropy of V-A distribution (0=degenerate, 1=uniform)."""
+    v_idx = np.minimum((np.clip(song_va[:, 0], 0, 1) * n_bins).astype(int), n_bins - 1)
+    a_idx = np.minimum((np.clip(song_va[:, 1], 0, 1) * n_bins).astype(int), n_bins - 1)
+    counts = Counter(zip(v_idx.tolist(), a_idx.tolist()))
+    total = sum(counts.values())
+    probs = np.array([c / total for c in counts.values()])
+    entropy = -float(np.sum(probs * np.log2(probs + 1e-12)))
+    return round(entropy / np.log2(n_bins * n_bins), 4)
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> int:
     import config
+    if _args.emotions_file:
+        config.RELABELED_EMOTIONS_FILE = _args.emotions_file
+        print(f"[override] RELABELED_EMOTIONS_FILE = {_args.emotions_file}")
     from core.recommendation_engine import get_recommender
 
     rec      = get_recommender()
+
+    if _args.no_vn_overlay:
+        rec.color_mapper.use_vietnamese_adaptation = False
+        print("[override] use_vietnamese_adaptation = False")
+
     n        = rec.n_songs
     song_va  = rec.song_va          # (n, 2)
     sigma_v  = config.COLOR_SCORE_VA_SIGMA_V   # 0.20
@@ -208,7 +273,7 @@ def main() -> int:
 
     print(f"\nV-A TARGETING ERROR  top_k={TOP_K}")
     hdr = (f"{'colour':22} {'prod_eu':>8} {'nearest':>8} "
-           f"{'val_only':>9} {'aro_only':>9} {'pop':>7} {'rand':>7}")
+           f"{'val_only':>9} {'aro_only':>9} {'pop':>7} {'rand':>7} {'ILD':>7}")
     print(hdr); print("-" * len(hdr))
 
     for hx, name in ICEAS_COLS:
@@ -223,6 +288,7 @@ def main() -> int:
 
         prod_eu = euclidean_te(prod_idx, song_va, color_va)
         prod_ma = mahalanobis_te(prod_idx, song_va, color_va, cov_inv)
+        prod_ild = compute_ild(prod_idx, song_va)
         prod_te_eu.append(prod_eu)
         prod_te_ma.append(prod_ma)
 
@@ -237,7 +303,8 @@ def main() -> int:
 
         per_color[hx] = {
             'name': name, 'color_va': [round(cv, 3), round(ca, 3)],
-            'prod': {'euclidean': round(prod_eu, 4), 'mahalanobis': round(prod_ma, 4)},
+            'prod': {'euclidean': round(prod_eu, 4), 'mahalanobis': round(prod_ma, 4),
+                     'ild': round(prod_ild, 4)},
             'baselines_eu': {b: round(bl_eu[b], 4) for b in baselines},
             'baselines_ma': {b: round(bl_ma[b], 4) for b in baselines},
             'wins_euclidean': sum(prod_eu < bl_eu[b] for b in baselines),
@@ -248,7 +315,8 @@ def main() -> int:
               f" {bl_eu['valence_only']:9.4f}"
               f" {bl_eu['arousal_only']:9.4f}"
               f" {bl_eu['popularity']:7.4f}"
-              f" {bl_eu['random']:7.4f}")
+              f" {bl_eu['random']:7.4f}"
+              f" {prod_ild:7.4f}")
 
     # ── Aggregate + CI ────────────────────────────────────────────────────────
     print(f"\n{'─'*70}")
@@ -297,6 +365,76 @@ def main() -> int:
     for lbl, pr, pa, rej in zip(fdr_labels, p_raw, adj_p, reject):
         sym = '✓ sig' if rej else '✗ n.s.'
         print(f"  {lbl:<18} {pr:8.4f} {pa:10.5f} {sym:>10}")
+
+    # ── Construct validity (Tầng C) ──────────────────────────────────────────
+    print(f"\nCONSTRUCT VALIDITY (Tầng C)")
+
+    v_arr = song_va[:, 0]
+    a_arr = song_va[:, 1]
+
+    r_va, _ = ss.pearsonr(v_arr, a_arr)
+    va_ortho_pass = abs(r_va) <= 0.20
+    print(f"  r(V, A) = {r_va:+.4f}  "
+          f"(target |r|≤0.20; v5d baseline = 0.313)  "
+          f"{'✓' if va_ortho_pass else '✗'}")
+
+    rho_a_tempo = None
+    tempo_col = next((c for c in ['tempo', 'bpm'] if c in rec.df.columns), None)
+    if tempo_col:
+        tempo_arr = rec.df[tempo_col].fillna(rec.df[tempo_col].median()).values.astype(float)
+        rho_a_tempo_val, _ = ss.spearmanr(a_arr, tempo_arr)
+        rho_a_tempo = round(float(rho_a_tempo_val), 4)
+        a_tempo_pass = rho_a_tempo > 0.20
+        print(f"  ρ(A, tempo) = {rho_a_tempo:+.4f}  "
+              f"(target >0.20)  {'✓' if a_tempo_pass else '✗'}")
+    else:
+        print(f"  ρ(A, tempo) = N/A  (no tempo column)")
+
+    gini_v = round(gini_coef(v_arr), 4)
+    gini_a = round(gini_coef(a_arr), 4)
+    cov_va = coverage_va(song_va)
+    ent_va = entropy_va(song_va)
+    print(f"  Gini: V={gini_v:.4f}  A={gini_a:.4f}  "
+          f"(low=concentrated; target V<0.60, A<0.60)")
+    print(f"  Coverage (10×10 grid) = {cov_va:.4f}  (target ≥0.50)")
+    print(f"  Entropy (normalised)  = {ent_va:.4f}  (target ≥0.60)")
+
+    # Inter-signal corroboration: MERT valence vs catalog valence
+    inter_signal: dict = {}
+    mert_val_path = "data/mert_valence.json"
+    if os.path.exists(mert_val_path):
+        mert_v_raw = json.load(open(mert_val_path))
+        id_col = next((c for c in ['id', 'track_id', 'song_id', 'ID']
+                       if c in rec.df.columns), None)
+        if id_col:
+            matched = [mert_v_raw.get(str(sid)) for sid in rec.df[id_col]]
+            valid_mask = np.array([v is not None for v in matched])
+            if valid_mask.sum() > 100:
+                mert_vals = np.array([matched[i] for i in range(len(matched)) if valid_mask[i]])
+                cat_vals  = v_arr[valid_mask]
+                rho_inter, _ = ss.spearmanr(mert_vals, cat_vals)
+                inter_signal['rho_mert_v_vs_catalog_v'] = round(float(rho_inter), 4)
+                inter_pass = abs(rho_inter) > 0.25
+                print(f"  ρ(MERT_V, catalog_V) = {rho_inter:+.4f}  "
+                      f"(inter-signal corroboration; target |ρ|>0.25)  "
+                      f"{'✓' if inter_pass else '✗'}")
+
+    construct_validity = {
+        'r_valence_arousal': round(float(r_va), 4),
+        'va_orthogonal_pass': bool(va_ortho_pass),
+        'rho_arousal_tempo': rho_a_tempo,
+        'gini_valence': gini_v,
+        'gini_arousal': gini_a,
+        'coverage_va_10x10': cov_va,
+        'entropy_va_normalised': ent_va,
+        'inter_signal': inter_signal,
+        'targets': {
+            'r_va': '|r|≤0.20 (orthogonal)',
+            'rho_a_tempo': '>0.20',
+            'coverage': '≥0.50',
+            'entropy': '≥0.60',
+        },
+    }
 
     # ── Journey calibration (adjacent colour pairs) ───────────────────────────
     print(f"\nJOURNEY CALIBRATION (2-colour path A→B, KS vs uniform)")
@@ -453,6 +591,11 @@ def main() -> int:
             "Steck 2018 (RecSys'18) calibration; "
             "Saari 2016 / Starcke 2024 Iso-Principle journey."
         ),
+        "construct_validity": construct_validity,
+        "meta": {
+            "emotions_file": _args.emotions_file or "config default",
+            "no_vn_overlay": bool(_args.no_vn_overlay),
+        },
     }
 
     def _jsonify(obj):
@@ -469,6 +612,11 @@ def main() -> int:
 
     json.dump(_jsonify(report), open(OUT, "w"), ensure_ascii=False, indent=2)
 
+    if _args.save_baseline:
+        import shutil
+        shutil.copy(OUT, _args.save_baseline)
+        print(f"\n  baseline saved → {_args.save_baseline}")
+
     print(f"\n{'='*70}")
     print("PHASE-1 RIGOR SUMMARY")
     print(f"{'='*70}")
@@ -481,6 +629,9 @@ def main() -> int:
           f"mean_t={mt_mean:.3f} ({'PASS ✓' if mt_pass else 'FAIL ✗'})")
     print(f"  L1 Fisher-z: valence r={r_v:.3f} CI{list(ci_v)}  "
           f"arousal r={r_a:.3f} CI{list(ci_a)}")
+    print(f"  Construct validity: r(V,A)={r_va:+.4f} "
+          f"{'✓' if va_ortho_pass else '✗'}  "
+          f"coverage={cov_va:.3f}  entropy={ent_va:.3f}")
     print(f"\n  saved → {OUT}")
     print(f"{'='*70}")
 
