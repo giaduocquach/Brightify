@@ -311,11 +311,13 @@ COLOR_ADAPTIVE_SIGMA = False
 #     NN not better than linear/tree at V-A regression
 #   - Structural battery T1-T4 ALL PASS: monotonicity, commensurability,
 #     distribution, cross-quadrant purity
-#   - Targeting-error 0.043 CI[0.028,0.061]; 5-6× better than 5 baselines (FDR pass)
+#   - Targeting-error 0.0168 (v6b, −31% vs v5d 0.0245); v5d CI[0.028,0.061] (Phase1)
+#   - V-A labels (v6b): V=20%MERT+70%NRC-VAD+10%EmoBank, A=80%MERT+20%NRC-VAD; no LLM
+#   - r(V,A)=0.140 (v6b) vs 0.313 (v5d); near-orthogonal per Russell circumplex target
 #   - Journey: KS=0.135, monotonicity ρ=0.896, Iso-Principle (Starcke 2024)
 # What is NOT validated:
 #   - Color-emotion mapping for Vietnamese listeners (ICEAS global, not VN-specific)
-#   - Song valence labels: Gemini-based, corroborated weakly by XLM-R (ρ=0.263)
+#   - Song V-A labels validated on VN listeners (DEAM-trained probes, cross-corpus)
 #   - Color→song-match gold-set study (future work, needs 3 listeners × 2h)
 #   - Offline targeting-error ≠ user satisfaction (offline-online r≈.28, Dacrema 2021)
 # Reference: Jonauskaite 2025 (128-year review): universal patterns exist but

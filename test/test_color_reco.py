@@ -29,7 +29,7 @@ def rec():
 @pytest.fixture(scope="module")
 def color_mapper():
     from core.advanced_color_mapping import get_advanced_color_mapper
-    return get_advanced_color_mapper(vietnamese=False)
+    return get_advanced_color_mapper()
 
 
 # ── Config tests (fast) ──────────────────────────────────────────────────────

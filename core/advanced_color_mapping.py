@@ -25,8 +25,7 @@ class AdvancedColorMapper:
     - Continuous hue-to-emotion mapping (not discrete ranges)
     """
 
-    def __init__(self, use_vietnamese_adaptation: bool = False):
-        self.use_vietnamese_adaptation = use_vietnamese_adaptation
+    def __init__(self):
 
         # Emotion-color profiles aligned with CLAP fused_emotion labels (8 labels).
         # CRITICAL: these must match the song catalog's fused_emotion values exactly
@@ -115,18 +114,6 @@ class AdvancedColorMapper:
             },
         }
 
-        # Vietnamese cultural adjustments (maintained)
-        if self.use_vietnamese_adaptation:
-            self.cultural_adjustments = {
-                'happy': {'hue_shift': -5, 'sat_boost': 5},
-                'romantic': {'hue_shift': 5, 'sat_boost': 0},
-                'peaceful': {'hue_shift': 10, 'sat_boost': -5},
-                'sad': {'hue_shift': -5, 'lightness_shift': -3},
-                'hopeful': {'hue_shift': 10, 'sat_boost': 8},
-            }
-        else:
-            self.cultural_adjustments = {}
-
         # Updated V-A anchor points based on Isbilen & Krumhansl (2022)
         # Format: [valence, arousal, hue, saturation, lightness]
         self.va_anchors = np.array([
@@ -188,7 +175,7 @@ class AdvancedColorMapper:
              'melancholic', 'sad', 'tense', 'angry')
 
     # EMPIRICAL colour→emotion distribution from ICEAS/Jonauskaite 2020 (8615 ppl/colour,
-    # 37 nations). Each row is the colour's DISTINCTIVE 8-emotion profile (human ratings,
+    # 30 countries). Each row is the colour's DISTINCTIVE 8-emotion profile (human ratings,
     # per-emotion baseline removed so it captures what the colour is specifically
     # associated with). Replaces the synthetic Russell-centroid Gaussian, which matched
     # the human top-emotion only 1/12. Values in _EMO8 order, sum≈1. See color_norms.py
@@ -374,14 +361,6 @@ class AdvancedColorMapper:
             valence = float(np.clip(cal['v5'] + (cal['v95'] - cal['v5']) * valence, 0, 1))
             arousal = float(np.clip(cal['a5'] + (cal['a95'] - cal['a5']) * arousal, 0, 1))
 
-        # A2 (V28): Vietnamese cultural red overlay — applied post-calibration.
-        # In VN context red = Tết/luck/celebration (positive), contrasting Western anger.
-        # Oklab calibrated gives red V≈0.457 (Q2). +0.06 shift puts saturated red into Q1.
-        # Vigier 2019 (n=85 VN): red→love 29%, anger 35% — mixed, capped small boost.
-        # Guard: achromatic branch (s01<0.12) doesn't set redness; overlay is ~0 anyway.
-        if self.use_vietnamese_adaptation and s01 >= 0.12:
-            valence = float(np.clip(valence + 0.06 * redness * s01, 0, 1))
-
         return valence, arousal
 
     def set_va_calibration(self, v5: float, v95: float, a5: float, a95: float) -> None:
@@ -454,10 +433,10 @@ class AdvancedColorMapper:
 # Singleton
 _mapper = None
 
-def get_advanced_color_mapper(vietnamese: bool = True) -> AdvancedColorMapper:
+def get_advanced_color_mapper() -> AdvancedColorMapper:
     global _mapper
     if _mapper is None:
-        _mapper = AdvancedColorMapper(vietnamese)
+        _mapper = AdvancedColorMapper()
     return _mapper
 
 

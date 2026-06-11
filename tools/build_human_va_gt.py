@@ -48,7 +48,7 @@ def main() -> int:
     radius = float(sys.argv[1]) if len(sys.argv) > 1 else 0.22
 
     from core.advanced_color_mapping import get_advanced_color_mapper
-    cm = get_advanced_color_mapper(vietnamese=False)
+    cm = get_advanced_color_mapper()
 
     human = load_human_va(RATINGS_DIR)
     tids = list(human.keys())

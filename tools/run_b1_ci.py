@@ -108,7 +108,7 @@ def compute_l1_ci():
     from scipy.stats import pearsonr, spearmanr
 
     norm = load_human_color_norm()
-    cm   = get_advanced_color_mapper(vietnamese=False)
+    cm   = get_advanced_color_mapper()
     hv, ha, ev, ea = [], [], [], []
     for t, d in norm.items():
         h_v, h_a = d["human_va"]

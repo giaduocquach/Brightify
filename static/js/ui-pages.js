@@ -214,7 +214,7 @@ const pages = {
                          V17). data-va + nhãn sinh từ hsl_to_va/color_to_emotion_probs
                          (vietnamese=False). Hiển thị == hex được tính. -->
                     <div class="color-emotion-grid color-emotion-grid-v2">
-                        <button class="color-emotion-card-v2" onclick="pickColor('#BE0032')" data-color="#BE0032" data-va="0.56,0.89" aria-pressed="false" aria-label="Đỏ — Đam mê, Mãnh liệt">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#BE0032')" data-color="#BE0032" data-va="0.52,0.67" aria-pressed="false" aria-label="Đỏ — Đam mê, Mãnh liệt">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#BE0032"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -224,7 +224,7 @@ const pages = {
                                 <span class="cev2-emotions">Đam mê · Mãnh liệt</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#F38400')" data-color="#F38400" data-va="0.62,0.84" aria-pressed="false" aria-label="Cam — Vui tươi, Năng động">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#F38400')" data-color="#F38400" data-va="0.68,0.65" aria-pressed="false" aria-label="Cam — Vui tươi, Năng động">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#F38400"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -234,7 +234,7 @@ const pages = {
                                 <span class="cev2-emotions">Vui tươi · Năng động</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#F3C300')" data-color="#F3C300" data-va="0.63,0.81" aria-pressed="false" aria-label="Vàng — Vui vẻ, Lạc quan">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#F3C300')" data-color="#F3C300" data-va="0.80,0.63" aria-pressed="false" aria-label="Vàng — Vui vẻ, Lạc quan">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#F3C300"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -244,7 +244,7 @@ const pages = {
                                 <span class="cev2-emotions">Vui vẻ · Lạc quan</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#FFB7C5')" data-color="#FFB7C5" data-va="0.76,0.76" aria-pressed="false" aria-label="Hồng — Ngọt ngào, Phấn khích">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#FFB7C5')" data-color="#FFB7C5" data-va="0.74,0.62" aria-pressed="false" aria-label="Hồng — Ngọt ngào, Phấn khích">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#FFB7C5"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -254,7 +254,7 @@ const pages = {
                                 <span class="cev2-emotions">Ngọt ngào · Phấn khích</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#008856')" data-color="#008856" data-va="0.70,0.57" aria-pressed="false" aria-label="Xanh lá — Tươi mát, Cân bằng">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#008856')" data-color="#008856" data-va="0.64,0.46" aria-pressed="false" aria-label="Xanh lá — Tươi mát, Cân bằng">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#008856"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -264,7 +264,7 @@ const pages = {
                                 <span class="cev2-emotions">Tươi mát · Cân bằng</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#3AB09E')" data-color="#3AB09E" data-va="0.51,0.33" aria-pressed="false" aria-label="Ngọc — Thư thái, Tươi mát">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#3AB09E')" data-color="#3AB09E" data-va="0.67,0.35" aria-pressed="false" aria-label="Ngọc — Thư thái, Tươi mát">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#3AB09E"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -274,7 +274,7 @@ const pages = {
                                 <span class="cev2-emotions">Thư thái · Tươi mát</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#0067A5')" data-color="#0067A5" data-va="0.72,0.56" aria-pressed="false" aria-label="Xanh dương — Phấn chấn, Sâu lắng">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#0067A5')" data-color="#0067A5" data-va="0.60,0.46" aria-pressed="false" aria-label="Xanh dương — Phấn chấn, Sâu lắng">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#0067A5"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -284,7 +284,7 @@ const pages = {
                                 <span class="cev2-emotions">Phấn chấn · Sâu lắng</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#9C4F96')" data-color="#9C4F96" data-va="0.27,0.55" aria-pressed="false" aria-label="Tím — Trầm tư, Mãnh liệt">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#9C4F96')" data-color="#9C4F96" data-va="0.54,0.47" aria-pressed="false" aria-label="Tím — Trầm tư, Mãnh liệt">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#9C4F96"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -294,7 +294,7 @@ const pages = {
                                 <span class="cev2-emotions">Trầm tư · Mãnh liệt</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#F2F3F4')" data-color="#F2F3F4" data-va="0.59,0.17" aria-pressed="false" aria-label="Trắng — Thanh thản, Tinh khôi">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#F2F3F4')" data-color="#F2F3F4" data-va="0.62,0.30" aria-pressed="false" aria-label="Trắng — Thanh thản, Tinh khôi">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#F2F3F4;border:1px solid rgba(255,255,255,0.25)"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -304,7 +304,7 @@ const pages = {
                                 <span class="cev2-emotions">Thanh thản · Tinh khôi</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#848482')" data-color="#848482" data-va="0.41,0.32" aria-pressed="false" aria-label="Xám — U hoài, Trầm lắng">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#848482')" data-color="#848482" data-va="0.48,0.37" aria-pressed="false" aria-label="Xám — U hoài, Trầm lắng">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#848482"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -314,7 +314,7 @@ const pages = {
                                 <span class="cev2-emotions">U hoài · Trầm lắng</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#80461B')" data-color="#80461B" data-va="0.35,0.77" aria-pressed="false" aria-label="Nâu — Trầm mặc, Bất an">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#80461B')" data-color="#80461B" data-va="0.50,0.59" aria-pressed="false" aria-label="Nâu — Trầm mặc, Bất an">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#80461B"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>
@@ -324,7 +324,7 @@ const pages = {
                                 <span class="cev2-emotions">Trầm mặc · Bất an</span>
                             </div>
                         </button>
-                        <button class="color-emotion-card-v2" onclick="pickColor('#222222')" data-color="#222222" data-va="0.25,0.45" aria-pressed="false" aria-label="Đen — U tối, Nặng nề">
+                        <button class="color-emotion-card-v2" onclick="pickColor('#222222')" data-color="#222222" data-va="0.37,0.44" aria-pressed="false" aria-label="Đen — U tối, Nặng nề">
                             <div class="cev2-swatch-wrap">
                                 <span class="cev2-swatch" style="background:#222222;border:1px solid rgba(255,255,255,0.15)"></span>
                                 <span class="cev2-check" aria-hidden="true">✓</span>

@@ -41,10 +41,7 @@ class MusicRecommender:
 
         logger.info("Initializing Music Recommender v6.0 (Multimodal + Lyrics)...")
 
-        # Load modules — V17 fix B4: vietnamese=False (pure-global colour↔emotion per
-        # project decision; cultural_adjustments only affected the reverse song→colour
-        # path anyway, but keep it off for clarity).
-        self.color_mapper = get_color_mapper(vietnamese=False)
+        self.color_mapper = get_color_mapper()
         self.emotion_lexicon, self.emotion_classifier, self.emotion_fusion = get_emotion_analyzer()
 
         if self.verbose:
@@ -122,6 +119,7 @@ class MusicRecommender:
         # re-derive the audio+lyrics V-A with correct CLAP Russell centroids.
         if self.colors is not None and 'fused_emotion' in self.df.columns:
             self._recompute_song_va()
+            self._compute_va_calibration()
 
         # Re-derive mood_quadrant from the trusted emotion labels (the CSV's
         # mood_quadrant was built from the broken raw-arousal column + a fixed 0.5
@@ -273,6 +271,7 @@ class MusicRecommender:
 
         # song_va initial fill — will be recomputed after CLAP loads via _recompute_song_va
         self._recompute_song_va()
+        self._compute_va_calibration()
 
         # --- Pre-computed feature groups for multi-faceted similarity ---
         # Berenzweig et al. (2004): Separate timbral, rhythmic, and tonal
@@ -388,6 +387,27 @@ class MusicRecommender:
         if 'fused_valence' in self.df.columns:
             fused_va = self.df[['fused_valence', 'fused_energy']].fillna(0.5).values
             self.song_va = np.clip(fused_va, 0.0, 1.0)
+
+    def _compute_va_calibration(self) -> None:
+        """C1 (V28): Compute catalog V-A percentiles and inject into color mapper.
+
+        Color model predicts V-A on Jonauskaite absolute [0,1] scale; catalog
+        song_va is MERT-compressed (A tops out ~0.72). Linear rescale maps color
+        predictions into catalog support: V_cal = V_p5 + (V_p95-V_p5)*V_raw.
+        Injected into hsl_to_va() so ALL callers (incl. color_eval_rigor.py) see
+        consistent, catalog-calibrated output.
+        """
+        if not COLOR_VA_CATALOG_CALIBRATE:
+            return
+        cal = {
+            'v5':  float(np.percentile(self.song_va[:, 0], 5)),
+            'v95': float(np.percentile(self.song_va[:, 0], 95)),
+            'a5':  float(np.percentile(self.song_va[:, 1], 5)),
+            'a95': float(np.percentile(self.song_va[:, 1], 95)),
+        }
+        self._va_cal = cal
+        if hasattr(self.color_mapper, 'set_va_calibration'):
+            self.color_mapper.set_va_calibration(**cal)
 
     # 8 CLAP emotion labels → Russell mood quadrant string (format the API expects:
     # "QN: Name", consumed via startswith('QN') in /api/moods and contains() in filter)
@@ -584,6 +604,17 @@ class MusicRecommender:
         _sigma_v = COLOR_SCORE_VA_SIGMA_V
         _sigma_a = COLOR_SCORE_VA_SIGMA_A
 
+        # P3 (V29): Adaptive sigma for sparse V-A regions (white TE=0.054).
+        if COLOR_ADAPTIVE_SIGMA and len(per_color_va) == 1:
+            qva = np.asarray(per_color_va[0], float)
+            nearby = int(np.sum(np.sum((self.song_va - qva) ** 2, axis=1) < 0.05 ** 2))
+            if nearby < 50:
+                _sigma_v = COLOR_SCORE_VA_SIGMA_V * 1.8
+                _sigma_a = COLOR_SCORE_VA_SIGMA_A * 1.8
+            elif nearby < 200:
+                _sigma_v = COLOR_SCORE_VA_SIGMA_V * 1.3
+                _sigma_a = COLOR_SCORE_VA_SIGMA_A * 1.3
+
         def _color_score(cva, evec, lyr):
             dv = self.song_va[:, 0] - cva[0]
             da = self.song_va[:, 1] - cva[1]
@@ -598,11 +629,53 @@ class MusicRecommender:
                 per_color_va[0], per_color_emotion[0], per_color_lyrics[0])
             # F3: cross-mood penalty removed — the heteroscedastic V-A RBF already
             # makes large mood-distance songs score near-zero without explicit rules.
-            
-            candidates = (self._rrf_candidates([va_s, emo_s, lyr_s])
-                          if ENABLE_RRF else None)
-            res = self._fast_rank(final_scores, top_k, diversity_penalty,
-                                  restrict_to=candidates)
+
+            # A3 (V27): calibration bonus — boost underrepresented target quadrant.
+            # Addresses catalog Q3-skew (35.5% sad) by giving songs in the same
+            # V-A quadrant as the query color a small additive boost before ranking.
+            if COLOR_CALIBRATION_RERANK:
+                qv, qa = float(per_color_va[0][0]), float(per_color_va[0][1])
+                in_target = (
+                    (self.song_va[:, 0] >= 0.5) == (qv >= 0.5)
+                ) & (
+                    (self.song_va[:, 1] >= 0.5) == (qa >= 0.5)
+                )
+                alpha = COLOR_CALIBRATION_ALPHA
+                final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
+
+            # P2 (V29): V-A space Euclidean MMR — over-fetch then re-rank for ILD.
+            # Fixes red/black ILD_raw≈0.013-0.024 (vs blue 0.063 reference).
+            # Uses Euclidean distance in V-A space (not cosine) for meaningful
+            # diversity within a small V-A neighborhood.
+            if COLOR_MMR_VA_DIVERSITY:
+                lam = COLOR_MMR_VA_LAMBDA
+                n_cand = min(top_k * 5, self.n_songs)
+                top_cands = np.argsort(final_scores)[::-1][:n_cand]
+                va_cands = self.song_va[top_cands]       # (n_cand, 2)
+                rel = final_scores[top_cands]             # (n_cand,)
+                selected_local, remaining = [], list(range(n_cand))
+                for _ in range(top_k):
+                    if not remaining:
+                        break
+                    if not selected_local:
+                        best = int(np.argmax(rel[remaining]))
+                    else:
+                        sel_va = va_cands[selected_local]   # (s, 2)
+                        # min Euclidean distance to any already-selected song
+                        dists = np.min(
+                            np.linalg.norm(va_cands[remaining][:, None] - sel_va[None], axis=2),
+                            axis=1)
+                        mmr_s = lam * rel[remaining] + (1.0 - lam) * dists
+                        best = remaining[int(np.argmax(mmr_s))]
+                    selected_local.append(best)
+                    remaining.remove(best)
+                chosen = top_cands[selected_local].tolist()
+                res = self._build_result_df(chosen)
+            else:
+                candidates = (self._rrf_candidates([va_s, emo_s, lyr_s])
+                              if ENABLE_RRF else None)
+                res = self._fast_rank(final_scores, top_k, diversity_penalty,
+                                      restrict_to=candidates)
             if not res.empty and 'original_index' in res.columns:
                 res = res.copy()
                 res['why'] = self._build_color_why(

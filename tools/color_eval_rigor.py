@@ -43,7 +43,7 @@ _parser.add_argument("--save-baseline", metavar="PATH",
 _parser.add_argument("--emotions-file", metavar="PATH",
                      help="Override RELABELED_EMOTIONS_FILE before engine init")
 _parser.add_argument("--no-vn-overlay", action="store_true",
-                     help="Test with use_vietnamese_adaptation=False")
+                     help="(no-op: VN overlay removed in v6b)")
 _args = _parser.parse_args()
 
 TOP_K = _args.top_k
@@ -237,10 +237,6 @@ def main() -> int:
     from core.recommendation_engine import get_recommender
 
     rec      = get_recommender()
-
-    if _args.no_vn_overlay:
-        rec.color_mapper.use_vietnamese_adaptation = False
-        print("[override] use_vietnamese_adaptation = False")
 
     n        = rec.n_songs
     song_va  = rec.song_va          # (n, 2)
