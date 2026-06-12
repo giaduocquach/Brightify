@@ -287,6 +287,13 @@ COLOR_VALENCE_OKLAB = True   # C1 (V28): catalog calibration applied in hsl_to_v
 # Enable only after color_eval_rigor gate passes.
 COLOR_AROUSAL_INTERACTION = True
 
+# V33 (2026-06-12): arousal ridge-fit to ICEAS/Jonauskaite human arousal norms
+# (tools/fit_arousal_oklab.py). The prior Whiteford weights were never fit to the norms
+# → over-spread arousal (warm/saturated too high: pink 0.80 vs research 0.48; light/dark
+# too low), mean|err| vs ICEAS 0.154. Fitted [redness,sat,darkness] coeffs → 0.078.
+# Brings arousal to the same research-grounding valence has (which fits ICEAS at r=0.97).
+COLOR_AROUSAL_ICEAS_FIT = True
+
 # A3 (V27): Calibration reranking — boost underrepresented V-A quadrant after MMR.
 # gate FAILED 2026-06-10: TE 0.0466→0.0570, ordering fail; reverted + superseded by C1.
 COLOR_CALIBRATION_RERANK = False

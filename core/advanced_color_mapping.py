@@ -325,25 +325,31 @@ class AdvancedColorMapper:
         h, l, s = self.hex_to_hsl(hex_color)   # (hue°, lightness%, saturation%)
         s01, l01 = s / 100.0, l / 100.0
 
-        if s01 < 0.12:
-            # Achromatic (grey/white/black): hue meaningless → lightness drives both.
-            valence = float(np.clip(0.20 + 0.41 * l01, 0, 1))
+        achromatic = s01 < 0.12
+        redness = 0.5 if achromatic else (1 + np.cos(np.deg2rad(h))) / 2
+
+        # AROUSAL — V33: ridge-fit to the ICEAS/Jonauskaite human arousal norms
+        # (tools/fit_arousal_oklab.py, LOO-CV) on the literature determinants
+        # [redness, saturation, darkness]. Replaces the UN-fit Whiteford weights, which
+        # over-spread arousal (warm/saturated too high — pink 0.80 vs research 0.48; light/
+        # dark too low) → mean|err| vs ICEAS 0.154→0.078. Same research-grounding valence
+        # already has (Oklab ridge, r=0.97). One formula for chromatic + achromatic.
+        from config import COLOR_AROUSAL_INTERACTION, COLOR_AROUSAL_ICEAS_FIT
+        if COLOR_AROUSAL_ICEAS_FIT:
+            arousal = float(np.clip(0.2258 + 0.1719 * redness + 0.0867 * s01
+                                    + 0.2206 * (1 - l01), 0, 1))
+        elif achromatic:
             arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
+        elif COLOR_AROUSAL_INTERACTION:
+            arousal = float(np.clip(
+                0.32 * redness + 0.31 * s01 + 0.23 * (1 - l01) + 0.14 * redness * s01, 0, 1))
         else:
-            h_rad = np.deg2rad(h)
-            redness = (1 + np.cos(h_rad)) / 2
-            # AROUSAL: Whiteford-HSL + redness×saturation interaction (A4, V27).
-            # Base: Whiteford 2018 weights (redness r_s=.755, sat .720, dark .549 → 0.37/0.36/0.27).
-            # Interaction: FPSYG 2025 (doi:10.3389/fpsyg.2025.1593928) — red+high-sat → max arousal.
-            # Coefficients re-normalised to sum≈1: 0.32+0.31+0.23+0.14=1.00.
-            from config import COLOR_AROUSAL_INTERACTION
-            if COLOR_AROUSAL_INTERACTION:
-                arousal = float(np.clip(
-                    0.32 * redness + 0.31 * s01 + 0.23 * (1 - l01) + 0.14 * redness * s01,
-                    0, 1))
-            else:
-                arousal = float(np.clip(0.37 * redness + 0.36 * s01 + 0.27 * (1 - l01), 0, 1))
-            # VALENCE: Oklab > CIELAB > HSL (first available + enabled path wins).
+            arousal = float(np.clip(0.37 * redness + 0.36 * s01 + 0.27 * (1 - l01), 0, 1))
+
+        # VALENCE (unchanged — already research-fit at r=0.97 vs ICEAS)
+        if achromatic:
+            valence = float(np.clip(0.20 + 0.41 * l01, 0, 1))
+        else:
             from config import COLOR_VALENCE_CIELAB, COLOR_VALENCE_OKLAB
             oklab_feat  = self._oklab_features(hex_color) if COLOR_VALENCE_OKLAB else None
             cielab_feat = self._cielab_features(hex_color) if COLOR_VALENCE_CIELAB else None

@@ -232,3 +232,17 @@ Arousal now reflects **both** acoustic determinants. Honest caveat: ρ(A,tempo)=
 
 ## Current label lineage (active = v6f)
 valence ← v6e lyrics-dominant ensemble (negation-fixed lexicon + VN-sentiment transformer + EmoBank probe + 16% MERT); arousal ← v6f DEAM-grounded [MERT + tempo + loudness]. Serving LLM-free throughout.
+
+---
+
+# V33 (2026-06-12) — colour AROUSAL re-grounded to ICEAS research norms
+
+**Prompt:** product owner — colour energy felt wrong (pink/moon too energetic; etc.); asked to make ALL colours match the science.
+
+**Finding:** verified the chain is bug-free (consistent hex→V-A→rank-match; distinct colours, Jaccard 0). The issue was scientific: comparing every colour's `hsl_to_va` to the **ICEAS/Jonauskaite human V-A norms**, **valence matched (r=0.969, mean|err|=0.051)** because it was regression-fit to ICEAS, but **arousal did NOT (r=0.765, mean|err|=0.154)** because it used an un-fit Whiteford formula — systematically too high for warm/saturated colours (Hồng 0.80 vs research 0.48; Nâu/Cam/Đỏ/Vàng +0.19…+0.33) and too low for light/dark (Trắng −0.15, Ngọc −0.14).
+
+**Fix (`tools/fit_arousal_oklab.py`, `COLOR_AROUSAL_ICEAS_FIT`):** ridge-fit arousal to the ICEAS arousal norms on the literature determinants **[redness, saturation, darkness]** (Whiteford/Wilms-Oberfeld), 3 params (LOO-CV; the 6-feat Oklab basis overfit at r=0.35). Coeffs `0.226 + 0.172·redness + 0.087·sat + 0.221·darkness`. Now BOTH axes are research-fit, symmetric with valence.
+
+**Result:** arousal mean|err| vs ICEAS **0.154→0.053** (≈ valence's 0.051); Hồng 0.80→0.51 (research 0.48), Trắng 0.17→0.33 (0.32), warm colours pulled down to the norms. Colour gate: **TE 0.0227→0.0216** (better targeting), valence L1 r=0.969, arousal L1 r=0.783, journey passes, beats baselines. Frontend `colors.ts` regenerated; Hồng label "Phấn khích"→"Dịu dàng" to match its corrected mid-arousal.
+
+**Honest caveat:** n=12 ICEAS limits fit precision (Brown remains a +0.18 outlier — dark-warm); arousal now follows research even where it diverges from naive intuition (e.g. ICEAS rates **black 0.58 = moderately arousing/heavy**, not calm-slow). Colour→V-A is now research-grounded on **both** axes.
