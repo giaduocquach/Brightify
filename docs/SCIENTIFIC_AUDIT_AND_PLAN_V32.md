@@ -285,3 +285,41 @@ DEAM nested-CV R²: **MuQ beats MERT** — arousal 0.557→**0.660** (+3σ), val
 - **Done/shipped**: signal sufficiency proven; weights de-circularized (EWE) + CI-backed; MuQ probe evaluated (better human-CV) + deployed for valence; gate-passed v6g.
 - **Remaining (would add confidence, won't change labels)**: independent references — CLAP-ears arousal + multilingual-text valence (break the GPT/lyrics monoculture); cross-dataset probe validation on PMEmo/EmoMusic. These are additive validation; the served V-A is unchanged by them.
 - **Honest finding**: MuQ-arousal is better on human DEAM (0.775) but the VN colour-TE caps what ships — the end metric, not isolated probe R², governs adoption (gate discipline).
+
+---
+
+# V6g — Phase 4 & 5 results (independent references + cross-corpus), 2026-06-13
+
+These are BACKTEST-ONLY validations that strengthen confidence in the shipped v6g labels —
+they do not change any served label. They close the two systemic gaps from the V32 audit:
+"validation monoculture" (only GPT/lyrics) and "single corpus" (only DEAM).
+
+## Phase 4 — CLAP-ears: independent arousal reference (D2, `tools/clap_va_reference.py`)
+CLAP is a different model family than MERT/MuQ and reads audio directly, so its agreement
+with our arousal is genuine convergent validity, not circularity. Zero-shot, frozen, using
+the *aligned* projected `audio_embeds`/`text_embeds` (high-vs-low-arousal prompt projection).
+- **Calibrate vs DEAM-human** (n=350): ρ=**+0.371** — CLAP zero-shot genuinely reads arousal
+  (modest as expected for zero-shot, but clearly positive ⇒ a valid reference).
+- **Converge vs served v6g arousal**, VN catalog (n=500): ρ=**+0.480** 95%CI[+0.403,+0.553].
+  An independent model that hears audio (not lyrics) agrees moderately-strongly with our
+  served arousal — the MERT/lyrics monoculture is broken. (Note: `get_*_features` returns the
+  UNPROJECTED tower pooler; only the full-forward `*_embeds` are cross-modal aligned — the
+  catalog `clap_embeddings.npy`, built from the pooler, is unusable for this and was bypassed.)
+
+## Phase 5 — PMEmo cross-corpus validation (D5, `tools/pmemo_cross_eval.py`)
+Downloaded PMEmo (Zhang 2018; 767 songs with human V-A, MuQ extracted on all 767). The real
+generalization test = train the MuQ→V-A probe on DEAM-human, test on PMEmo-human:
+- **TRANSFER DEAM→PMEmo**: valence ρ=**+0.694** 95%CI[+0.659,+0.727]; arousal ρ=**+0.646**
+  95%CI[+0.599,+0.689]. Strong cross-corpus transfer ⇒ the probe captures genuine V-A, not
+  DEAM-specific artifacts.
+- **Within-PMEmo nested-CV R²**: valence **0.614**±0.023; arousal **0.698**±0.013 — a second
+  corpus' own ceiling, consistent with (slightly above) DEAM's 0.55/0.66.
+
+## Net validation picture for v6g
+- **Valence**: EWE-de-circularized; agrees with GPT 0.71 / Gemini 0.64 (independent refs) and
+  the MuQ valence signal transfers cross-corpus (DEAM→PMEmo ρ=0.69).
+- **Arousal**: DEAM-grounded (MERT+tempo+loudness); transfers cross-corpus (DEAM→PMEmo ρ=0.65)
+  AND agrees with an independent audio model's ears (CLAP ρ=0.48 on catalog, 0.37 vs DEAM).
+- **Remaining optional**: a multilingual-text valence regressor would add one more independent
+  valence reference, but valence already has 3 (GPT, Gemini, PMEmo-transfer) — deferred as
+  marginal. No label change pending.
