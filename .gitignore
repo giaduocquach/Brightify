@@ -69,9 +69,13 @@ artist_images/
 checkpoints/
 models_cache/
 data/*.npy
+data/*.npz
 data/*.csv
 data/*.parquet
 data/*.json
+data/*.zip
+data/*.xlsx
+*.mp3
 !data/.gitkeep
 !data/README.md
 
