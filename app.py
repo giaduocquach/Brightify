@@ -30,6 +30,9 @@ from api.rate_limit import RateLimitMiddleware, set_redis as _rl_set_redis
 static_path = Path(__file__).parent / "static"
 static_path.mkdir(exist_ok=True)
 
+# Built React SPA (Vite output). When present, it is served at "/".
+spa_path = Path(__file__).parent / "static_spa"
+
 music_path = cfg.MUSIC_DIR
 album_art_path = cfg.ALBUM_ART_DIR
 artist_images_path = cfg.ARTIST_IMAGES_DIR
@@ -149,24 +152,39 @@ app.add_middleware(RateLimitMiddleware)
 
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
+# Serve the built SPA's hashed assets (Vite emits them under /assets).
+_spa_assets = spa_path / "assets"
+if _spa_assets.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_spa_assets)), name="spa-assets")
+
 app.include_router(music_routes.router)
 app.include_router(recommend_routes.router)
 app.include_router(system_routes.router)
 
 
+def _spa_index() -> Path | None:
+    """Built SPA index if available, else the legacy static index."""
+    spa_index = spa_path / "index.html"
+    if spa_index.exists():
+        return spa_index
+    legacy = static_path / "index.html"
+    return legacy if legacy.exists() else None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    index_path = static_path / "index.html"
-    if index_path.exists():
+    index_path = _spa_index()
+    if index_path:
         return FileResponse(index_path)
     return HTMLResponse("<h1>Brightify</h1><p>Frontend not found.</p>")
 
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
-    if not request.url.path.startswith("/api/") and not request.url.path.startswith("/static/"):
-        index_path = static_path / "index.html"
-        if index_path.exists():
+    path = request.url.path
+    if not path.startswith(("/api/", "/static/", "/assets/")):
+        index_path = _spa_index()
+        if index_path:
             return FileResponse(index_path)
     return JSONResponse(status_code=404, content={"success": False, "error": "Not found"})
 

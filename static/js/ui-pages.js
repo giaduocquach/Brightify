@@ -2,169 +2,47 @@
 // Pages
 // ══════════════════════════════════════════════════════════════════════════
 const pages = {
-    // ── HOME ────────────────────────────────────────────────────────────
+    // ── HOME — Colorscape (color-first immersive home) ───────────────────
     async home(container) {
-        const stats = _getListeningStats();
-        const followed = JSON.parse(localStorage.getItem('bf_followed_artists') || '[]');
-
         container.innerHTML = `
-            <div class="hero-banner">
-                <div class="hero-content">
-                    <div class="hero-greeting">${getGreeting()}</div>
-                    <div class="hero-title">Khám phá âm nhạc<br>với trí tuệ nhân tạo</div>
-                    <div class="hero-subtitle">Brightify dùng AI để tìm nhạc phù hợp với cảm xúc của bạn — qua màu sắc.</div>
-                    <div class="hero-actions">
-                        <button class="btn btn-primary" onclick="router.navigate('ai-lab')">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M12 2a5 5 0 015 5c0 2-1 3-2 4l-1 1v2h-4v-2l-1-1c-1-1-2-2-2-4a5 5 0 015-5z"/></svg>
-                            Thử AI Lab
-                        </button>
-                    </div>
+            <div class="colorscape-page">
+                <div class="colorscape-header">
+                    <h1 class="colorscape-title">Hôm nay bạn đang cảm thấy màu gì?</h1>
+                    <p class="colorscape-sub">Chọn một màu — AI tìm nhạc đúng vibe</p>
                 </div>
-            </div>
 
-            <!-- Listening Stats -->
-            <div class="stats-dashboard">
-                <div class="stats-card">
-                    <div class="stats-icon">🎧</div>
-                    <div class="stats-value">${stats.totalPlays}</div>
-                    <div class="stats-label">Bài đã nghe</div>
+                <div class="colorscape-orbs" id="colorscape-orbs" role="group" aria-label="Chọn màu cảm xúc">
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#BE0032')" data-color="#BE0032" data-va="0.52,0.67" aria-pressed="false" aria-label="Đỏ — Đam mê, Mãnh liệt" style="--orb-color:#BE0032"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Đỏ</span><span class="orb-emotion">Đam mê · Mãnh liệt</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#F38400')" data-color="#F38400" data-va="0.68,0.65" aria-pressed="false" aria-label="Cam — Vui tươi, Năng động" style="--orb-color:#F38400"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Cam</span><span class="orb-emotion">Vui tươi · Năng động</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#F3C300')" data-color="#F3C300" data-va="0.80,0.63" aria-pressed="false" aria-label="Vàng — Vui vẻ, Lạc quan" style="--orb-color:#F3C300"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Vàng</span><span class="orb-emotion">Vui vẻ · Lạc quan</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#FFB7C5')" data-color="#FFB7C5" data-va="0.74,0.62" aria-pressed="false" aria-label="Hồng — Ngọt ngào, Phấn khích" style="--orb-color:#FFB7C5"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Hồng</span><span class="orb-emotion">Ngọt ngào · Phấn khích</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#008856')" data-color="#008856" data-va="0.64,0.46" aria-pressed="false" aria-label="Xanh lá — Tươi mát, Cân bằng" style="--orb-color:#008856"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Xanh lá</span><span class="orb-emotion">Tươi mát · Cân bằng</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#3AB09E')" data-color="#3AB09E" data-va="0.67,0.35" aria-pressed="false" aria-label="Ngọc — Thư thái, Tươi mát" style="--orb-color:#3AB09E"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Ngọc</span><span class="orb-emotion">Thư thái · Tươi mát</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#0067A5')" data-color="#0067A5" data-va="0.60,0.46" aria-pressed="false" aria-label="Xanh dương — Phấn chấn, Sâu lắng" style="--orb-color:#0067A5"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Xanh</span><span class="orb-emotion">Phấn chấn · Sâu lắng</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#9C4F96')" data-color="#9C4F96" data-va="0.54,0.47" aria-pressed="false" aria-label="Tím — Trầm tư, Mãnh liệt" style="--orb-color:#9C4F96"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Tím</span><span class="orb-emotion">Trầm tư · Mãnh liệt</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#F2F3F4')" data-color="#F2F3F4" data-va="0.62,0.30" aria-pressed="false" aria-label="Trắng — Thanh thản, Tinh khôi" style="--orb-color:#F2F3F4"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Trắng</span><span class="orb-emotion">Thanh thản · Tinh khôi</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#848482')" data-color="#848482" data-va="0.48,0.37" aria-pressed="false" aria-label="Xám — U hoài, Trầm lắng" style="--orb-color:#848482"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Xám</span><span class="orb-emotion">U hoài · Trầm lắng</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#80461B')" data-color="#80461B" data-va="0.50,0.59" aria-pressed="false" aria-label="Nâu — Trầm mặc, Bất an" style="--orb-color:#80461B"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Nâu</span><span class="orb-emotion">Trầm mặc · Bất an</span></button>
+                    <button class="color-orb color-emotion-card-v2" onclick="pickColor('#222222')" data-color="#222222" data-va="0.37,0.44" aria-pressed="false" aria-label="Đen — U tối, Nặng nề" style="--orb-color:#222222"><span class="orb-glow" aria-hidden="true"></span><span class="orb-check" aria-hidden="true">✓</span><span class="orb-label">Đen</span><span class="orb-emotion">U tối · Nặng nề</span></button>
                 </div>
-                <div class="stats-card">
-                    <div class="stats-icon">🎤</div>
-                    <div class="stats-value">${stats.uniqueArtists}</div>
-                    <div class="stats-label">Nghệ sĩ</div>
-                </div>
-                <div class="stats-card">
-                    <div class="stats-icon">❤️</div>
-                    <div class="stats-value">${stats.likedCount}</div>
-                    <div class="stats-label">Yêu thích</div>
-                </div>
-                <div class="stats-card">
-                    <div class="stats-icon">📡</div>
-                    <div class="stats-value">${followed.length}</div>
-                    <div class="stats-label">Theo dõi</div>
-                </div>
-            </div>
 
-            ${stats.topArtists.length > 0 ? `
-            <div class="section-header" style="margin-top:28px">
-                <div class="section-title">🏆 Nghệ sĩ nghe nhiều nhất</div>
-            </div>
-            <div class="top-artists-bar">
-                ${stats.topArtists.slice(0, 5).map((a, i) => `
-                    <div class="top-artist-chip" onclick="router.navigate('artist/${encodeURIComponent(a.name)}')">
-                        <span class="top-artist-rank">#${i + 1}</span>
-                        <span class="top-artist-name">${esc(a.name)}</span>
-                        <span class="top-artist-plays">${a.count} lần</span>
-                    </div>
-                `).join('')}
-            </div>` : ''}
+                <!-- Selected dots + count (reuses ai-discovery state) -->
+                <div class="colorscape-selected" id="color-selected-dots"></div>
 
-            <div class="carousel-container">
-                <div class="section-header">
-                    <div><div class="section-title">Nổi bật</div><div class="section-subtitle">Những bài hát được yêu thích</div></div>
-
-                </div>
-                <div class="carousel" id="home-featured"></div>
+                <!-- Results -->
+                <div class="colorscape-results" id="color-results"></div>
             </div>
-
-            <div class="carousel-container">
-                <div class="section-header">
-                    <div><div class="section-title">Gợi ý cho bạn</div><div class="section-subtitle">Chọn ngẫu nhiên từ thư viện</div></div>
-                </div>
-                <div class="carousel" id="home-random"></div>
-            </div>
-
-            <div class="carousel-container">
-                <div class="section-header">
-                    <div><div class="section-title">Nghệ sĩ phổ biến</div></div>
-                    <a href="#/artists" class="section-link">Xem tất cả →</a>
-                </div>
-                <div class="carousel" id="home-artists" style="gap:14px"></div>
-            </div>
-
-            ${followed.length > 0 ? `
-            <div class="section-header" style="margin-top:28px">
-                <div class="section-title">Nghệ sĩ đang theo dõi</div>
-                <span class="section-badge">${followed.length}</span>
-            </div>
-            <div id="home-followed" class="followed-artists-grid"></div>
-            ` : ''}
         `;
 
-        const [featured, random, artists] = await Promise.all([
-            API.getFeatured(14).catch(() => ({ songs: [] })),
-            API.getRandomSongs(14).catch(() => ({ songs: [] })),
-            API.getArtists(20).catch(() => ({ artists: [] })),
-        ]);
-
-        // Featured
-        const featEl = document.getElementById('home-featured');
-        if (featEl) featEl.innerHTML = featured.songs.map(s => songCardHTML(s)).join('');
-
-        // Random
-        const randEl = document.getElementById('home-random');
-        if (randEl) randEl.innerHTML = random.songs.map(s => songCardHTML(s)).join('');
-
-        // Artists
-        const artEl = document.getElementById('home-artists');
-        if (artEl) {
-            artEl.innerHTML = artists.artists.slice(0, 14).map(a => `
-                <div class="artist-card" style="flex-shrink:0;width:140px" onclick="router.navigate('artist/${encodeURIComponent(a.name)}')">
-                    <div class="artist-avatar">
-                        ${a.has_artist_image ? `<img src="${safeUrl(a.artist_image_url)}" alt="">` : a.has_art ? `<img src="${safeUrl(a.art_url)}" alt="">` : '🎤'}
-                    </div>
-                    <div class="artist-name">${esc(a.name)}</div>
-                    <div class="artist-count">${a.song_count} bài</div>
-                </div>
-            `).join('');
+        // Enter the 3D emotion-space mode (hides chrome, activates orbs)
+        if (typeof window.immersive_enterColorspace === 'function') {
+            window.immersive_enterColorspace();
+        } else {
+            document.body.classList.add('page-colorscape');
         }
 
-        // Followed artists
-        if (followed.length > 0) {
-            const followedEl = document.getElementById('home-followed');
-            if (followedEl) {
-                // Build lookup from already-loaded artists data
-                const artistLookup = {};
-                (artists.artists || []).forEach(a => {
-                    artistLookup[a.name.toLowerCase()] = a;
-                });
-                // Fetch full list if some followed artists not in top 20
-                const missing = followed.filter(n => !artistLookup[n.toLowerCase()]);
-                if (missing.length > 0) {
-                    try {
-                        const all = await API.getArtists(300);
-                        (all.artists || []).forEach(a => {
-                            artistLookup[a.name.toLowerCase()] = a;
-                        });
-                    } catch(e) {}
-                }
-
-                const artistCards = followed.map(artistName => {
-                    const a = artistLookup[artistName.toLowerCase()];
-                    const imgHtml = a?.has_artist_image ? `<img src="${safeUrl(a.artist_image_url)}" alt="">` :
-                                    a?.has_art ? `<img src="${safeUrl(a.art_url)}" alt="">` : '🎤';
-                    const songCount = a?.song_count || 0;
-                    return `
-                        <div class="followed-artist-card" onclick="router.navigate('artist/${encodeURIComponent(artistName)}')">
-                            <div class="followed-artist-avatar">
-                                ${imgHtml}
-                            </div>
-                            <div class="followed-artist-info">
-                                <div class="followed-artist-name">${esc(artistName)}</div>
-                                <div class="followed-artist-meta">${songCount} bài hát</div>
-                            </div>
-                            <div class="followed-artist-actions">
-                                <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); playArtist('${encodeURIComponent(artistName)}')" title="Phát">▶</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                followedEl.innerHTML = artistCards.join('');
-            }
-        }
-
-        this._checkAudio(featured.songs);
+        // Reset color-picker selection state (shared with ai-discovery.js)
+        if (typeof initColorPicker === 'function') initColorPicker();
     },
 
     // ── ALL ARTISTS ──────────────────────────────────────────────────────

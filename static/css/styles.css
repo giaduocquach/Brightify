@@ -5,13 +5,13 @@
 
 /* ── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
-    --bg-base: #060612;
-    --bg-primary: #080818;
-    --bg-secondary: #0e0e22;
-    --bg-tertiary: #15152e;
-    --bg-card: #111128;
-    --bg-card-hover: #1a1a3a;
-    --bg-elevated: #1c1c38;
+    --bg-base: #050410;
+    --bg-primary: #07061a;
+    --bg-secondary: #0c0a22;
+    --bg-tertiary: #14122e;
+    --bg-card: #100e28;
+    --bg-card-hover: #191638;
+    --bg-elevated: #1b1838;
 
     --text-primary: #f0eef8;
     --text-secondary: #9896b8;
@@ -20,8 +20,8 @@
     --accent-primary: #a78bfa;
     --accent-secondary: #67e8f9;
     --accent-light: #c4b5fd;
-    --accent-gradient: linear-gradient(135deg, #a78bfa, #67e8f9);
-    --accent-gradient-h: linear-gradient(90deg, #a78bfa, #67e8f9);
+    --accent-gradient: linear-gradient(135deg, #a78bfa, #67e8f9, #34d399);
+    --accent-gradient-h: linear-gradient(90deg, #a78bfa, #67e8f9, #34d399);
     --accent-gradient-subtle: linear-gradient(135deg, rgba(167,139,250,0.15), rgba(103,232,249,0.15));
     --accent-glow: rgba(167, 139, 250, 0.12);
     --accent-glow-strong: rgba(167, 139, 250, 0.25);
