@@ -380,14 +380,27 @@ def main() -> int:
           f"(target |r|≤0.20; v5d baseline = 0.313)  "
           f"{'✓' if va_ortho_pass else '✗'}")
 
+    # Prefer the CLEAN librosa-downbeat BPM (data/clean_bpm.json) over the degenerate
+    # Essentia-44.1kHz `tempo` column (ρ(clean,essentia)=0.55; essentia is noisy). V32:
+    # the gate was partly measuring a bad tempo column — measure against clean BPM.
     rho_a_tempo = None
-    tempo_col = next((c for c in ['tempo', 'bpm'] if c in rec.df.columns), None)
-    if tempo_col:
-        tempo_arr = rec.df[tempo_col].fillna(rec.df[tempo_col].median()).values.astype(float)
-        rho_a_tempo_val, _ = ss.spearmanr(a_arr, tempo_arr)
+    tempo_arr = None
+    if os.path.exists("data/clean_bpm.json") and "track_id" in rec.df.columns:
+        _cb = json.load(open("data/clean_bpm.json"))
+        _tids = rec.df["track_id"].astype(str).values
+        tempo_arr = np.array([_cb.get(t, np.nan) for t in _tids], float)
+        if np.isnan(tempo_arr).all():
+            tempo_arr = None
+    if tempo_arr is None:
+        tempo_col = next((c for c in ['tempo', 'bpm'] if c in rec.df.columns), None)
+        if tempo_col:
+            tempo_arr = rec.df[tempo_col].fillna(rec.df[tempo_col].median()).values.astype(float)
+    if tempo_arr is not None:
+        _m = ~np.isnan(tempo_arr)
+        rho_a_tempo_val, _ = ss.spearmanr(a_arr[_m], tempo_arr[_m])
         rho_a_tempo = round(float(rho_a_tempo_val), 4)
         a_tempo_pass = rho_a_tempo > 0.20
-        print(f"  ρ(A, tempo) = {rho_a_tempo:+.4f}  "
+        print(f"  ρ(A, tempo[clean BPM]) = {rho_a_tempo:+.4f}  "
               f"(target >0.20)  {'✓' if a_tempo_pass else '✗'}")
     else:
         print(f"  ρ(A, tempo) = N/A  (no tempo column)")

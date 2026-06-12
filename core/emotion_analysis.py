@@ -273,44 +273,53 @@ class VietnameseEmotionLexicon:
             'đừng', 'hết', 'không hề', 'nào có', 'đâu có',
         ]
 
+        # Adversative conjunctions — the emotion AFTER them is the resolved one
+        # ("buồn NHƯNG hạnh phúc" → hạnh phúc dominates). Used for recency weighting.
+        self.adversatives = ['nhưng', 'tuy nhiên', 'thế nhưng', 'song', ' mà ', ' lại ']
+
+        # Valence polarity of each category — used to redirect a NEGATED emotion to
+        # its opposite pole ("không buồn" → positive, not just dampened sad).
+        self._pos_emotions = {'happy', 'love', 'excited', 'hope', 'peaceful'}
+        self._neg_emotions = {'sad', 'angry', 'melancholic', 'longing', 'disgust', 'fear'}
+
     def analyze_lyrics(self, lyrics: str) -> Dict[str, float]:
 
         if not lyrics or pd.isna(lyrics):
             return {emotion: 0.0 for emotion in self.emotion_words.keys()}
 
         lyrics_lower = lyrics.lower()
-        words = re.findall(r'\w+', lyrics_lower)
 
         emotion_scores = defaultdict(float)
 
-        # Count emotion words
+        # Per-OCCURRENCE scoring (fixes the old `count *= -0.8`, which produced negative
+        # scores that corrupted normalisation). For each match we look at a short
+        # preceding window for negation/intensifier, and apply adversative recency.
         for emotion, word_list in self.emotion_words.items():
             for word in word_list:
-                # Multi-word phrases
-                if ' ' in word:
-                    count = lyrics_lower.count(word)
-                else:
-                    count = words.count(word)
+                if word not in lyrics_lower:      # fast guard — skip regex when absent
+                    continue
+                for m in re.finditer(r'(?<!\w)' + re.escape(word) + r'(?!\w)', lyrics_lower):
+                    start = m.start()
+                    # preceding context, confined to the SAME clause (don't let a negation
+                    # from a prior clause leak across a comma/period: "không vui, buồn").
+                    window = re.split(r'[,.;:!?\n]', lyrics_lower[max(0, start - 24):start])[-1]
+                    w = 1.0
+                    if any(intn in window for intn in self.intensifiers):
+                        w *= 1.5
+                    # Adversative recency: emotion after 'nhưng/mà/...' is the resolved one.
+                    if any(adv in lyrics_lower[max(0, start - 40):start] for adv in self.adversatives):
+                        w *= 1.4
+                    if any(neg in window for neg in self.negations):
+                        # Negation flips valence to the opposite pole (dampened), instead of
+                        # adding a negative count: "không buồn" → positive, "không vui" → sad.
+                        tgt = self._negate_target(emotion)
+                        if tgt is not None:
+                            emotion_scores[tgt] += 0.7 * w
+                        # neutral emotions (nostalgia/surprise) negated → dropped
+                    else:
+                        emotion_scores[emotion] += w
 
-                if count > 0:
-                    # Check for intensifiers or negations
-                    contexts = re.finditer(r'\b\w+\s+' + word + r'\b', lyrics_lower)
-                    for match in contexts:
-                        context = match.group()
-
-                        # Intensifier increases weight
-                        if any(intensifier in context for intensifier in self.intensifiers):
-                            count *= 1.5
-
-                        # Negation reverses/dampens emotion
-                        if any(neg in context for neg in self.negations):
-                            # Dampening: reduce by 80% instead of additive reversal
-                            # "không vui" → reduce 'happy' rather than boost 'sad'
-                            count *= -0.8
-
-                    emotion_scores[emotion] += count
-
-        # Normalize scores
+        # Normalize scores (all non-negative now)
         total = sum(emotion_scores.values())
         if total > 0:
             emotion_scores = {k: v / total for k, v in emotion_scores.items()}
@@ -318,6 +327,14 @@ class VietnameseEmotionLexicon:
             emotion_scores = {emotion: 0.0 for emotion in self.emotion_words.keys()}
 
         return dict(emotion_scores)
+
+    def _negate_target(self, emotion: str) -> 'str | None':
+        """Opposite-polarity category a negated emotion should count toward."""
+        if emotion in self._pos_emotions:
+            return 'sad'
+        if emotion in self._neg_emotions:
+            return 'happy'
+        return None
 
 
 class EmotionClassifier:
