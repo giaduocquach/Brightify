@@ -294,6 +294,16 @@ COLOR_AROUSAL_INTERACTION = True
 # Brings arousal to the same research-grounding valence has (which fits ICEAS at r=0.97).
 COLOR_AROUSAL_ICEAS_FIT = True
 
+# V34 (2026-06-12): Valdez-Mehrabian 1994 large-sample arousal equation (0.60·sat −
+# 0.31·bright + 0.10·redness, calibrated). DEFAULT OFF after evaluation: the picker uses
+# only the 12 fixed ICEAS colours, and for THOSE the V33 ICEAS-fit is MORE accurate
+# (mae vs ICEAS 0.053 < VM 0.082; colour TE 0.0216 < VM 0.0229; ICEAS-arousal r 0.78 >
+# VM 0.58). VM's advantage — saturation-monotonic arousal for ALL hues — only helps
+# ARBITRARY colours between the anchors, which the product never serves. Kept as a
+# documented, ready alternative if the picker ever offers free colour choice.
+# Evidence: tools/color_va_model_compare.py. Valence stays Oklab (r=0.97).
+COLOR_VA_VALDEZ = False
+
 # A3 (V27): Calibration reranking — boost underrepresented V-A quadrant after MMR.
 # gate FAILED 2026-06-10: TE 0.0466→0.0570, ordering fail; reverted + superseded by C1.
 COLOR_CALIBRATION_RERANK = False

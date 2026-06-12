@@ -328,14 +328,19 @@ class AdvancedColorMapper:
         achromatic = s01 < 0.12
         redness = 0.5 if achromatic else (1 + np.cos(np.deg2rad(h))) / 2
 
-        # AROUSAL — V33: ridge-fit to the ICEAS/Jonauskaite human arousal norms
-        # (tools/fit_arousal_oklab.py, LOO-CV) on the literature determinants
-        # [redness, saturation, darkness]. Replaces the UN-fit Whiteford weights, which
-        # over-spread arousal (warm/saturated too high — pink 0.80 vs research 0.48; light/
-        # dark too low) → mean|err| vs ICEAS 0.154→0.078. Same research-grounding valence
-        # already has (Oklab ridge, r=0.97). One formula for chromatic + achromatic.
-        from config import COLOR_AROUSAL_INTERACTION, COLOR_AROUSAL_ICEAS_FIT
-        if COLOR_AROUSAL_ICEAS_FIT:
+        # AROUSAL — V34: Valdez-Mehrabian 1994 (~76 Munsell colours; J.Exp.Psych:General)
+        # arousal = 0.60·saturation − 0.31·brightness, + a small Wilms-Oberfeld 2018 hue
+        # term (arousal rises blue→green→red). The prior V33 ICEAS-12 fit under-weighted
+        # saturation (0.087 vs the de-confounded 0.60) — a small-sample collinearity
+        # artifact: it made arousal rise with saturation ONLY for red, staying flat for
+        # saturated green/blue (wrong). VM is saturation-dominant for ALL hues and is the
+        # large-sample, factorial-design authority. Affine-calibrated to the ICEAS scale
+        # (tools/color_va_model_compare.py): a=0.2450, b=0.4274. w_hue=0.10.
+        from config import COLOR_AROUSAL_INTERACTION, COLOR_AROUSAL_ICEAS_FIT, COLOR_VA_VALDEZ
+        if COLOR_VA_VALDEZ:
+            arousal = float(np.clip(
+                0.2450 * (0.60 * s01 - 0.31 * l01 + 0.10 * redness) + 0.4274, 0, 1))
+        elif COLOR_AROUSAL_ICEAS_FIT:
             arousal = float(np.clip(0.2258 + 0.1719 * redness + 0.0867 * s01
                                     + 0.2206 * (1 - l01), 0, 1))
         elif achromatic:

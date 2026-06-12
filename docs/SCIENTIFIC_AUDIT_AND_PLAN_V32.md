@@ -246,3 +246,17 @@ valence ← v6e lyrics-dominant ensemble (negation-fixed lexicon + VN-sentiment 
 **Result:** arousal mean|err| vs ICEAS **0.154→0.053** (≈ valence's 0.051); Hồng 0.80→0.51 (research 0.48), Trắng 0.17→0.33 (0.32), warm colours pulled down to the norms. Colour gate: **TE 0.0227→0.0216** (better targeting), valence L1 r=0.969, arousal L1 r=0.783, journey passes, beats baselines. Frontend `colors.ts` regenerated; Hồng label "Phấn khích"→"Dịu dàng" to match its corrected mid-arousal.
 
 **Honest caveat:** n=12 ICEAS limits fit precision (Brown remains a +0.18 outlier — dark-warm); arousal now follows research even where it diverges from naive intuition (e.g. ICEAS rates **black 0.58 = moderately arousing/heavy**, not calm-slow). Colour→V-A is now research-grounded on **both** axes.
+
+---
+
+# V34 (2026-06-12) — evaluated Valdez-Mehrabian large-sample colour→V-A; KEPT V33
+
+**Prompt:** research more so colour→V-A is complete/accurate for ALL colours (n=12 limit).
+
+**Research:** the foundational large-sample equations — **Valdez & Mehrabian 1994** (~76 Munsell colours): Arousal = 0.60·Saturation − 0.31·Brightness, Pleasure = 0.69·B + 0.22·S; **Wilms-Oberfeld 2018** (30 colours): + secondary hue (arousal blue→green→red). Both agree **saturation is the dominant arousal driver** — whereas the V33 ICEAS-12 fit gave saturation only 0.087 (a **collinearity artifact**: 12 confounded colours can't isolate saturation).
+
+**Test (`tools/color_va_model_compare.py`):** a saturation-sweep grid showed V33 arousal rises with saturation ONLY for red, staying flat for saturated **green/blue** (wrong); VM rises correctly for all hues. So VM is structurally right for the *full colour space*.
+
+**BUT — decision: KEEP V33, VM default OFF.** The picker serves only the **12 fixed ICEAS colours**, and for those V33 is MORE accurate: mae vs ICEAS **0.053 < VM 0.082**, colour **TE 0.0216 < VM 0.0229**, ICEAS-arousal **r 0.78 > VM 0.58**. VM's saturation-fix only helps *arbitrary* colours between anchors — which the product never serves. Adopting VM would regress the real product for a moot benefit. VM is kept as a gated, documented alternative (`COLOR_VA_VALDEZ`) if free colour choice is ever added.
+
+**Net:** confirmed the shipped V33 colour→V-A is the more accurate choice for the 12 colours in use, by triangulating against the largest published colour-emotion study. No behaviour change. Honest caveat unchanged: ICEAS/VM are Western-leaning; n=12 caps anchor precision (Brown outlier).
