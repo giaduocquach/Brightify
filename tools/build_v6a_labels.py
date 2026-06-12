@@ -111,10 +111,15 @@ def build(w_mert: float = W_MERT_DEFAULT, out_path: str = OUT_DEFAULT,
             arousal = float(mert_a)
             n_mert_only += 1
         else:
-            arousal = w_mert * float(mert_a) + (1 - w_mert) * float(nrc_a)
+            # NRC-VAD lexicon is bipolar [-1,1] (neutral=0); MERT arousal is [0,1]
+            # (neutral=0.5). Rescale NRC to [0,1] BEFORE blending so both signals
+            # share a scale — else the 0.20 lyrics term drags arousal down ~0.12 and
+            # collapses the catalog's high-arousal region (recommend-by-color bug).
+            nrc_a01 = (float(nrc_a) + 1.0) / 2.0
+            arousal = w_mert * float(mert_a) + (1 - w_mert) * nrc_a01
             n_blended += 1
 
-        # Normalize: NRC-VAD in [0,1], MERT already [0,1]
+        # Both terms now in [0,1]; clip guards float edges only.
         arousal = round(float(np.clip(arousal, 0.0, 1.0)), 4)
 
         out[tid] = {

@@ -164,7 +164,11 @@ ENABLE_COVER_FILTER = os.environ.get("ENABLE_COVER_FILTER", "True") == "True"
 COVER_INDEX_FILE    = str(DATA_DIR / "cover_index.json")
 
 # 8-signal weights (ENABLE_MERT=True — production path).
-# Σ = 1.00. Breakdown: MERT 75% (audio), lyrics 15% (genre cue), V-A 10% (mood).
+# Σ = 1.00. Breakdown: MERT 82% (audio), V-A 12% (mood), lyrics 6% (genre cue).
+# VALIDATED (V32, 2026-06-12): re-checked on an INDEPENDENT GPT musical-similarity GT
+# (gpt-4o-mini, 50 seeds — stronger than the prior qwen3 judge, acc<0.70). SLSQP optimum
+# = [0.826/0.119/0.056] ≈ current; ΔNDCG@10=+0.008 CI95=[−0.0002,+0.018] (includes 0)
+# → not significant → weights kept, confirmed near-optimal. See docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md.
 RECO_SONG_WEIGHTS_MERT = {
     # Sensitivity analysis + 5-fold CV + held-out validation (2026-06-09):
     # Decreasing lyrics (0.15→0.06) reduces noise from VN-SBERT at 15% weight.
@@ -286,7 +290,19 @@ COLOR_CALIBRATION_ALPHA  = 0.3
 # (Jonauskaite absolute scale) and catalog V-A (MERT-compressed, A max ~0.72).
 # Linear rescale: V_cal = V_p5 + (V_p95-V_p5)*V_raw, same for A.
 # Percentiles computed from song_va at startup. Preserves ranking; fixes OOD queries.
+# NOTE: superseded by COLOR_VA_RANK_MATCH (V31). Linear calibration squashed all 12
+# colours into a 0.29×0.31 V-A box (< RBF kernel width) → colours indistinguishable.
 COLOR_VA_CATALOG_CALIBRATE = True
+
+# V31 (2026-06-12): Quantile/rank-space matching — fixes "every colour returns the
+# same songs". Root cause: C1 linear calibration compressed the 12-colour V-A spread
+# below the RBF bandwidth (esp. arousal: catalog p5-p95=0.42 forced colour range
+# 0.74→0.31). Fix: match in EMPIRICAL-CDF space. Songs → quantile ranks ∈[0,1];
+# colour's RAW Oklab V-A (uncalibrated, absolute Jonauskaite scale) is used directly
+# as the target quantile. This preserves the full colour spread and auto-resolves the
+# scale mismatch C1 tried to patch. When True, calibration is NOT injected into the
+# colour mapper (hsl_to_va returns raw [0,1]); display V-A (song_va) is unaffected.
+COLOR_VA_RANK_MATCH = True
 
 # P2 (V29): V-A space MMR for intra-list diversity improvement.
 # Applies a second MMR pass using V-A embeddings after _fast_rank.
@@ -474,7 +490,18 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # Built by tools/mert_arousal_probe.py (fuse). Restores the audio half that was lost
 # when degenerate Essentia features (project_arousal_miscalibration) were bypassed.
 # v3 (LLM-only) and v2 (lexicon+rank-audio) kept as fallback files.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6b.json")  # V6b: A=80%MERT+20%NRC-VAD; V=20%MERT+70%NRC-VAD+10%EmoBank — no LLM; r(V,A)=0.140
+# V6d (V32, 2026-06-12): VALENCE re-tuned to agree with an independent GPT V-A reference
+#   (gpt-4o-mini, ICC test-retest 0.99, cross-model vs gpt-4o 0.93) via 5-fold CV →
+#   valence = 0.7·rank(VN-lexicon) + 0.3·rank(MERT-valence). Serving stays LLM-FREE
+#   (GPT used only offline to pick the blend, then frozen). VALIDATED: valence ρ vs
+#   GPT 0.479→0.513 AND vs Gemini-v5d (independent, NOT the tuning target) 0.468→0.579
+#   — improvement generalizes across two independent references (GPT↔Gemini ρ=0.838).
+#   AROUSAL inherited from v6a (MERT-acoustic) UNCHANGED — GPT is lyrics-only, a weak
+#   arousal reference, so arousal is NOT pulled toward it (kept acoustic, the reliable axis).
+#   r(V,A)=0.49 — NOT a bug: GPT(0.515)+Gemini(0.313) corroborate real positive V-A
+#   correlation in this corpus; v6c's 0.18 was an orthogonalization artifact. TE=0.0236
+#   (≈ v6c 0.0238). See docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md.
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6d.json")  # VALIDATED: agrees with GPT+Gemini independently
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================

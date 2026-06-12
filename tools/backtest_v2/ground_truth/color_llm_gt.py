@@ -31,8 +31,14 @@ import requests
 
 MODEL = "qwen3:8b"
 OLLAMA = "http://localhost:11434/api/generate"
+OPENAI_MODEL = "gpt-4o-mini"
+# Judge backend: qwen3 (default, Ollama) | gemini | openai. Set BRIGHTIFY_COLOR_JUDGE=openai.
+JUDGE_BACKEND = os.environ.get("BRIGHTIFY_COLOR_JUDGE", "qwen3").strip().lower()
+_OPENAI_MIN_INTERVAL = float(os.environ.get("OPENAI_MIN_INTERVAL", "0.2"))
+_OPENAI_STATE = {"last": 0.0, "client": None}
 GT_DIR = "var/runtime/backtest/ground_truth"
-GT_FILE = os.path.join(GT_DIR, "color_llm_gt_v1.json")
+# GT filename overridable so a fresh judge writes its own file (no resume-skip).
+GT_FILE = os.path.join(GT_DIR, os.environ.get("BRIGHTIFY_COLOR_GT_FILE", "color_llm_gt_v1.json"))
 
 REL_THRESHOLD = 2          # rating >= 2 (of 0..3) => relevant
 DEFAULT_POOL_PROD = 20     # top-N from production recommend_by_colors
@@ -63,6 +69,54 @@ Lời:
 
 
 def _judge(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
+    """Relevance judge dispatcher (0-3). Backend via BRIGHTIFY_COLOR_JUDGE env.
+    Both the GT build loop and similar_discriminant_metrics import this, so the
+    env choice routes all consumers consistently."""
+    if JUDGE_BACKEND == "openai":
+        return _judge_openai(mood_vi, title, tags, lyrics)
+    if JUDGE_BACKEND == "gemini":
+        return _judge_gemini(mood_vi, title, tags, lyrics)
+    return _judge_qwen3(mood_vi, title, tags, lyrics)
+
+
+def _judge_openai(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
+    """GPT-4o-mini judge (OpenAI). JSON mode, temp 0, 429-retry with backoff."""
+    import re, time as _t
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.environ.get("OpenAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    if _OPENAI_STATE["client"] is None:
+        from openai import OpenAI
+        _OPENAI_STATE["client"] = OpenAI(api_key=api_key)
+    client = _OPENAI_STATE["client"]
+    prompt = (PROMPT + "\nTrả về JSON duy nhất.").format(
+        mood_vi=mood_vi, title=title or "",
+        tags=tags or "(không rõ)", lyrics=(lyrics or "")[:1200])
+    for attempt in range(3):
+        wait = _OPENAI_MIN_INTERVAL - (_t.time() - _OPENAI_STATE["last"])
+        if wait > 0:
+            _t.sleep(wait)
+        _OPENAI_STATE["last"] = _t.time()
+        try:
+            resp = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0, max_tokens=20,
+                response_format={"type": "json_object"},
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            m = re.search(r'"score"\s*:\s*([0-3])', text) or re.search(r'\b([0-3])\b', text)
+            return int(m.group(1)) if m else None
+        except Exception as e:
+            if ("429" in str(e) or "rate" in str(e).lower()) and attempt < 2:
+                _t.sleep(5 * (attempt + 1)); continue
+            return None
+    return None
+
+
+def _judge_qwen3(mood_vi: str, title: str, tags: str, lyrics: str) -> int | None:
     """Qwen3 judge (Ollama, offline). Returns 0-3 relevance score.
     /no_think prefix disables Qwen3 reasoning chain (saves tokens, avoids timeout).
     num_predict=256 enough for {"score": N} JSON.

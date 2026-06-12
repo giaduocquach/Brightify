@@ -51,7 +51,10 @@ _GEMINI_MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "4.2"))
 _OPENAI_MIN_INTERVAL = float(os.environ.get("OPENAI_MIN_INTERVAL", "2.0"))
 
 GT_DIR  = "var/runtime/backtest/ground_truth"
-GT_FILE = os.path.join(GT_DIR, "similar_musical_gt_v1.json")
+# GT filename overridable so a fresh judge (e.g. GPT) writes its own file instead of
+# resume-skipping an existing judge's cached scores. Default unchanged.
+GT_FILE = os.path.join(GT_DIR, os.environ.get("BRIGHTIFY_MUSICAL_GT_FILE",
+                                              "similar_musical_gt_v1.json"))
 
 REL_THRESHOLD     = 2     # score >= 2 (of 0..3) => musically relevant
 DEFAULT_N_SEEDS   = 20

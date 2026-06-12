@@ -120,6 +120,11 @@ class MusicRecommender:
         if self.colors is not None and 'fused_emotion' in self.df.columns:
             self._recompute_song_va()
             self._compute_va_calibration()
+            # Sync v6c song_va back to df so _fast_rank / _build_result_df return values
+            # that match the recommendation scoring signal. audio_matrix / tonal_matrix
+            # are already built above — this does not affect those pre-computed arrays.
+            self.df['valence'] = self.song_va[:, 0]
+            self.df['arousal'] = self.song_va[:, 1]
 
         # Re-derive mood_quadrant from the trusted emotion labels (the CSV's
         # mood_quadrant was built from the broken raw-arousal column + a fixed 0.5
@@ -389,14 +394,31 @@ class MusicRecommender:
             self.song_va = np.clip(fused_va, 0.0, 1.0)
 
     def _compute_va_calibration(self) -> None:
-        """C1 (V28): Compute catalog V-A percentiles and inject into color mapper.
+        """Prepare the colour→song V-A matching space.
 
-        Color model predicts V-A on Jonauskaite absolute [0,1] scale; catalog
-        song_va is MERT-compressed (A tops out ~0.72). Linear rescale maps color
-        predictions into catalog support: V_cal = V_p5 + (V_p95-V_p5)*V_raw.
-        Injected into hsl_to_va() so ALL callers (incl. color_eval_rigor.py) see
-        consistent, catalog-calibrated output.
+        V31 (COLOR_VA_RANK_MATCH): build the catalog's empirical-CDF ranks so the
+        colour scorer matches in quantile space (see config note). When rank-match
+        is on we do NOT inject linear calibration — hsl_to_va keeps returning the
+        raw Oklab V-A, which is used directly as the target quantile. self.song_va
+        (the real per-song mood values) is left untouched for display/atmosphere.
+
+        C1 (V28, legacy fallback): when rank-match is off, compute catalog V-A
+        percentiles and inject a linear rescale into the colour mapper so its
+        Jonauskaite-absolute predictions land in the MERT-compressed catalog support.
         """
+        # song_va_match is what the colour scorer / journey compare against.
+        if COLOR_VA_RANK_MATCH:
+            from scipy.stats import rankdata
+            denom = max(self.n_songs - 1, 1)
+            rv = (rankdata(self.song_va[:, 0]) - 1) / denom
+            ra = (rankdata(self.song_va[:, 1]) - 1) / denom
+            self.song_va_match = np.column_stack([rv, ra]).astype(float)
+            # Ensure no stale linear calibration leaks into hsl_to_va.
+            if hasattr(self.color_mapper, 'set_va_calibration'):
+                self.color_mapper._va_cal = None
+            return
+
+        self.song_va_match = self.song_va
         if not COLOR_VA_CATALOG_CALIBRATE:
             return
         cal = {
@@ -607,7 +629,7 @@ class MusicRecommender:
         # P3 (V29): Adaptive sigma for sparse V-A regions (white TE=0.054).
         if COLOR_ADAPTIVE_SIGMA and len(per_color_va) == 1:
             qva = np.asarray(per_color_va[0], float)
-            nearby = int(np.sum(np.sum((self.song_va - qva) ** 2, axis=1) < 0.05 ** 2))
+            nearby = int(np.sum(np.sum((getattr(self, 'song_va_match', self.song_va) - qva) ** 2, axis=1) < 0.05 ** 2))
             if nearby < 50:
                 _sigma_v = COLOR_SCORE_VA_SIGMA_V * 1.8
                 _sigma_a = COLOR_SCORE_VA_SIGMA_A * 1.8
@@ -615,9 +637,14 @@ class MusicRecommender:
                 _sigma_v = COLOR_SCORE_VA_SIGMA_V * 1.3
                 _sigma_a = COLOR_SCORE_VA_SIGMA_A * 1.3
 
+        # V31: match in quantile space (song_va_match = catalog CDF ranks when
+        # COLOR_VA_RANK_MATCH; cva is the colour's raw V-A used as target quantile).
+        # Falls back to song_va when rank-match is off.
+        match_va = getattr(self, 'song_va_match', self.song_va)
+
         def _color_score(cva, evec, lyr):
-            dv = self.song_va[:, 0] - cva[0]
-            da = self.song_va[:, 1] - cva[1]
+            dv = match_va[:, 0] - cva[0]
+            da = match_va[:, 1] - cva[1]
             va_s = np.exp(-0.5 * ((dv / _sigma_v) ** 2 + (da / _sigma_a) ** 2))
             emo_s = np.full(self.n_songs, 0.5)
             lyr_s = np.full(self.n_songs, 0.5)
@@ -636,9 +663,9 @@ class MusicRecommender:
             if COLOR_CALIBRATION_RERANK:
                 qv, qa = float(per_color_va[0][0]), float(per_color_va[0][1])
                 in_target = (
-                    (self.song_va[:, 0] >= 0.5) == (qv >= 0.5)
+                    (match_va[:, 0] >= 0.5) == (qv >= 0.5)
                 ) & (
-                    (self.song_va[:, 1] >= 0.5) == (qa >= 0.5)
+                    (match_va[:, 1] >= 0.5) == (qa >= 0.5)
                 )
                 alpha = COLOR_CALIBRATION_ALPHA
                 final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
@@ -651,7 +678,7 @@ class MusicRecommender:
                 lam = COLOR_MMR_VA_LAMBDA
                 n_cand = min(top_k * 5, self.n_songs)
                 top_cands = np.argsort(final_scores)[::-1][:n_cand]
-                va_cands = self.song_va[top_cands]       # (n_cand, 2)
+                va_cands = match_va[top_cands]           # (n_cand, 2) — match space
                 rel = final_scores[top_cands]             # (n_cand,)
                 selected_local, remaining = [], list(range(n_cand))
                 for _ in range(top_k):
@@ -705,17 +732,18 @@ class MusicRecommender:
                 p1 = np.asarray(per_color_va[0], float)
                 p2 = np.asarray(per_color_va[1], float)
                 whys = []
+                match_va = getattr(self, 'song_va_match', self.song_va)
                 for oi in res['original_index'].tolist():
                     oi = int(oi)
-                    sv = self.song_va[oi]
-                    # nearest endpoint
+                    sv = match_va[oi]
+                    # nearest endpoint (in match space)
                     if np.linalg.norm(sv - p1) <= np.linalg.norm(sv - p2):
                         cva, hexc = p1, color_hexes[0]
                     else:
                         cva, hexc = p2, color_hexes[1] if len(color_hexes) > 1 else color_hexes[0]
                     va_s_why = np.exp(-0.5 * (
-                        ((self.song_va[:, 0] - cva[0]) / _sigma_v) ** 2 +
-                        ((self.song_va[:, 1] - cva[1]) / _sigma_a) ** 2))
+                        ((match_va[:, 0] - cva[0]) / _sigma_v) ** 2 +
+                        ((match_va[:, 1] - cva[1]) / _sigma_a) ** 2))
                     whys.append(self._build_color_why(
                         [oi], cva, va_s_why, np.full(self.n_songs, 0.5),
                         np.full(self.n_songs, 0.5), hexc)[0])
@@ -785,9 +813,10 @@ class MusicRecommender:
             ts = np.linspace(0.0, 1.0, top_k)   # fallback
         waypoints = p1[None, :] + ts[:, None] * (p2 - p1)[None, :]  # (K, 2)
 
+        match_va = getattr(self, 'song_va_match', self.song_va)
         for wp in waypoints:
-            dv = self.song_va[:, 0] - wp[0]
-            da = self.song_va[:, 1] - wp[1]
+            dv = match_va[:, 0] - wp[0]
+            da = match_va[:, 1] - wp[1]
             scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
             
             scores[excluded] = -1.0

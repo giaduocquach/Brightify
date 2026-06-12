@@ -240,6 +240,12 @@ def main() -> int:
 
     n        = rec.n_songs
     song_va  = rec.song_va          # (n, 2)
+    # V31: under rank-space matching the recommender ranks in catalog-CDF space and the
+    # colour target is a raw quantile. Measure TE in that SAME space — comparing real
+    # song_va to a raw-quantile colour_va mixes coordinate systems and inflates TE.
+    if getattr(config, 'COLOR_VA_RANK_MATCH', False) and hasattr(rec, 'song_va_match'):
+        song_va = rec.song_va_match
+        print("[V31] measuring TE in quantile/rank match space")
     sigma_v  = config.COLOR_SCORE_VA_SIGMA_V   # 0.20
     sigma_a  = config.COLOR_SCORE_VA_SIGMA_A   # 0.14
 

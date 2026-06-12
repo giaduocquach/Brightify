@@ -87,11 +87,14 @@ def _naive_color_score(rec, hex_c: str, top_k: int) -> list[int]:
 
 
 def _va_only_score(rec, hex_c: str, top_k: int) -> list[int]:
-    from config import COLOR_SCORE_VA_SIGMA
+    # Isotropic V-A baseline: single sigma (mean of the heteroscedastic axes, which
+    # replaced the old scalar COLOR_SCORE_VA_SIGMA during the V19/F3 σ_V≠σ_A split).
+    from config import COLOR_SCORE_VA_SIGMA_V, COLOR_SCORE_VA_SIGMA_A
+    sigma = 0.5 * (COLOR_SCORE_VA_SIGMA_V + COLOR_SCORE_VA_SIGMA_A)
     cv, ca = rec.color_mapper.hsl_to_va(hex_c)
     cva = np.array([cv, ca])
     d   = np.sqrt(np.sum((rec.song_va - cva) ** 2, axis=1))
-    scores = np.exp(-(d ** 2) / (2 * COLOR_SCORE_VA_SIGMA ** 2))
+    scores = np.exp(-(d ** 2) / (2 * sigma ** 2))
     return np.argsort(scores)[::-1][:top_k].tolist()
 
 
