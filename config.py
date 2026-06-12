@@ -129,7 +129,9 @@ LIGHTNESS_RANGE = (20, 80)     # Mode & Acousticness → Lightness
 DEFAULT_WEIGHTS = [0.40, 0.40, 0.20]
 
 # Task-specific weights
-WEIGHTS_COLOR_QUERY = [0.30, 0.35, 0.35]  # User selects color
+# NOTE: recommend-by-color is PURE V-A (rank-space heteroscedastic RBF; F2/F3 ablation
+# removed lyric/emotion signals as non-informative) → it has NO multi-signal weights.
+# The old WEIGHTS_COLOR_QUERY=[0.30,0.35,0.35] was a never-used display artifact, removed.
 WEIGHTS_MOOD_QUERY = [0.50, 0.30, 0.20]   # User selects mood
 WEIGHTS_SONG_QUERY = [0.40, 0.40, 0.20]   # Similar song search
 WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search

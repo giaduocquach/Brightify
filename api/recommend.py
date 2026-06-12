@@ -54,7 +54,8 @@ def init(recommender):
 class ColorRecommendationRequest(BaseModel):
     colors: List[str] = Field(..., description="List of hex colors (e.g., ['#FF5733'])")
     top_k: int = Field(default=10, ge=1, le=50)
-    weights: Optional[List[float]] = None
+    # No `weights`: recommend-by-color is pure V-A (rank-space RBF) — there are no
+    # multi-signal weights to set (F2/F3 ablation removed lyric/emotion signals).
     diversity_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
 
     @validator('colors')
@@ -98,7 +99,6 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         "reco:color",
         colors=sorted(request.colors),
         top_k=request.top_k,
-        weights=request.weights,
         diversity_penalty=request.diversity_penalty,
     )
     cached = await cache_get(cache_key)
@@ -108,7 +108,6 @@ async def recommend_by_color(request: ColorRecommendationRequest):
     try:
         results = _recommender.recommend_by_colors(
             request.colors, top_k=request.top_k,
-            weights=request.weights,
             diversity_penalty=request.diversity_penalty,
         )
         # V12: colour→emotion bridge for the UI chip (the feature's core value made
@@ -127,7 +126,7 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         payload = RecommendationResponse(
             success=True,
             query={"colors": request.colors, "top_k": request.top_k,
-                   "weights": request.weights or config.WEIGHTS_COLOR_QUERY,
+                   "signal": "valence-arousal (rank-space RBF)",
                    "diversity_penalty": request.diversity_penalty,
                    "bridge": bridge, "journey": journey},
             results=_dataframe_to_dict(results),

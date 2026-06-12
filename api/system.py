@@ -126,7 +126,7 @@ async def get_configuration():
         "success": True,
         "config": {
             "weights": {
-                "color_query": config.WEIGHTS_COLOR_QUERY,
+                "color_query": "pure V-A (rank-space RBF; no multi-signal weights)",
                 "mood_query": config.WEIGHTS_MOOD_QUERY,
                 "song_query": config.WEIGHTS_SONG_QUERY,
                 "lyrics_query": config.WEIGHTS_LYRICS_QUERY,
