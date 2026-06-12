@@ -260,3 +260,28 @@ valence ← v6e lyrics-dominant ensemble (negation-fixed lexicon + VN-sentiment 
 **BUT — decision: KEEP V33, VM default OFF.** The picker serves only the **12 fixed ICEAS colours**, and for those V33 is MORE accurate: mae vs ICEAS **0.053 < VM 0.082**, colour **TE 0.0216 < VM 0.0229**, ICEAS-arousal **r 0.78 > VM 0.58**. VM's saturation-fix only helps *arbitrary* colours between anchors — which the product never serves. Adopting VM would regress the real product for a moot benefit. VM is kept as a gated, documented alternative (`COLOR_VA_VALDEZ`) if free colour choice is ever added.
 
 **Net:** confirmed the shipped V33 colour→V-A is the more accurate choice for the 12 colours in use, by triangulating against the largest published colour-emotion study. No behaviour change. Honest caveat unchanged: ICEAS/VM are Western-leaning; n=12 caps anchor precision (Brown outlier).
+
+---
+
+# V6g (2026-06-12) — V-A scientific hardening (signal audit + EWE + MuQ), no fine-tune/no human data
+
+Goal: every V-A signal justified, every weight validated with clear basis, less GPT-circularity, + audio-probe & cross-dataset upgrades. Constraints: frozen models + linear probes, public datasets + offline-LLM-backtest only.
+
+## Phase 1 — Signal sufficiency/necessity audit (`tools/signal_audit.py`)
+Leave-one-out CV + 1-factor PCA, per axis:
+- **VALENCE**: all 4 signals NECESSARY — dropping any lowers agreement with BOTH GPT & Gemini (vn_lex Δ+.04/+.05, vn_sent +.05/+.02, emobank +.09/+.04, mert/muq +.04/+.12). **mode (Krumhansl major/minor) REJECTED** — adding it *hurt* (Δ−.02 GPT, −.06 Gemini), the known VN "sad songs in major keys" effect. → set `{vn_lex, vn_sent, emobank, audio}` is sufficient + non-redundant ("không thừa không thiếu", evidence-backed).
+- **AROUSAL**: catalog-vs-GPT audit invalid (GPT is lyrics-only, can't hear acoustic arousal); the valid reference is DEAM-human, where tempo+loudness are proven necessary (v6f CV 0.625→0.647).
+
+## Phase 2 — Audio probe upgrade (`audio_probe_compare.py`, `muq_probe.py`, `extract_muq_deam.py`)
+DEAM nested-CV R²: **MuQ beats MERT** — arousal 0.557→**0.660** (+3σ), valence 0.489→**0.552**; MuQ+MERT concat = MuQ alone (MERT adds nothing). MuQ adopted for the valence audio signal. For **arousal**, MuQ's DEAM-CV gain (0.647→0.775) did **not** transfer to better VN colour-TE (cross-corpus) → kept as a validated artifact, NOT shipped (gate discipline).
+
+## Phase 3 — De-circularized EWE weights (`tools/va_ewe_weights.py`)
+**EWE (Evaluator Weighted Estimator; Grimm & Kroschel)** — weight = signal reliability (corr w/ consensus, ≥0), **no LLM target → de-circularized**. Valence weights: vn_sent 0.31 / vn_lex 0.30 / emobank 0.28 / MuQ 0.12 (audio least-reliable for a lyrical construct), all CI-tight. Consensus agreement vs **independent** refs GPT 0.707 / Gemini 0.637 — **≈ the GPT-fit (0.718/0.651) but without circularity** (D4 fulfilled at ~zero cost).
+
+## Phase 6 — v6g shipped (gate-passed)
+`tools/build_v6g_labels.py`: **valence = EWE-weighted {vn_lex, vn_sent, emobank, MuQ-valence}** (de-circularized); **arousal = inherit v6f** (DEAM-grounded MERT+tempo+loudness). Gate: colour **TE 0.0225 ≤ v6f 0.0227**, **ordering_all_pass True**, journey pass, FDR 4/5, arousal tracks tempo 0.18/loudness 0.52, colours distinct (Jaccard 0), df-sync. valence agreement 0.706/0.637 (noise-level dip = the de-circularization price; D4 explicitly requested). **config→v6g.**
+
+## Honest status & remaining (Phase 4/5 — validation depth, not shipped this round)
+- **Done/shipped**: signal sufficiency proven; weights de-circularized (EWE) + CI-backed; MuQ probe evaluated (better human-CV) + deployed for valence; gate-passed v6g.
+- **Remaining (would add confidence, won't change labels)**: independent references — CLAP-ears arousal + multilingual-text valence (break the GPT/lyrics monoculture); cross-dataset probe validation on PMEmo/EmoMusic. These are additive validation; the served V-A is unchanged by them.
+- **Honest finding**: MuQ-arousal is better on human DEAM (0.775) but the VN colour-TE caps what ships — the end metric, not isolated probe R², governs adoption (gate discipline).

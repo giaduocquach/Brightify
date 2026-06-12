@@ -546,7 +546,18 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 #   baselines. (ρ(A,tempo)=0.18 is just under the 0.20 construct heuristic — the honest
 #   DEAM-grounded weight, not inflated to game the metric.) Valence = v6e UNCHANGED.
 #   tools/build_v6f_labels.py + extract_clean_bpm.py + extract_deam_acoustic.py.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6f.json")  # v6e valence + DEAM-grounded arousal (tempo+loudness)
+# V6g (2026-06-12) — V-A scientific hardening:
+#   VALENCE: EWE (Evaluator Weighted Estimator, Grimm&Kroschel) — weights = signal
+#     RELIABILITY (corr w/ consensus), NO LLM target → de-circularized. Signals (Phase-1
+#     audit: all necessary, mode rejected): vn_lex 0.30 / vn_sent 0.31 / emobank 0.28 /
+#     MuQ-valence 0.12. Agreement vs GPT 0.706 / Gemini-indep 0.637 (≈ v6f's GPT-fit
+#     0.718/0.651, but no circularity). MuQ replaces MERT (better DEAM nested-CV).
+#   AROUSAL: inherit v6f (DEAM-human-grounded MERT+tempo+loudness; tracks tempo 0.18).
+#     MuQ-arousal evaluated (DEAM-CV 0.647→0.775, better) but NOT shipped — regressed VN
+#     colour-TE (cross-corpus); kept as validated artifact data/muq_arousal.json.
+#   Gate: colour TE 0.0225 ≤ v6f 0.0227, ordering_all_pass, FDR 4/5, journey pass.
+#   Frozen models + linear probes only (no fine-tune); public data + offline LLM only.
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6g.json")  # EWE de-circularized valence + v6f arousal
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
