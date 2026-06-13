@@ -82,3 +82,32 @@ Jonauskaite et al. 2020 (ICEAS) · Ottosson 2020 (Oklab) · Eerola 2011 · Delbo
 Steck 2018 (RecSys, calibration) · Dacrema 2019/2021 · Schnabel 2022 · Benjamini & Hochberg 1995 ·
 Vargas & Castells 2011 · Gao 2019 / Mu & Viswanath 2018 / Ethayarajh 2019 (anisotropy) ·
 Li 2023 (MERT) / MARBLE 2306.10548 · Starcke 2024 · Saari 2016 · Knopke 2018 · Grimm & Kroschel (EWE).
+
+---
+
+# V6h + V40 update (2026-06-13) — grounded lexicon + MuQ backbone migration
+
+## A. Grounded valence lexicon (v6h) — "no more self-made"
+The hand-curated in-code VN emotion dict was replaced by the **official Vietnamese NRC-VAD
+lexicon** (Mohammad 2018, ACL; v1 multilingual, 19,971 terms, human-rated valence ∈[0,1]) — every
+valence word now traces to a peer-reviewed source. Kept only the METHOD (clause-scoped negation),
+not subjective scores. `tools/build_grounded_vnlex.py` → 98.2% coverage; agreement vs GPT 0.44 /
+served 0.47 (≈ the hand lexicon). EWE re-weighted (grounded vn_lex reliability 0.78 ≈ hand 0.76).
+**v6h gate (vs v6g):** colour-TE 0.0274 ≈ 0.0268 (no regression); **r(V,A) 0.25→0.12 (now passes
+orthogonality)**; Whiteford-tempo/journey/ICEAS hold; valence ρ vs GPT 0.71→0.67 (small grounding
+cost, that agreement is partly circular). **Adopted** (`config.RELABELED_EMOTIONS_FILE→v6h`).
+Limitation: NRC-VAD-VN is auto-translated (Google 2022); small GenZ-slang extension kept + flagged.
+
+## B. MuQ audio backbone (V40) — verified + migrated
+MuQ (Zhang 2025, arXiv 2501.01108; SOTA on MARBLE, beats MERT/MusicFM) was evaluated as the audio
+backbone for similar-song + colour-coherence. At fixed MERT-tuned weights the two TIED; **after
+re-optimization MuQ wins both end metrics**:
+- similar-song editorial NDCG@10 **0.0739** (MuQ @ audio-weight 0.76) vs **0.0708** (MERT @ 0.88) — robust across the weight grid.
+- colour-TE **0.0267** (MuQ-centered, α=0.55) vs **0.0302** (MERT-centered, α=0.45).
+Re-gate confirms no regression: colour TE-ordering ALL PASS, journey KS PASS, Whiteford-tempo
+ρ 0.47/0.55, r(V,A) 0.12; similar-song intrinsic 4 improvements (MoodCoherence +0.034,
+SelfConsistency +0.045, Symmetry +0.055). **Adopted** (`AUDIO_BACKBONE="muq"`; song audio-weight
+0.82→0.76; `COLOR_COHERENCE_ALPHA 0.45→0.55`). One consistent backbone everywhere (similar-song,
+colour-coherence, valence-audio). Cover index (precomputed on MERT) unaffected. Tools:
+`muq_mert_compare.py`, `muq_migration.py`. Lesson: a model's MARBLE-benchmark edge transfers to our
+VN end-metrics **only after per-task re-optimization** — fixed incumbent weights masked it.

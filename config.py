@@ -188,8 +188,17 @@ RECO_SONG_WEIGHTS_MERT = {
     # Sensitivity (80 seeds): lyr=0.04 marginally better but within noise on 200 seeds.
     # Instrument tag in additive slot: consistently reduces score → removed (slot 5 = 0).
     # Weights unchanged from prior validation (82/12/6 validated Mức 1).
-    "with_lyrics": [0.0, 0.0, 0.0, 0.06, 0.12, 0.0, 0.0, 0.82],
+    # V40 (2026-06-13): MuQ backbone re-optimised — audio weight 0.82→0.76 (MuQ audio is
+    # richer so the va/lyrics complement gains weight). Editorial NDCG@10 0.0739 (MuQ@0.76)
+    # > 0.0708 (MERT@0.88), robust across the weight grid. va:lyrics kept 2:1.
+    "with_lyrics": [0.0, 0.0, 0.0, 0.08, 0.16, 0.0, 0.0, 0.76],
+    "with_lyrics_mert": [0.0, 0.0, 0.0, 0.06, 0.12, 0.0, 0.0, 0.82],  # MERT-backbone rollback
 }
+
+# V40: audio backbone for similar-song + colour-coherence. "muq" (MuQ-large, SOTA-2025,
+# arXiv 2501.01108) beats "mert" on BOTH end metrics after re-optimization (editorial NDCG +
+# colour-TE). MuQ already won the valence-audio probe. "mert" = rollback. Cover index unaffected.
+AUDIO_BACKBONE = "muq"
 
 # ============================================================================
 # Russell's Circumplex Model - Mood Quadrants
@@ -382,7 +391,7 @@ COLOR_ACOUSTIC_COHERENCE  = True
 # TE ≈ 0.0225 (≤ the old V-A-MMR baseline 0.0231, within its CI) while ~3.4× the intra-list
 # acoustic coherence (0.052→~0.18 centred-MERT cosine; 30-NN ceiling ≈0.45). Lower α → more
 # "feel alike" at a small mood-accuracy (TE) cost; higher α → more mood-precise but scattered.
-COLOR_COHERENCE_ALPHA     = 0.45  # V-A mood relevance vs MERT acoustic coherence
+COLOR_COHERENCE_ALPHA     = 0.55  # V-A mood relevance vs acoustic coherence (V40: 0.45→0.55, re-tuned for MuQ backbone — colour-TE 0.0267 vs MERT 0.0302)
 COLOR_COHERENCE_OVERFETCH = 5     # V-A candidate pool size = top_k × this
 
 # P2 (V29): V-A space MMR for intra-list diversity improvement.
@@ -614,7 +623,16 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 #     colour-TE (cross-corpus); kept as validated artifact data/muq_arousal.json.
 #   Gate: colour TE 0.0225 ≤ v6f 0.0227, ordering_all_pass, FDR 4/5, journey pass.
 #   Frozen models + linear probes only (no fine-tune); public data + offline LLM only.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6g.json")  # EWE de-circularized valence + v6f arousal
+#
+# v6h (2026-06-13): replaced the hand-curated in-code VN emotion dict with the GROUNDED
+# official Vietnamese NRC-VAD lexicon (Mohammad 2018, ACL; v1 multilingual, 19,971 terms,
+# human-rated valence) — "no more self-made", every valence word is now citable. EWE
+# re-weighted (vn_lex reliability 0.78 ≈ hand's 0.76 → ensemble stable, ρ vs v6g valence
+# 0.857). Gate: colour TE 0.0274 ≈ v6g 0.0268 (no regression); r(V,A) 0.25→0.117 (now passes
+# orthogonality ✓); Whiteford-tempo + journey + ICEAS valence hold. Cost: valence ρ vs
+# GPT 0.71→0.67 / Gemini 0.64→0.56 (small; that agreement is partly circular). Tools:
+# build_grounded_vnlex.py (NRC-VAD-VN) → build_v6h_labels.py.
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6h.json")  # grounded NRC-VAD-VN valence + v6f arousal
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================

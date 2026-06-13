@@ -166,6 +166,33 @@ class MusicRecommender:
             except Exception as e:
                 logger.warning(f"[MERT] Load failed: {e} — disabled")
 
+        # V40 (2026-06-13): optional MuQ audio backbone (SOTA-2025, arXiv 2501.01108).
+        # After RE-OPTIMIZATION, MuQ beats MERT on BOTH end metrics: editorial NDCG@10
+        # 0.0739 vs 0.0708 (similar-song) and colour-TE 0.0267 vs 0.0302. Replaces MERT in
+        # `self.mert_matrix` (the audio-backbone slot — name kept to avoid churn) + rebuilds
+        # the centred matrix for colour coherence. MuQ embeddings aligned to catalog order via
+        # muq_metadata done_track_ids. Cover index (precomputed on MERT) is unaffected.
+        if str(globals().get("AUDIO_BACKBONE", "mert")).lower() == "muq" \
+                and os.path.exists("data/muq_embeddings.npy"):
+            try:
+                import json as _json
+                muq = np.load("data/muq_embeddings.npy")
+                meta = _json.load(open("data/muq_metadata.json"))
+                order = meta.get("done_track_ids") or meta.get("track_ids")
+                tids = self.df["track_id"].astype(str).tolist()
+                if order and len(order) == len(muq):
+                    pos = {str(t): i for i, t in enumerate(order)}
+                    muq = np.array([muq[pos[t]] if t in pos else np.full(muq.shape[1], np.nan)
+                                    for t in tids])
+                nn = np.linalg.norm(muq, axis=1, keepdims=True); nn[nn == 0] = 1
+                self.mert_matrix = (muq / nn).astype(np.float32)
+                mc = muq - np.nanmean(muq, axis=0, keepdims=True)
+                mcn = np.linalg.norm(mc, axis=1, keepdims=True); mcn[mcn == 0] = 1
+                self.mert_centered = (mc / mcn).astype(np.float32)
+                logger.info(f"[AUDIO] backbone=MuQ {self.mert_matrix.shape} (replaces MERT; +centred)")
+            except Exception as e:
+                logger.warning(f"[MuQ] backbone load failed: {e} — staying on MERT")
+
 
 
         # Instrument tag signal (MTG-Jamendo, 40-dim, fixed 16kHz 2026-06-09)
