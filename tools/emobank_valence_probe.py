@@ -183,8 +183,13 @@ def train() -> None:
         (c for c in ["track_id", "id", "song_id", "ID"] if c in df_cat.columns), None
     )
     X_cat = np.load(CATALOG_EMB)
-    y_cat = np.clip(model_full.predict(X_cat), 0, 1)
     tids  = df_cat[id_col].astype(str).tolist()
+    # CATALOG_EMB is positional (row i = catalog row i); guard against CSV row drift between
+    # build-embeddings and train, which would silently mis-pair embeddings with track_ids via zip().
+    assert len(X_cat) == len(tids), (
+        f"catalog embedding/track-id length mismatch ({len(X_cat)} vs {len(tids)}) — "
+        f"re-run build-embeddings; positional alignment would be corrupted")
+    y_cat = np.clip(model_full.predict(X_cat), 0, 1)
     json.dump({t: round(float(v), 4) for t, v in zip(tids, y_cat)},
               open(OUT_VALENCE, "w"), ensure_ascii=False)
     print(f"\n[train] applied to {len(y_cat)} songs → {OUT_VALENCE}")

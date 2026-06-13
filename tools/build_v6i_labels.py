@@ -48,11 +48,16 @@ def main() -> int:
     rest = 1 - wt; r = 0.76 / 0.86
     wa = np.array([rest * r, wt, rest * (1 - r)])
     print(f"[v6i arousal] MuQ/tempo/loud weights = {np.round(wa,3).tolist()}")
+    # NOTE: this CV measures per-fold NNLS-refit weights, NOT the deployed hand-set `wa` above.
+    # It is an UPPER-bound sanity check on the feature set, not validation of `wa`. The deployed
+    # blend (wa, tempo-w=0.35) is validated separately in tools/tune_muq_arousal.py (fixed-weight
+    # DEAM-CV 0.692 > MERT 0.647). Reported here only to confirm the 3 features carry arousal signal.
     cvr = []
     for tr, te in KFold(5, shuffle=True, random_state=1).split(F):
-        wt, _ = nnls(F[tr], yr[tr]); wt = wt / (wt.sum() + 1e-12)
-        cvr.append(spearmanr(F[te] @ wt, yA[te]).correlation)
-    print(f"[v6i arousal] DEAM human-CV ρ = {np.nanmean(cvr):.3f}  (v6f MERT was 0.647)")
+        wnn, _ = nnls(F[tr], yr[tr]); wnn = wnn / (wnn.sum() + 1e-12)
+        cvr.append(spearmanr(F[te] @ wnn, yA[te]).correlation)
+    print(f"[v6i arousal] feature-set NNLS-refit CV ρ = {np.nanmean(cvr):.3f}  "
+          f"(upper bound; deployed wa validated in tune_muq_arousal.py = 0.692 vs MERT 0.647)")
 
     # ---- apply to catalog ----
     cf = json.load(open("data/crossfade_features.json"))

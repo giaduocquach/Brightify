@@ -85,8 +85,10 @@ def main() -> int:
     print(f"\n  Bottom 5 (least aligned):")
     for ctry, n, rho, isa in rows[-5:]:
         print(f"    {ctry:18} n={n:5}  ρ={rho:+.3f}{'  [Asian]' if isa else ''}")
-    print(f"\n  Interpretation: high cross-cultural ρ (esp. Asian) ⇒ colour→valence is culturally"
-          f" stable ⇒ extrapolating the ICEAS-fit to Vietnam (not in ICEAS-30) is data-supported.")
+    print(f"\n  Interpretation: high cross-cultural ρ (esp. Asian) ⇒ colour→valence appears culturally"
+          f" stable, supporting VN extrapolation.")
+    print(f"  CAVEAT: ρ is partly inflated by construction (shared NRC-VAD valence weights across"
+          f" countries + small ~12-colour axis) → corroborating evidence with upward bias, NOT proof.")
     return 0
 
 

@@ -189,6 +189,14 @@ class MusicRecommender:
                 mc = muq - np.nanmean(muq, axis=0, keepdims=True)
                 mcn = np.linalg.norm(mc, axis=1, keepdims=True); mcn[mcn == 0] = 1
                 self.mert_centered = (mc / mcn).astype(np.float32)
+                # Tracks absent from muq_metadata become NaN rows above; the nn==0 guard does NOT
+                # catch NaN (NaN != 0), so zero them out — a NaN row would otherwise sort to the
+                # front of argsort/argmax and poison coherence/journey selection (cosine 0 = neutral).
+                n_nan = int(np.isnan(self.mert_matrix).any(axis=1).sum())
+                if n_nan:
+                    logger.warning(f"[AUDIO] {n_nan} tracks missing MuQ embeddings → zeroed (neutral)")
+                self.mert_matrix = np.nan_to_num(self.mert_matrix, nan=0.0)
+                self.mert_centered = np.nan_to_num(self.mert_centered, nan=0.0)
                 logger.info(f"[AUDIO] backbone=MuQ {self.mert_matrix.shape} (replaces MERT; +centred)")
             except Exception as e:
                 logger.warning(f"[MuQ] backbone load failed: {e} — staying on MERT")

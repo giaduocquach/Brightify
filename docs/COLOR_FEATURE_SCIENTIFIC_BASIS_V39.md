@@ -240,10 +240,15 @@ Tested cross-cultural stability of colour→valence on the ICEAS raw multi-count
 ≥30 ppl each). Each country's colour→valence vector (NRC-VAD-weighted emotion endorsements)
 correlated vs the global average: **median ρ = 0.930** (min 0.48, max 0.99). Asian countries — the
 cultural proxy for Vietnam — **median ρ = 0.923** (India 0.958, Philippines 0.923, Japan 0.923,
-China 0.762). ⇒ colour→valence is highly culturally stable, so extrapolating the ICEAS-fit to
-Vietnam (absent from ICEAS-30) is **empirically defensible, not just assumed**. Also: the product
-exposes only **12 fixed colours**, so n=12 is the exact operating domain (LOO-CV r≈0.87), not an
-under-sampled extrapolation. Limitation downgraded from "unvalidated" to "bounded by cross-cultural data".
+China 0.762). ⇒ colour→valence appears culturally stable, supporting extrapolation to Vietnam.
+**Honest caveat (logic-audit V46):** this ρ is **partly inflated by construction** — every country
+uses the SAME NRC-VAD valence weights (`ev`), so only emotion-endorsement frequency varies; the
+near-universal "warm/bright→positive, dark→negative" gross structure forces a high correlation
+floor over the small (~12-point) colour axis. So treat median ρ=0.93 as **corroborating evidence
+with an upward bias, NOT independent proof**. The stronger, bias-free argument is the second one:
+the product exposes only **12 fixed colours**, so n=12 is the exact operating domain (LOO-CV
+r≈0.87), not an under-sampled extrapolation. Limitation downgraded to "weakly corroborated +
+bounded by the fixed-12 operating domain" (not "fully validated").
 
 **#5 e5-large — added an independent validation layer (honest, mixed)**: beyond the intrinsic
 coherence win, evaluated e5 vs vnsbert on the **editorial-playlist GT** (human-curated, 872 queries):
