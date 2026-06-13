@@ -3,10 +3,8 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
-import numpy as np
 import pandas as pd
 
 import config

@@ -8,7 +8,6 @@ warnings.filterwarnings('ignore')
 try:
     from colormath.color_objects import sRGBColor, LabColor
     from colormath.color_conversions import convert_color
-    from colormath.color_diff import delta_e_cie2000
     HAS_COLORMATH = True
 except ImportError:
     HAS_COLORMATH = False
@@ -272,20 +271,6 @@ class AdvancedColorMapper:
         p = p / p.sum()
         return {emo: float(p[i]) for i, emo in enumerate(self._EMO8)}
 
-    # Russell-circumplex V-A centroids for the 8 CLAP emotion labels (normalised 0–1).
-    # LEGACY: was used by the old color_to_emotion_probs (now empirical-ICEAS); retained
-    # for any external reference and for V-A↔emotion sanity checks.
-    RUSSELL_CENTROIDS = {
-        'happy':       (0.88, 0.70),
-        'excited':     (0.72, 0.92),
-        'peaceful':    (0.72, 0.15),
-        'calm':        (0.62, 0.22),
-        'melancholic': (0.28, 0.32),
-        'sad':         (0.15, 0.18),
-        'tense':       (0.30, 0.78),
-        'angry':       (0.12, 0.92),
-    }
-
     # CIELAB-Lch valence coefficients — from tools/phase3_cielab_experiment.py (LOO-CV).
     # Features: [L/100, a/128, b/128, C/128, cos(h), sin(h)].
     # LOO-CV r=0.852 vs HSL r=0.759; monotonicity L*→V 0.81 vs 0.44.
@@ -395,45 +380,6 @@ class AdvancedColorMapper:
         Once set, hsl_to_va() maps raw [0,1] predictions to [v5,v95]×[a5,a95] catalog support.
         """
         self._va_cal = {'v5': v5, 'v95': v95, 'a5': a5, 'a95': a95}
-
-    def compute_similarity(self, c1: str, c2: str, method: str = 'hybrid') -> float:
-        """
-        Advanced color similarity
-        """
-        if method == 'perceptual' and HAS_COLORMATH:
-            lab1 = self._hex_to_lab(c1)
-            lab2 = self._hex_to_lab(c2)
-            delta_e = delta_e_cie2000(lab1, lab2)
-            return np.exp(-delta_e / 20)
-
-        elif method == 'emotion':
-            p1 = self.color_to_emotion_probs(c1)
-            p2 = self.color_to_emotion_probs(c2)
-            vec1 = np.array(list(p1.values()))
-            vec2 = np.array(list(p2.values()))
-            cos = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2) + 1e-10)
-            return (cos + 1) / 2
-
-        else:  # hybrid
-            if HAS_COLORMATH:
-                perc = self.compute_similarity(c1, c2, 'perceptual')
-            else:
-                perc = self._fallback_similarity(c1, c2)
-            emot = self.compute_similarity(c1, c2, 'emotion')
-            return 0.6 * perc + 0.4 * emot
-
-    def _fallback_similarity(self, c1: str, c2: str) -> float:
-        """Fallback RGB Euclidean similarity"""
-        rgb1 = np.array(self.hex_to_rgb(c1))
-        rgb2 = np.array(self.hex_to_rgb(c2))
-        dist = np.linalg.norm(rgb1 - rgb2)
-        return np.exp(-dist / 100)
-
-    def _hex_to_lab(self, hex_color: str):
-        """Convert HEX to LAB"""
-        rgb = self.hex_to_rgb(hex_color)
-        srgb = sRGBColor(rgb[0]/255, rgb[1]/255, rgb[2]/255)
-        return convert_color(srgb, LabColor)
 
     # Utility functions
     def hex_to_rgb(self, hex_color: str) -> Tuple[int, int, int]:
