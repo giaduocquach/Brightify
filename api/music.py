@@ -1,7 +1,6 @@
 """Music browse, search, and audio streaming API routes."""
 
 import logging
-import unicodedata
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -12,11 +11,6 @@ import pandas as pd
 import random
 
 import config as cfg
-
-
-def _strip_accents(text: str) -> str:
-    """Normalize Vietnamese diacritics → ASCII so 'yeu' matches 'yêu'."""
-    return unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode("ascii")
 
 from api.cache import cache_get, cache_set, make_key
 
@@ -299,73 +293,6 @@ async def search_songs(q: str = Query(..., min_length=1), limit: int = Query(def
     songs = [_song_to_dict(row, idx) for idx, row in results.iterrows()]
 
     return {"success": True, "songs": songs, "query": q, "total": len(songs)}
-
-
-@router.get("/songs/search/unified")
-async def search_unified(
-    q: str = Query(..., min_length=1),
-    match_limit: int = Query(default=8, ge=1, le=20),
-    related_limit: int = Query(default=8, ge=0, le=20),
-):
-    """F3 — one box, layered results: exact name/lyrics matches first
-    ("🎯 Khớp nhất"), then semantically-related / same-vibe songs below
-    ("🔗 Liên quan"). Handles name/artist, a typed lyric line, OR a vibe
-    description — whatever the user types, the closest hit surfaces on top."""
-    df = _recommender.df
-    query = q.strip().lower()
-    if not query:
-        return {"success": True, "query": q, "matches": [], "related": []}
-
-    query_plain = _strip_accents(query)
-
-    def _contains(col):
-        s = df[col].astype(str).str.lower()
-        exact = s.str.contains(query, na=False, regex=False)
-        # Also match when query or data has no diacritics (e.g. "yeu" → "yêu")
-        plain = s.map(_strip_accents).str.contains(query_plain, na=False, regex=False)
-        return exact | plain
-
-    # ── Layer 1: literal MATCHES — name/artist/album, then a lyric line ──
-    name_mask = _contains('track_name')
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            name_mask = name_mask | _contains(col)
-            break
-    if 'album_name' in df.columns:
-        name_mask = name_mask | _contains('album_name')
-
-    name_idx = list(df.index[name_mask])
-    name_set = set(name_idx)
-    lyrics_idx = []
-    for lcol in ['plain_lyrics', 'lyrics_cleaned']:
-        if lcol in df.columns:
-            lyrics_idx = [i for i in df.index[_contains(lcol)] if i not in name_set]
-            break  # prefer plain_lyrics
-
-    match_idx = (name_idx + lyrics_idx)[:match_limit]
-    matched_ids, matches = set(), []
-    for i in match_idx:
-        s = _song_to_dict(df.loc[i], i)
-        s['match_kind'] = 'name' if i in name_set else 'lyrics'
-        matched_ids.add(s.get('track_id'))
-        matches.append(s)
-
-    # ── Layer 2: RELATED / same-vibe (semantic), excluding the matches ──
-    related = []
-    if related_limit > 0:
-        try:
-            rdf = _recommender.recommend_by_lyrics_keywords(q, top_k=related_limit + len(matched_ids) + 6)
-            for idx, row in rdf.iterrows():
-                s = _song_to_dict(row, row.get('original_index', idx))
-                if s.get('track_id') in matched_ids:
-                    continue
-                related.append(s)
-                if len(related) >= related_limit:
-                    break
-        except Exception:
-            logging.getLogger(__name__).debug("unified search: related layer skipped", exc_info=True)
-
-    return {"success": True, "query": q, "matches": matches, "related": related}
 
 
 # ============================================================================

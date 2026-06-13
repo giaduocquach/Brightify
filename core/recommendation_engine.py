@@ -1029,28 +1029,6 @@ class MusicRecommender:
         cols = [c for c in optional if c in rows.columns]
         return rows[cols].reset_index(drop=True)
 
-    def _sequence_journey(self, res, p1, p2):
-        """Order selected songs along the V-A path P1 → P2 (Iso-Principle, V23).
-
-        Projects each song's V-A onto the journey vector (p1→p2), giving a position
-        t∈[0,1]; sorting by t makes the playlist start at colour A's mood and shift
-        smoothly to colour B's. Replaces interleaved order (mood-whiplash).
-        Basis: Iso-Principle (Starcke & von Georgi 2024, d=0.52); affective arc
-        (Neto 2025). Retrieval (which songs) is unchanged — only the ORDER.
-        """
-        p1 = np.asarray(p1, float); p2 = np.asarray(p2, float)
-        axis = p2 - p1
-        denom = float(axis @ axis)
-        idxs = [int(i) for i in res['original_index'].tolist()]
-        if denom < 1e-9:               # two colours nearly identical → no journey
-            return res
-        # t = normalised projection of (songVA - p1) onto (p2 - p1), clamped [0,1]
-        t = {i: float(np.clip(((self.song_va[i] - p1) @ axis) / denom, 0.0, 1.0))
-             for i in idxs}
-        order = sorted(idxs, key=lambda i: t[i])
-        res = res.set_index('original_index').loc[order].reset_index()
-        return res
-
     def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s,
                          src_hex=None):
         """E6 (V16) — per-recommendation "why this song".

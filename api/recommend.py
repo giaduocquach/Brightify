@@ -1,4 +1,4 @@
-"""AI recommendation API routes (color, mood, lyrics)."""
+"""AI recommendation API routes (color)."""
 
 import logging
 
@@ -69,13 +69,6 @@ class ColorRecommendationRequest(BaseModel):
         return validated
 
 
-class LyricsSearchRequest(BaseModel):
-    keywords: str = Field(..., min_length=1)
-    top_k: int = Field(default=10, ge=1, le=50)
-    weights: Optional[List[float]] = None
-    diversity_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
-
-
 class RecommendationResponse(BaseModel):
     success: bool
     query: Dict[str, Any]
@@ -139,40 +132,3 @@ async def recommend_by_color(request: ColorRecommendationRequest):
         raise HTTPException(status_code=500, detail="Color recommendation failed")
 
 
-@router.post("/lyrics", response_model=RecommendationResponse)
-async def search_by_lyrics(request: LyricsSearchRequest):
-    """Search songs by Vietnamese lyrics keywords via PhoBERT"""
-    cache_key = make_key(
-        "reco:lyrics",
-        keywords=request.keywords.lower().strip(),
-        top_k=request.top_k,
-        weights=request.weights,
-        diversity_penalty=request.diversity_penalty,
-    )
-    cached = await cache_get(cache_key)
-    if cached is not None:
-        return cached
-
-    try:
-        results = _recommender.recommend_by_lyrics_keywords(
-            request.keywords, top_k=request.top_k,
-            weights=request.weights,
-            diversity_penalty=request.diversity_penalty,
-        )
-        payload = RecommendationResponse(
-            success=True,
-            query={"keywords": request.keywords, "top_k": request.top_k},
-            results=_dataframe_to_dict(results),
-            count=len(results),
-        )
-        await cache_set(cache_key, payload.model_dump(), ttl=600)   # 10 min
-        return payload
-    except Exception as e:
-        logger.exception("Lyrics search failed")
-        raise HTTPException(status_code=500, detail="Lyrics search failed")
-
-
-
-
-# ============================================================================
-# ============================================================================
