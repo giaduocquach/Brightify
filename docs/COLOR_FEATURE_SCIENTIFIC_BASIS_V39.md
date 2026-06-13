@@ -156,3 +156,32 @@ closed-class NLP, not valence scores). `tools/build_grounded_vnlex.py` (+VnEmoLe
   separate semantic-dedup task (a precomputed track→covers exclusion list), validated on MERT and
   backbone-independent at serving. Not rebuilt on MuQ to avoid re-calibrating thresholds for zero
   benefit (the list already identifies the real covers). Documented as a deliberate choice.
+
+---
+
+# V43 (2026-06-13) — vn_sent re-grounded (frozen ViSoBERT + UIT-VSMEC probe, no community blackbox)
+
+`vn_sent` (~25–30% of the EWE valence; **shared by BOTH features** via the common V-A labels) was
+the only lyrics-emotion signal whose training corpus was not citable — the community
+`wonrax/phobert-base-vietnamese-sentiment` head over an unpublished dataset. Re-grounded with the
+**same recipe as the EmoBank probe** (frozen encoder + linear probe + published data, no fine-tune,
+offline-only): **frozen ViSoBERT** (Nguyen et al. 2023, EMNLP Findings — encoder pretrained for VN
+social-media text, matching lyric register) + **Ridge probe** trained on **UIT-VSMEC** (Ho et al.
+2020, peer-reviewed 7-emotion corpus), with **emotion→valence read from NRC-VAD** (Mohammad 2018) —
+so even the label mapping is grounded, zero self-made scores. `tools/build_grounded_vnsent.py`.
+
+Probe validity: UIT-VSMEC 5-fold CV R²=0.35, held-out test ρ(pred,emotion-valence)=0.56,
+high−low valence gap +0.30. Catalog: healthy spread (mean 0.358, std 0.078 — no OOD collapse),
+ρ vs old wonrax 0.41, ρ vs served valence 0.33. EWE self-down-weighted it (reliability 0.62 →
+weight 0.22, vs wonrax ~0.30 — correctly noisier).
+
+**Adoption gate (end-metric governs):** colour-TE **0.0250 → 0.0242** (improved, CI[0.0219,0.0263]),
+TE-ordering ALL PASS, journey ✓, Whiteford-tempo ρ(L,BPM)=0.41/ρ(S,BPM)=0.66 ✓, ICEAS r=0.969 ✓,
+r(V,A)=0.161 ✓; similar-song MoodCoherence +0.034, Symmetry +0.048, Tempo stable. Valence ρ vs GPT
+0.677→0.634 (the citability trade-off; the recommendation end-metric improved, so ADOPTED).
+Rejected variant: UIT-VSFC (student-feedback sentiment) — domain too far from lyrics, catalog
+predictions collapsed (std 0.05, ρ vs served 0.14) → VSMEC's social-media register was decisive.
+
+**All lyrics-emotion signals are now fully grounded:** vn_lex (NRC-VAD-VN + VnEmoLex), vn_sent
+(ViSoBERT + UIT-VSMEC + NRC-VAD), emobank (XLM-R + EmoBank) — each = published dataset + frozen
+backbone + linear probe, no fine-tuning, no community blackbox, LLM-free at serving.

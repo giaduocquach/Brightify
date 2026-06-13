@@ -75,10 +75,12 @@ VNSBERT_MODEL          = "dangvantuan/vietnamese-embedding"
 VNSBERT_EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
 
 # V6e: pretrained Vietnamese sentiment transformer (frozen, zero-shot) used OFFLINE
-# to produce a context-aware lyrical valence signal (polarity→valence). Public model,
-# trained on a public VN sentiment corpus — NOT a generative LLM, NOT in the serving path.
+# to produce a context-aware lyrical valence signal. GROUNDED build (tools/build_grounded_vnsent.py):
+# frozen ViSoBERT (Nguyen 2023, EMNLP) + Ridge probe on UIT-VSMEC (Ho 2020, peer-reviewed),
+# emotion→valence via NRC-VAD — every component citable, no fine-tune, offline-only. The legacy
+# wonrax community head (unpublished corpus) is retained only as a reference/fallback artifact.
 VN_SENTIMENT_MODEL = os.environ.get("VN_SENTIMENT_MODEL", "wonrax/phobert-base-vietnamese-sentiment")
-VN_SENTIMENT_VALENCE_FILE = str(DATA_DIR / "vn_sentiment_valence.json")
+VN_SENTIMENT_VALENCE_FILE = str(DATA_DIR / "vnsent_grounded_valence.json")
 
 # ============================================================================
 # Audio Features
