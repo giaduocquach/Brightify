@@ -140,12 +140,18 @@ new component's hyperparameters before judging it — don't inherit the old one'
 The served valence (v6i) was already 100% NRC-VAD-VN (no self-made valence words — the earlier
 "GenZ slang" note referred to the *retired* hand lexicon, not the grounded build). To reduce the
 auto-translation caveat, the build now **cross-checks NRC-VAD-VN against the native VnEmoLex**
-(Zenodo 801610, 10,627 VN words w/ polarity): drops words whose NRC-VAD-VN valence sign CONFLICTS
-with VnEmoLex's native polarity (10 likely mistranslations removed) and adds 236 native VN words
-NRC lacks. Coverage 98.2%→**99.3%**; vn_lex EWE reliability 0.78→0.79; colour-TE 0.0250 (no
-regression); all gates green. Every valence word now traces to **NRC-VAD (Mohammad 2018) and/or
-VnEmoLex** — no subjective scores. Only remaining hand element: a 10-word negation list (standard
-closed-class NLP, not valence scores). `tools/build_grounded_vnlex.py` (+VnEmoLex).
+(Doan & Luu 2022, *Improving Sentiment Analysis By Emotion Lexicon Approach on Vietnamese Texts*,
+IALP 2022, arXiv:2210.02063; lexicon DOI **10.5281/zenodo.801610**): drops words whose NRC-VAD-VN
+valence sign CONFLICTS with VnEmoLex's native polarity (10 likely mistranslations removed) and adds
+236 native VN words NRC lacks. Coverage 98.2%→**99.3%**; vn_lex EWE reliability 0.78→0.79; colour-TE
+0.0250 (no regression); all gates green. Every valence word now traces to **NRC-VAD (Mohammad 2018)
+and/or VnEmoLex** — no subjective scores. Only remaining hand element: a 10-word negation list
+(standard closed-class NLP, not valence scores). `tools/build_grounded_vnlex.py` (+VnEmoLex).
+
+**Honest provenance nuance (V45):** VnEmoLex is itself built on **NRC EmoLex + Viet WordNet**
+(~12.8k words: 4,431 from NRC-EmoLex, 8,364 from Viet WordNet). So vn_lex's two sources share an NRC
+lineage — the genuinely *VN-native* contribution is the **8,364 Viet WordNet words**. Both remain
+fully published/citable; this is stated so the two are not mis-presented as wholly independent.
 
 ## Remaining inherent limitations (cannot fix offline — honest)
 - **n=12 colours / VN not in ICEAS-30:** ICEAS studied exactly the 12 basic colour TERMS, so there
@@ -218,3 +224,31 @@ backbone's own benchmark) and — critically — RE-TUNED at its OWN optimal set
   intentionally — non-decisive given theory + the end-metric direction.
 - Lesson reaffirmed: 3/4 SOTA-on-paper candidates did NOT beat the task's end-metric; only e5-large
   did. Benchmark rank ≠ end-metric fit. Tools: encode_lyrics.py, run_fair_rerun.sh, run_candidate_gates.sh.
+
+---
+
+# V45 (2026-06-13) — closing 3 caveats: VnEmoLex citation, e5 cross-validation, VN-extrapolation
+
+**#7 VnEmoLex citation — RESOLVED** (see provenance note above): Doan & Luu 2022 (IALP, arXiv:2210.02063),
+DOI 10.5281/zenodo.801610; built on NRC-EmoLex + Viet WordNet (native part = 8,364 Viet WordNet words).
+
+**#2 VN not in ICEAS-30 — DATA-SUPPORTED extrapolation** (`tools/iceas_cross_cultural.py`):
+Tested cross-cultural stability of colour→valence on the ICEAS raw multi-country data (37 countries,
+≥30 ppl each). Each country's colour→valence vector (NRC-VAD-weighted emotion endorsements)
+correlated vs the global average: **median ρ = 0.930** (min 0.48, max 0.99). Asian countries — the
+cultural proxy for Vietnam — **median ρ = 0.923** (India 0.958, Philippines 0.923, Japan 0.923,
+China 0.762). ⇒ colour→valence is highly culturally stable, so extrapolating the ICEAS-fit to
+Vietnam (absent from ICEAS-30) is **empirically defensible, not just assumed**. Also: the product
+exposes only **12 fixed colours**, so n=12 is the exact operating domain (LOO-CV r≈0.87), not an
+under-sampled extrapolation. Limitation downgraded from "unvalidated" to "bounded by cross-cultural data".
+
+**#5 e5-large — added an independent validation layer (honest, mixed)**: beyond the intrinsic
+coherence win, evaluated e5 vs vnsbert on the **editorial-playlist GT** (human-curated, 872 queries):
+NDCG@10 0.0664 vs 0.0666, mAP 0.0261 vs 0.0258, MRR 0.1572 vs 0.1623 — a **TIE** (e5 neither better
+nor worse on editorial co-membership). Expected: lyrics is only 8% of an audio-dominated (MuQ 0.76)
+fusion, so swapping it barely moves an audio-driven metric. Net honest verdict: e5-large is **better
+on intrinsic coherence (Mood/Symmetry/SelfConsistency, the "songs feel alike" axis) and neutral on
+editorial NDCG** → a safe, low-leverage improvement, kept (no regression). A clean LLM-judge panel
+would require rebuilding the judged pool on e5's own recommendations (OpenAI cost + pool-bias) —
+not worth it for an 8%-weight signal given editorial already answers "neutral". Stated plainly: the
+e5 gain is real but modest and concentrated in intrinsic coherence, not a broad win.
