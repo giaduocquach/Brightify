@@ -294,7 +294,24 @@ COLOR_AROUSAL_INTERACTION = True
 # → over-spread arousal (warm/saturated too high: pink 0.80 vs research 0.48; light/dark
 # too low), mean|err| vs ICEAS 0.154. Fitted [redness,sat,darkness] coeffs → 0.078.
 # Brings arousal to the same research-grounding valence has (which fits ICEAS at r=0.97).
-COLOR_AROUSAL_ICEAS_FIT = True
+# V38 (2026-06-13): SUPERSEDED by COLOR_AROUSAL_WHITEFORD. The ICEAS-fit optimised agreement
+# with ICEAS *colour-viewing* arousal norms (where black/dark = arousing/"intense") — the
+# WRONG construct for a MUSIC recommender. Result: dark/somber colours (đen, tím, nâu) landed
+# at mid arousal → Q2 (sad+tense/energetic) instead of Q3 (sad+slow), so they returned
+# energetic music. (User-reported regression vs the Gemini-era feel; root-caused 2026-06-13.)
+COLOR_AROUSAL_ICEAS_FIT = False
+
+# V38 (2026-06-13): arousal grounded in Whiteford et al. 2018 "Color, Music & Emotion: Bach to
+# the Blues" (i-Perception, PMC6240980) — the colour↔MUSIC association study (the correct
+# construct here). Finding: FASTER music ↔ lighter/more-saturated/yellower colours; SLOWER ↔
+# darker/desaturated/bluer. Arousal Spearman weights: redness +.755, saturation +.720,
+# darkness −.549. The legacy default formula used +darkness (SIGN FLIPPED vs the paper) and the
+# ICEAS-fit also made dark→aroused. Corrected: arousal = +0.373·redness +0.356·saturation
+# +0.271·lightness (darkness negative ⇒ lightness positive), affine-calibrated to [0,1]. This
+# puts đen/tím/xám → Q3 (slow-sad), cool colours → Q4 (calm), warm-vivid → Q1/Q2 (energetic),
+# matching Palmer 2013 + the user's ear. Valence stays Oklab-ICEAS (r=0.97; mode≈valence is the
+# other Whiteford factor, already correct). Takes precedence over ICEAS-fit / Valdez.
+COLOR_AROUSAL_WHITEFORD = True
 
 # V34 (2026-06-12): Valdez-Mehrabian 1994 large-sample arousal equation (0.60·sat −
 # 0.31·bright + 0.10·redness, calibrated). DEFAULT OFF after evaluation: the picker uses
@@ -329,11 +346,51 @@ COLOR_VA_CATALOG_CALIBRATE = True
 # colour mapper (hsl_to_va returns raw [0,1]); display V-A (song_va) is unaffected.
 COLOR_VA_RANK_MATCH = True
 
+# V36 (2026-06-13): CDF target mapping — fixes "every colour feels mid/sad". V31 used the
+# colour's RAW V-A directly as the rank target, but raw colour AROUSAL only spans
+# [0.33,0.62] (12 colours), so colours could only ever request the catalog's middle ~30%
+# by arousal → all colours retrieved mid-arousal songs (distinct IDs, same mood). Fix: map
+# each colour's raw V-A through the catalog's EMPIRICAL CDF to get the target quantile, so
+# the 12 colours span the full catalog and each lands in a distinct mood region (validated:
+# arousal target spread 0.29→0.63; White→0.19q calmest, Đỏ→0.82q most energetic). Only
+# active alongside COLOR_VA_RANK_MATCH (match space = catalog ranks). Off ⇒ V31 raw-as-rank.
+COLOR_VA_CDF_TARGET = True
+
+# V39 (2026-06-13): 2-colour JOURNEY audio smoothness. The iso-principle waypoint sampler
+# (Starcke 2024; Saari 2016 "10-15%/step") fixes the V-A arc A→B, but consecutive songs could
+# still jump in tempo/timbre. Fix: when picking each waypoint's song, add a continuity bonus
+# for acoustic closeness to the PREVIOUS pick — small ΔBPM (DJ harmonic-mixing / Knopke 2018)
+# + high centred-MERT cosine. γ weights continuity vs waypoint relevance (kept small so the
+# V-A arc still dominates). Off ⇒ pure waypoint sampling.
+COLOR_JOURNEY_AUDIO_SMOOTH = True
+COLOR_JOURNEY_SMOOTH_GAMMA = 0.30   # continuity weight (relevance stays dominant)
+COLOR_JOURNEY_BPM_TAU      = 20.0   # BPM closeness scale (exp(-|ΔBPM|/τ))
+
+# V37 (2026-06-13): ACOUSTIC COHERENCE for recommend-by-color. Root cause of "songs in a
+# colour don't feel like that colour / don't feel alike": the feature matched on pure V-A
+# (2 numbers) and the V-A-diversity MMR below deliberately SCATTERED results — two songs at
+# the same (V,A) can be acoustically opposite (angry hip-hop vs angry ballad). Fix: after
+# V-A picks the colour's mood region, grow an acoustically-coherent cluster using frozen
+# MERT embeddings (the same audio backbone — 82% — that makes similar-song feel coherent;
+# Li 2023 MERT / MARBLE 2306.10548). V-A still selects WHICH mood (Whiteford 2018 mediation);
+# MERT makes the set feel alike. α balances V-A relevance vs MERT coherence; artist-uniqueness
+# + cover filter keep variety. Supersedes COLOR_MMR_VA_DIVERSITY when on. α tuned in Phase 6
+# on the offline coherence battery (MERT intra-list coherence ↑, TE no-regress, colours stay
+# distinct). Off ⇒ old V-A-diversity MMR (rollback / A-B).
+COLOR_ACOUSTIC_COHERENCE  = True
+# α tuned on the offline coherence/TE sweep (centred MERT, top_k=10): α=0.45 keeps colour
+# TE ≈ 0.0225 (≤ the old V-A-MMR baseline 0.0231, within its CI) while ~3.4× the intra-list
+# acoustic coherence (0.052→~0.18 centred-MERT cosine; 30-NN ceiling ≈0.45). Lower α → more
+# "feel alike" at a small mood-accuracy (TE) cost; higher α → more mood-precise but scattered.
+COLOR_COHERENCE_ALPHA     = 0.45  # V-A mood relevance vs MERT acoustic coherence
+COLOR_COHERENCE_OVERFETCH = 5     # V-A candidate pool size = top_k × this
+
 # P2 (V29): V-A space MMR for intra-list diversity improvement.
 # Applies a second MMR pass using V-A embeddings after _fast_rank.
 # Fixes low ILD for red (0.019) and black (0.011) vs blue (0.059) reference.
 # lambda_=0.5: balanced relevance-diversity (vs default 0.7 relevance-heavy).
 # Gate: ILD(red)>=0.030, ILD(black)>=0.025, TE not regress.
+# NOTE: superseded by COLOR_ACOUSTIC_COHERENCE (V37) — kept for rollback/A-B.
 COLOR_MMR_VA_DIVERSITY = True
 COLOR_MMR_VA_LAMBDA    = 0.5
 

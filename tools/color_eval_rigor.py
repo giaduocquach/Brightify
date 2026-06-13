@@ -246,6 +246,20 @@ def main() -> int:
     if getattr(config, 'COLOR_VA_RANK_MATCH', False) and hasattr(rec, 'song_va_match'):
         song_va = rec.song_va_match
         print("[V31] measuring TE in quantile/rank match space")
+
+    # V36: the recommender maps a colour's raw V-A through the catalog CDF to its target
+    # quantile (COLOR_VA_CDF_TARGET). Measure TE/journey against the SAME target the
+    # recommender used — comparing raw colour V-A to rank-space songs mixes coordinate
+    # systems and spuriously inflates TE / breaks journey calibration.
+    _use_cdf = (getattr(config, 'COLOR_VA_RANK_MATCH', False)
+                and getattr(config, 'COLOR_VA_CDF_TARGET', False)
+                and hasattr(rec, '_color_target_quantile'))
+
+    def color_target(hx):
+        cv, ca = rec.color_mapper.hsl_to_va(hx)
+        return rec._color_target_quantile([cv, ca]) if _use_cdf else np.array([cv, ca])
+    if _use_cdf:
+        print("[V36] measuring TE/journey against catalog-CDF colour targets")
     sigma_v  = config.COLOR_SCORE_VA_SIGMA_V   # 0.20
     sigma_a  = config.COLOR_SCORE_VA_SIGMA_A   # 0.14
 
@@ -279,8 +293,8 @@ def main() -> int:
     print(hdr); print("-" * len(hdr))
 
     for hx, name in ICEAS_COLS:
-        cv, ca = rec.color_mapper.hsl_to_va(hx)
-        color_va = np.array([cv, ca])
+        cv, ca = rec.color_mapper.hsl_to_va(hx)        # raw, for display
+        color_va = color_target(hx)                     # V36: the recommender's actual target
 
         # Production recommendations
         df_prod = rec.recommend_by_colors(hx, top_k=TOP_K)
@@ -305,6 +319,7 @@ def main() -> int:
 
         per_color[hx] = {
             'name': name, 'color_va': [round(cv, 3), round(ca, 3)],
+            'prod_idx': prod_idx,   # V39: reused for the Whiteford colour↔music tempo check
             'prod': {'euclidean': round(prod_eu, 4), 'mahalanobis': round(prod_ma, 4),
                      'ild': round(prod_ild, 4)},
             'baselines_eu': {b: round(bl_eu[b], 4) for b in baselines},
@@ -460,9 +475,24 @@ def main() -> int:
     pairs = [(ICEAS_COLS[i], ICEAS_COLS[(i + 3) % len(ICEAS_COLS)])
              for i in range(len(ICEAS_COLS))]  # spread-out pairs
 
+    # V39: per-journey AUDIO smoothness — mean consecutive ΔBPM + Δ(centred-MERT) in the
+    # delivered order (Knopke 2018 acoustic continuity on top of the iso-principle V-A arc).
+    _bpm = rec._journey_bpm_array() if hasattr(rec, '_journey_bpm_array') else None
+    _Mc = getattr(rec, 'mert_centered', None)
+
+    def _audio_jumps(idx):
+        db, dt = [], []
+        for a, b in zip(idx, idx[1:]):
+            if _bpm is not None and not np.isnan(_bpm[a]) and not np.isnan(_bpm[b]):
+                db.append(abs(_bpm[a] - _bpm[b]))
+            if _Mc is not None:
+                dt.append(1.0 - float(_Mc[a] @ _Mc[b]))
+        return (float(np.mean(db)) if db else float('nan'),
+                float(np.mean(dt)) if dt else float('nan'))
+
     for (hx_a, na), (hx_b, nb) in pairs:
-        va_a = np.array(rec.color_mapper.hsl_to_va(hx_a), float)
-        va_b = np.array(rec.color_mapper.hsl_to_va(hx_b), float)
+        va_a = color_target(hx_a)   # V36: recommender's actual target (CDF-mapped)
+        va_b = color_target(hx_b)
         try:
             df_j = rec.recommend_by_colors([hx_a, hx_b], top_k=TOP_K)
             j_idxs = (df_j['original_index'].tolist()
@@ -471,23 +501,30 @@ def main() -> int:
         except Exception:
             j_idxs = []
         jc = journey_calibration(va_a, va_b, j_idxs, song_va)
+        d_bpm, d_tim = _audio_jumps(j_idxs)
         pair_key = f"{na}→{nb}"
-        journey_results[pair_key] = {**jc, 'hex_a': hx_a, 'hex_b': hx_b}
+        journey_results[pair_key] = {**jc, 'd_bpm': round(d_bpm, 2), 'd_timbre': round(d_tim, 3),
+                                     'hex_a': hx_a, 'hex_b': hx_b}
         print(f"  {pair_key:<28}"
               f" {jc['ks_stat']:6.3f}"
               f" {jc['mean_t']:7.3f}"
               f" {jc['std_t']:7.3f}"
-              f" {jc['pct_bins_covered']:7.1%}")
+              f" {jc['pct_bins_covered']:7.1%}"
+              f"  Δbpm={d_bpm:5.1f} Δtim={d_tim:.3f}")
 
     ks_mean = float(np.mean([v['ks_stat'] for v in journey_results.values()]))
     mt_mean = float(np.mean([v['mean_t']  for v in journey_results.values()]))
     pct_mean= float(np.mean([v['pct_bins_covered'] for v in journey_results.values()]))
+    dbpm_mean = float(np.nanmean([v['d_bpm'] for v in journey_results.values()]))
+    dtim_mean = float(np.nanmean([v['d_timbre'] for v in journey_results.values()]))
     print(f"  {'MEAN':28} {ks_mean:6.3f} {mt_mean:7.3f}"
-          f" {'':>7} {pct_mean:7.1%}")
+          f" {'':>7} {pct_mean:7.1%}  Δbpm={dbpm_mean:5.1f} Δtim={dtim_mean:.3f}")
     ks_pass = ks_mean < 0.40   # relaxed threshold (journey is near-uniform by design)
     mt_pass = 0.35 <= mt_mean <= 0.65
     print(f"\n  Journey gate: KS<0.40 {'✓' if ks_pass else '✗'}  "
           f"mean_t∈[0.35,0.65] {'✓' if mt_pass else '✗'}")
+    print(f"  Journey audio smoothness (V39): mean ΔBPM={dbpm_mean:.1f}  Δtimbre={dtim_mean:.3f} "
+          f"(lower = smoother; iso-principle arc preserved by KS)")
 
     # ── Ordering summary ──────────────────────────────────────────────────────
     prod_mean_eu = prod_ci_eu[0]
@@ -538,10 +575,44 @@ def main() -> int:
     r_a = float(ss.pearsonr(pred_a, true_a)[0]) if len(pred_a) > 2 else 0.0
     ci_v = fisher_z_ci(r_v, len(pred_v))
     ci_a = fisher_z_ci(r_a, len(pred_a))
-    print(f"  Valence:  r = {r_v:.3f}  95% CI Fisher-z {ci_v}")
-    print(f"  Arousal:  r = {r_a:.3f}  95% CI Fisher-z {ci_a}")
-    print(f"  Note: n={len(pred_v)} is small; CI width is expected. "
-          f"This is the known limitation per V21 audit (B1).")
+    print(f"  Valence:  r = {r_v:.3f}  95% CI Fisher-z {ci_v}  (vs ICEAS valence norms — VALID construct)")
+    print(f"  Arousal:  r = {r_a:.3f}  95% CI Fisher-z {ci_a}  (vs ICEAS colour-VIEWING arousal)")
+    print(f"  NOTE (V39): the colour→arousal model deliberately uses the colour↔MUSIC construct")
+    print(f"  (Whiteford 2018: darker/desaturated ↔ SLOWER music), NOT ICEAS colour-viewing arousal")
+    print(f"  (where black is 'intense'). So low agreement with ICEAS arousal is EXPECTED & correct;")
+    print(f"  arousal is validated against measured song TEMPO below, not against ICEAS viewing norms.")
+    print(f"  (n={len(pred_v)} small ⇒ wide CI — known limitation; valence stays the ICEAS construct.)")
+
+    # ── V39: Whiteford colour↔MUSIC tempo validation (INDEPENDENT of the colour model) ──
+    # Whiteford 2018 + Saari 2016 + Palmer 2013: faster music ↔ lighter & more saturated
+    # colours. We test this on MEASURED song tempo (data/clean_bpm.json) — a ground truth
+    # independent of hsl_to_va — so it genuinely validates the V38 colour→arousal mapping.
+    # Expect ρ(lightness, retrieved BPM) > 0 and ρ(saturation, retrieved BPM) > 0.
+    print(f"\nWHITEFORD COLOUR↔MUSIC TEMPO VALIDATION (independent: measured BPM)")
+    bpm_map = {}
+    bpm_path = "data/clean_bpm.json"
+    if os.path.exists(bpm_path):
+        bpm_map = json.load(open(bpm_path))
+    tids_all = rec.df['track_id'].astype(str).values
+    light, sat, mean_bpm = [], [], []
+    for hx, _ in ICEAS_COLS:
+        h, l, s = rec.color_mapper.hex_to_hsl(hx)
+        idx = per_color.get(hx, {}).get('prod_idx', [])
+        bpms = [bpm_map.get(tids_all[i]) for i in idx if bpm_map.get(tids_all[i])]
+        if not bpms:
+            continue
+        light.append(l / 100.0); sat.append(s / 100.0); mean_bpm.append(float(np.mean(bpms)))
+    if len(mean_bpm) >= 4:
+        rho_lb = ss.spearmanr(light, mean_bpm).correlation
+        rho_sb = ss.spearmanr(sat, mean_bpm).correlation
+        tempo_ok = (rho_lb > 0) and (rho_sb > 0)
+        print(f"  ρ(colour lightness, retrieved mean BPM) = {rho_lb:+.3f}   (Whiteford: lighter ↔ faster, want > 0)")
+        print(f"  ρ(colour saturation, retrieved mean BPM) = {rho_sb:+.3f}   (Whiteford: saturated ↔ faster, want > 0)")
+        print(f"  Whiteford tempo gate: {'PASS ✓' if tempo_ok else 'FAIL ✗'} "
+              f"(BPM range {min(mean_bpm):.0f}–{max(mean_bpm):.0f})")
+    else:
+        rho_lb = rho_sb = float('nan'); tempo_ok = False
+        print(f"  (insufficient BPM data: {len(mean_bpm)} colours)")
 
     # ── Save report ───────────────────────────────────────────────────────────
     report = {
@@ -585,6 +656,10 @@ def main() -> int:
             "mean_pct_bins_covered": round(pct_mean, 3),
             "gate_ks_pass": ks_pass,
             "gate_mean_t_pass": mt_pass,
+            "audio_smoothness": {   # V39: Knopke 2018 acoustic continuity (lower = smoother)
+                "mean_delta_bpm": round(dbpm_mean, 2),
+                "mean_delta_timbre": round(dtim_mean, 4),
+            },
             "per_pair": journey_results,
         },
         "l1_bridge_fisher_z": {
@@ -607,6 +682,13 @@ def main() -> int:
             "Saari 2016 / Starcke 2024 Iso-Principle journey."
         ),
         "construct_validity": construct_validity,
+        "whiteford_tempo_validation": {   # V39: arousal validated on MEASURED tempo (Whiteford 2018)
+            "rho_lightness_bpm": round(float(rho_lb), 4),
+            "rho_saturation_bpm": round(float(rho_sb), 4),
+            "pass": bool(tempo_ok),
+            "basis": "Whiteford 2018 colour↔music: lighter/saturated ↔ faster music; "
+                     "independent ground truth = measured clean BPM (data/clean_bpm.json).",
+        },
         "meta": {
             "emotions_file": _args.emotions_file or "config default",
             "no_vn_overlay": bool(_args.no_vn_overlay),
@@ -642,8 +724,9 @@ def main() -> int:
     print(f"  Journey calibration:  KS={ks_mean:.3f} "
           f"({'PASS ✓' if ks_pass else 'FAIL ✗'})  "
           f"mean_t={mt_mean:.3f} ({'PASS ✓' if mt_pass else 'FAIL ✗'})")
-    print(f"  L1 Fisher-z: valence r={r_v:.3f} CI{list(ci_v)}  "
-          f"arousal r={r_a:.3f} CI{list(ci_a)}")
+    print(f"  L1 Fisher-z: valence r={r_v:.3f} CI{list(ci_v)} (vs ICEAS — valid construct)")
+    print(f"  Whiteford colour↔music tempo: ρ(lightness,BPM)={rho_lb:+.3f} "
+          f"ρ(saturation,BPM)={rho_sb:+.3f}  ({'PASS ✓' if tempo_ok else 'FAIL ✗'} — V38 arousal validated on measured tempo)")
     print(f"  Construct validity: r(V,A)={r_va:+.4f} "
           f"{'✓' if va_ortho_pass else '✗'}  "
           f"coverage={cov_va:.3f}  entropy={ent_va:.3f}")

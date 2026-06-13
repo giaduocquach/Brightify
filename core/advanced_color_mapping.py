@@ -336,14 +336,28 @@ class AdvancedColorMapper:
         # saturated green/blue (wrong). VM is saturation-dominant for ALL hues and is the
         # large-sample, factorial-design authority. Affine-calibrated to the ICEAS scale
         # (tools/color_va_model_compare.py): a=0.2450, b=0.4274. w_hue=0.10.
-        from config import COLOR_AROUSAL_INTERACTION, COLOR_AROUSAL_ICEAS_FIT, COLOR_VA_VALDEZ
-        if COLOR_VA_VALDEZ:
+        from config import (COLOR_AROUSAL_INTERACTION, COLOR_AROUSAL_ICEAS_FIT,
+                            COLOR_VA_VALDEZ, COLOR_AROUSAL_WHITEFORD)
+        if COLOR_AROUSAL_WHITEFORD:
+            # V38: colour↔MUSIC arousal (Whiteford 2018, the correct construct for a music
+            # recommender). Spearman weights redness +.755, sat +.720, darkness −.549 →
+            # normalised +0.373·redness +0.356·sat +0.271·LIGHTNESS (sign of the lightness term
+            # corrected vs the legacy +darkness bug). Faster/energetic music ↔ lighter/saturated
+            # colours; slower ↔ darker → so dark/somber colours map to LOW arousal (slow-sad).
+            # Affine (slope≈1, −0.10 shift) maps the real-colour raw range [0.22,0.96] to
+            # ≈[0.12,0.86] of the V-A space without clipping (preserves ordering).
+            araw = 0.373 * redness + 0.356 * s01 + 0.271 * l01
+            arousal = float(np.clip(araw - 0.10, 0, 1))
+        elif COLOR_VA_VALDEZ:
             arousal = float(np.clip(
                 0.2450 * (0.60 * s01 - 0.31 * l01 + 0.10 * redness) + 0.4274, 0, 1))
         elif COLOR_AROUSAL_ICEAS_FIT:
             arousal = float(np.clip(0.2258 + 0.1719 * redness + 0.0867 * s01
                                     + 0.2206 * (1 - l01), 0, 1))
         elif achromatic:
+            # ROLLBACK-ONLY: unreachable under the default V38 flags (Whiteford handles
+            # achromatic via lightness). Active only if ALL of WHITEFORD/VALDEZ/ICEAS_FIT
+            # are disabled — kept as a legacy fallback, not part of the shipped path.
             arousal = float(np.clip(0.50 - 0.35 * l01, 0, 1))
         elif COLOR_AROUSAL_INTERACTION:
             arousal = float(np.clip(

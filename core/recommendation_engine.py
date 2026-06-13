@@ -150,7 +150,15 @@ class MusicRecommender:
                     norms = np.linalg.norm(mert_raw, axis=1, keepdims=True)
                     norms[norms == 0] = 1
                     self.mert_matrix = (mert_raw / norms).astype(np.float32)
-                    logger.info(f"[MERT] Loaded {self.mert_matrix.shape} embeddings")
+                    # V37: anisotropy-corrected (mean-centred + renormalised) MERT for
+                    # acoustic-coherence scoring. Raw MERT cosines saturate ~0.9 (narrow
+                    # cone) so they can't discriminate "feel alike"; centring restores
+                    # dynamic range (random≈0.0 vs near-neighbour≈0.45). See _coherent_cluster_select.
+                    mc = self.mert_matrix - self.mert_matrix.mean(axis=0, keepdims=True)
+                    mcn = np.linalg.norm(mc, axis=1, keepdims=True)
+                    mcn[mcn == 0] = 1
+                    self.mert_centered = (mc / mcn).astype(np.float32)
+                    logger.info(f"[MERT] Loaded {self.mert_matrix.shape} embeddings (+centred for coherence)")
                 else:
                     logger.warning(
                         f"[MERT] Shape mismatch {mert_raw.shape} — expected ({self.n_songs}, D) — disabled"
@@ -413,6 +421,10 @@ class MusicRecommender:
             rv = (rankdata(self.song_va[:, 0]) - 1) / denom
             ra = (rankdata(self.song_va[:, 1]) - 1) / denom
             self.song_va_match = np.column_stack([rv, ra]).astype(float)
+            # V36: sorted catalog raw V-A so a colour's raw value can be mapped through the
+            # catalog's empirical CDF to its target quantile (see _color_target_quantile).
+            self._va_sorted_v = np.sort(self.song_va[:, 0])
+            self._va_sorted_a = np.sort(self.song_va[:, 1])
             # Ensure no stale linear calibration leaks into hsl_to_va.
             if hasattr(self.color_mapper, 'set_va_calibration'):
                 self.color_mapper._va_cal = None
@@ -430,6 +442,18 @@ class MusicRecommender:
         self._va_cal = cal
         if hasattr(self.color_mapper, 'set_va_calibration'):
             self.color_mapper.set_va_calibration(**cal)
+
+    def _color_target_quantile(self, cva) -> np.ndarray:
+        """Map a colour's raw V-A to its percentile within the catalog's own mood
+        distribution (V36). Raw colour arousal only spans ~[0.33,0.62], so using it
+        directly as a rank target crushes every colour into the catalog's middle band.
+        Mapping through the catalog empirical CDF spreads the 12 colours across the full
+        [0,1] mood range so each retrieves a distinct region. Only meaningful in
+        rank-match mode (match space = catalog CDF ranks)."""
+        nv = len(self._va_sorted_v)
+        qv = float(np.searchsorted(self._va_sorted_v, cva[0]) / nv)
+        qa = float(np.searchsorted(self._va_sorted_a, cva[1]) / nv)
+        return np.clip(np.array([qv, qa]), 0.0, 1.0)
 
     # 8 CLAP emotion labels → Russell mood quadrant string (format the API expects:
     # "QN: Name", consumed via startswith('QN') in /api/moods and contains() in filter)
@@ -599,6 +623,16 @@ class MusicRecommender:
         """
         per_color_va = np.asarray(per_color_va, dtype=float)
 
+        # V36: map each colour's raw V-A through the catalog CDF to its target quantile,
+        # so the 12 colours span the full catalog instead of the middle band (fixes "every
+        # colour feels mid/sad"). Centralised here so all downstream paths — single-colour
+        # RBF, multi-colour RRF, journey waypoints, adaptive-σ, quadrant bonus — use the
+        # same spread targets against song_va_match (catalog ranks).
+        if (COLOR_VA_RANK_MATCH and COLOR_VA_CDF_TARGET
+                and getattr(self, '_va_sorted_v', None) is not None):
+            per_color_va = np.array(
+                [self._color_target_quantile(c) for c in per_color_va], dtype=float)
+
         # Centroid for quadrant display only (no penalty applied in F3).
         query_va_centroid = per_color_va.mean(axis=0)
 
@@ -670,11 +704,18 @@ class MusicRecommender:
                 alpha = COLOR_CALIBRATION_ALPHA
                 final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
 
+            # V37: acoustic-coherence selection — V-A picks the mood region, MERT makes
+            # the set an on-vibe cluster (feel alike + feel like the colour). Supersedes the
+            # V-A-diversity MMR below (which scattered results). Falls back if MERT missing.
+            if COLOR_ACOUSTIC_COHERENCE and getattr(self, 'mert_matrix', None) is not None:
+                chosen = self._coherent_cluster_select(
+                    final_scores, top_k, diversity_penalty)
+                res = self._build_result_df(chosen)
             # P2 (V29): V-A space Euclidean MMR — over-fetch then re-rank for ILD.
             # Fixes red/black ILD_raw≈0.013-0.024 (vs blue 0.063 reference).
             # Uses Euclidean distance in V-A space (not cosine) for meaningful
             # diversity within a small V-A neighborhood.
-            if COLOR_MMR_VA_DIVERSITY:
+            elif COLOR_MMR_VA_DIVERSITY:
                 lam = COLOR_MMR_VA_LAMBDA
                 n_cand = min(top_k * 5, self.n_songs)
                 top_cands = np.argsort(final_scores)[::-1][:n_cand]
@@ -777,6 +818,68 @@ class MusicRecommender:
             res['why'] = whys
         return res
 
+    def _coherent_cluster_select(self, scores: np.ndarray, top_k: int,
+                                 diversity_penalty: float) -> list[int]:
+        """V37: acoustically-coherent on-mood selection for recommend-by-color.
+
+        V-A relevance (`scores`, the heteroscedastic RBF) picks the colour's mood region;
+        MERT cosine to the growing set's centroid makes the chosen songs an acoustically
+        tight cluster — so a colour's songs feel alike AND feel like that colour. This is
+        the inverse objective of the old V-A-diversity MMR (which scattered results).
+        Artist-uniqueness penalty + cover filter keep variety. Basis: similar-song's MERT
+        backbone (Li 2023 / MARBLE) is what gives perceptual coherence; V-A alone (2
+        numbers) cannot carry timbre. α = COLOR_COHERENCE_ALPHA balances the two.
+        """
+        alpha = COLOR_COHERENCE_ALPHA
+        n_cand = min(top_k * COLOR_COHERENCE_OVERFETCH, self.n_songs)
+        cand = np.argsort(scores)[::-1][:n_cand]               # top V-A candidates (global idx)
+        rel = scores[cand].astype(float)
+        rel = (rel - rel.min()) / (rel.max() - rel.min() + 1e-9)   # → [0,1]
+        # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster
+        M = (getattr(self, 'mert_centered', None) if getattr(self, 'mert_centered', None) is not None
+             else self.mert_matrix)[cand]                      # (n_cand, D), L2-normalised
+        artists = (self.df[self.artist_col].fillna('__unknown__').values
+                   if self.artist_col else None)
+        cover_excl = getattr(self, '_cover_exclude', {}) if ENABLE_COVER_FILTER else {}
+
+        selected: list[int] = []         # local indices into `cand`
+        remaining = list(range(len(cand)))
+        blocked: set = set()             # global idxs blocked by the cover filter
+        artist_counts: dict = {}
+        centroid = None
+
+        while len(selected) < top_k and remaining:
+            if centroid is None:
+                combo = rel[remaining].copy()                  # seed = best V-A song
+            else:
+                coh = M[remaining] @ centroid                  # cosine (M is normalised)
+                combo = alpha * rel[remaining] + (1.0 - alpha) * coh
+            if diversity_penalty > 0 and artists is not None:
+                for j, li in enumerate(remaining):
+                    cnt = artist_counts.get(artists[cand[li]], 0)
+                    if cnt:
+                        combo[j] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
+            pick = None
+            for j in np.argsort(combo)[::-1]:
+                li = remaining[int(j)]
+                if int(cand[li]) in blocked:
+                    continue
+                pick = li
+                break
+            if pick is None:
+                break
+            selected.append(pick)
+            remaining.remove(pick)
+            gi = int(cand[pick])
+            sel_M = M[selected].mean(0)
+            centroid = sel_M / (np.linalg.norm(sel_M) + 1e-9)
+            if artists is not None:
+                a = artists[gi]
+                artist_counts[a] = artist_counts.get(a, 0) + 1
+            blocked |= cover_excl.get(gi, set())
+
+        return [int(cand[li]) for li in selected]
+
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
                                   diversity_penalty: float) -> list[int]:
         """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
@@ -814,11 +917,15 @@ class MusicRecommender:
         waypoints = p1[None, :] + ts[:, None] * (p2 - p1)[None, :]  # (K, 2)
 
         match_va = getattr(self, 'song_va_match', self.song_va)
+        # V39: audio-smoothness setup — centred MERT + per-song BPM for continuity bonus.
+        smooth = COLOR_JOURNEY_AUDIO_SMOOTH
+        M = getattr(self, 'mert_centered', None) if smooth else None
+        bpm = self._journey_bpm_array() if smooth else None
         for wp in waypoints:
             dv = match_va[:, 0] - wp[0]
             da = match_va[:, 1] - wp[1]
             scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
-            
+
             scores[excluded] = -1.0
 
             # Mild diversity penalty (cap repeat-artist contribution at 3)
@@ -827,6 +934,18 @@ class MusicRecommender:
                     cnt = artist_counts.get(artists[i], 0)
                     if cnt:
                         scores[i] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
+
+            # V39: continuity bonus — reward acoustic closeness to the previous pick so the
+            # journey also flows in tempo/timbre, not just V-A (Knopke 2018; iso-principle).
+            if smooth and selected:
+                prev = selected[-1]
+                cont = np.zeros(n, dtype=float)
+                if M is not None:
+                    cont += 0.5 * np.clip(M @ M[prev], -1, 1)        # centred-MERT timbre sim
+                if bpm is not None and not np.isnan(bpm[prev]):
+                    cont += 0.5 * np.exp(-np.abs(bpm - bpm[prev]) / COLOR_JOURNEY_BPM_TAU)
+                pos = scores > 0
+                scores[pos] = scores[pos] + COLOR_JOURNEY_SMOOTH_GAMMA * cont[pos]
 
             best = int(np.argmax(scores))
             if scores[best] <= 0:
@@ -838,6 +957,26 @@ class MusicRecommender:
                 artist_counts[art] = artist_counts.get(art, 0) + 1
 
         return selected
+
+    def _journey_bpm_array(self) -> "np.ndarray | None":
+        """Per-song clean BPM aligned to catalog order (NaN where missing); cached. V39."""
+        if hasattr(self, '_bpm_arr'):
+            return self._bpm_arr
+        import json as _json
+        arr = np.full(self.n_songs, np.nan, dtype=float)
+        path = "data/clean_bpm.json"
+        if os.path.exists(path):
+            try:
+                d = _json.load(open(path))
+                tids = self.df['track_id'].astype(str).values
+                for i, t in enumerate(tids):
+                    v = d.get(t)
+                    if v:
+                        arr[i] = float(v)
+            except Exception as e:
+                logger.warning(f"[journey] BPM load failed: {e}")
+        self._bpm_arr = arr
+        return arr
 
     def _build_result_df(self, idxs: list[int]):
         """Build a result DataFrame from a list of song indices (for journey)."""
