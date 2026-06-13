@@ -24,7 +24,7 @@ import config as cfg
 
 MODEL_ID = os.environ.get("VN_SENT_BACKBONE", "uitnlp/visobert")
 DATASET  = os.environ.get("VN_SENT_DATASET", "tridm/UIT-VSMEC")
-OUT      = "data/vnsent_grounded_valence.json"
+OUT      = os.environ.get("VN_SENT_OUT", "data/vnsent_grounded_valence.json")
 CACHE    = os.environ.get("HF_CACHE_DIR", cfg.HF_CACHE_DIR)
 SENT2VAL = {"negative": 0.0, "neutral": 0.5, "positive": 1.0}
 # VSMEC emotion → the NRC-VAD valence of that emotion word (grounded, NOT self-made).
@@ -45,6 +45,17 @@ def _nrc_emotion_valence() -> dict:
     return {emo: (vmap[w] if w else 0.5) for emo, w in EMOTION2WORD.items()}
 
 
+SEGMENT = os.environ.get("VN_SENT_SEGMENT", "0") == "1"  # PhoBERT needs word-segmentation (pyvi)
+_SEG = None
+if SEGMENT:
+    from pyvi import ViTokenizer
+    _SEG = ViTokenizer.tokenize
+
+
+def _seg(text: str) -> str:
+    return _SEG(text) if _SEG else text
+
+
 def _chunks(text: str, n: int = N_CHUNKS) -> list[str]:
     words = text.split()
     if len(words) <= 180:
@@ -59,7 +70,8 @@ def _encode(texts, model, tok, device):
     out = []
     with torch.no_grad():
         for b in range(0, len(texts), BATCH):
-            enc = tok(texts[b:b + BATCH], padding=True, truncation=True,
+            batch = [_seg(t) for t in texts[b:b + BATCH]] if _SEG else texts[b:b + BATCH]
+            enc = tok(batch, padding=True, truncation=True,
                       max_length=MAX_LEN, return_tensors="pt").to(device)
             h = model(**enc).last_hidden_state            # (B, T, 768)
             m = enc["attention_mask"].unsqueeze(-1).float()

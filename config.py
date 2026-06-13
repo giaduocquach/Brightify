@@ -51,11 +51,14 @@ RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" 
 INPUT_FILE = str(DATA_DIR / "vietnamese_music_complete_dataset_full.csv")
 PROCESSED_FILE = str(DATA_DIR / "vietnamese_music_processed_full.csv")
 # VN Sentence-BERT (dangvantuan/vietnamese-embedding) replaces PhoBERT mean-pool.
-# PhoBERT mean-pool avg pairwise cosine = 0.856 (anisotropic — cosine nearly meaningless).
-# VN-SBERT SimCSE contrastive-trained: avg cosine = 0.544 — proper cosine geometry.
-# At 15% weight the aggregate metric improvement is small (MERT 75% dominates) but
-# the lyrics component now contributes real semantic signal rather than anisotropic noise.
-EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
+# Lyrics-similarity embedding (similar-song slot). V44 (2026-06-13): bake-off vs candidates
+# (BGE-M3, mDeBERTa, PhoBERT-large, MuQ-MuLan) — multilingual-e5-large (Wang et al. 2024, top-MTEB
+# multilingual) WON on similar-song coherence at 200 seeds (MoodCoherence/Symmetry/SelfConsistency
+# all ↑ vs the prior dangvantuan/vietnamese-embedding, at every lyrics weight; best at 0.08 = the
+# active weight). Rebuild: python -m tools.encode_lyrics --model intfloat/multilingual-e5-large \
+#   --out data/lyrics_e5large.npy   (mean-pooled, L2-normalised, "query: " prefix; gitignored artifact).
+EMBEDDINGS_FILE = os.environ.get("EMBEDDINGS_FILE", str(DATA_DIR / "lyrics_e5large.npy"))
+LYRICS_EMBED_MODEL = "intfloat/multilingual-e5-large"
 EMBEDDINGS_FILE_PHOBERT = str(DATA_DIR / "vietnamese_music_embeddings_full.npy")  # kept for ablation
 EMBEDDINGS_META_FILE = str(DATA_DIR / "embeddings_metadata.json")
 ARTIST_IMAGES_DATA_FILE = str(DATA_DIR / "artist_images.json")

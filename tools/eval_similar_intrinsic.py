@@ -242,6 +242,10 @@ def main() -> int:
 
     # Optionally inject multilayer MERT matrix for A/B comparison
     configs = dict(CONFIGS)
+    # Env-injected custom weight configs (for fair per-model weight sweeps), JSON: {name: [8 weights]}
+    _extra = os.environ.get("BRIGHTIFY_EVAL_CONFIGS")
+    if _extra:
+        configs.update({k: [float(x) for x in v] for k, v in json.loads(_extra).items()})
     ml_matrix = None
     if args.multilayer:
         ml_path = cfg.MERT_EMBEDDINGS_MULTILAYER_FILE

@@ -38,10 +38,12 @@ import config as cfg
 
 EMOBANK_URL  = "https://raw.githubusercontent.com/JULIELab/EmoBank/master/corpus/emobank.csv"
 EMOBANK_CSV  = "data/external/emobank.csv"
-EMOBANK_EMB  = "data/external/emobank_xlmr_cls.npy"
-CATALOG_EMB  = "data/catalog_xlmr_cls.npy"
-OUT_VALENCE  = "data/emobank_valence.json"
-MODEL_ID     = "xlm-roberta-base"
+MODEL_ID     = os.environ.get("EMOBANK_BACKBONE", "xlm-roberta-base")
+_POOLTAG     = "" if os.environ.get("EMOBANK_POOL", "cls") == "cls" else "_" + os.environ["EMOBANK_POOL"]
+_TAG         = ("xlmr" if MODEL_ID == "xlm-roberta-base" else MODEL_ID.split("/")[-1].replace("-", "_")) + _POOLTAG
+EMOBANK_EMB  = os.environ.get("EMOBANK_EMB", f"data/external/emobank_{_TAG}_cls.npy")
+CATALOG_EMB  = os.environ.get("EMOBANK_CATALOG_EMB", f"data/catalog_{_TAG}_cls.npy")
+OUT_VALENCE  = os.environ.get("EMOBANK_OUT", "data/emobank_valence.json")
 BATCH_SIZE   = 32
 MAX_LENGTH   = 128
 GATE_CCC     = 0.50   # in-domain EmoBank held-out; cross-lingual will be lower
@@ -55,14 +57,20 @@ def _ccc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(2 * sig_t * sig_p * rho / (sig_t**2 + sig_p**2 + (mu_t - mu_p)**2 + 1e-9))
 
 
+POOL = os.environ.get("EMOBANK_POOL", "cls")  # "cls" or "mean" (DeBERTa [CLS] is weak → mean fairer)
+
+
 def _encode_batch(texts: list[str], model, tokenizer, device) -> np.ndarray:
-    """Return [CLS] embeddings (N, 768) for a list of strings."""
+    """Return sentence embeddings (N, H): [CLS] or masked mean-pool per EMOBANK_POOL."""
     import torch
     enc = tokenizer(texts, padding=True, truncation=True, max_length=MAX_LENGTH,
                     return_tensors="pt").to(device)
     with torch.no_grad():
-        out = model(**enc)
-    return out.last_hidden_state[:, 0, :].cpu().float().numpy()
+        h = model(**enc).last_hidden_state
+    if POOL == "mean":
+        m = enc["attention_mask"].unsqueeze(-1).float()
+        return ((h * m).sum(1) / m.sum(1).clamp(min=1e-9)).cpu().float().numpy()
+    return h[:, 0, :].cpu().float().numpy()
 
 
 def build_embeddings() -> None:

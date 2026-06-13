@@ -185,3 +185,36 @@ predictions collapsed (std 0.05, ρ vs served 0.14) → VSMEC's social-media reg
 **All lyrics-emotion signals are now fully grounded:** vn_lex (NRC-VAD-VN + VnEmoLex), vn_sent
 (ViSoBERT + UIT-VSMEC + NRC-VAD), emobank (XLM-R + EmoBank) — each = published dataset + frozen
 backbone + linear probe, no fine-tuning, no community blackbox, LLM-free at serving.
+
+---
+
+# V44 (2026-06-13) — model bake-off: adopt e5-large for lyrics-similarity; others verified best (fair)
+
+Full SOTA-candidate bake-off for every learned component, each judged on the END-metric (not the
+backbone's own benchmark) and — critically — RE-TUNED at its OWN optimal settings before judging
+(the project's standing lesson). Adopt only if it beats the active model decisively.
+
+| Slot | Candidate | Fair setting applied | End-metric result | Verdict |
+|---|---|---|---|---|
+| lyrics-sim | **multilingual-e5-large** (Wang 2024) | lyrics-weight sweep 0.08–0.20 | MoodCoherence/Symmetry/SelfConsistency ↑ vs vnsbert at EVERY weight (200 seeds); best @0.08 | **ADOPT** |
+| lyrics-sim | BGE-M3 | same sweep | also > vnsbert, but e5 better overall | reject (2nd) |
+| audio | MuQ-MuLan (Tencent) | audio-weight sweep 0.70–0.88 | colour-TE 0.0263>0.0242, MoodCoherence < MuQ | reject — keep MuQ |
+| vn_sent | PhoBERT-large (VinAI) | + word-segmentation (pyvi) | CV R² 0.403>ViSoBERT 0.348 but colour-TE 0.0239≈0.0242 | **tie** — keep ViSoBERT |
+| emobank | mDeBERTa-v3 | + mean-pool (not [CLS]) | CCC 0.489<XLM-R 0.546, colour-TE 0.0259>0.0242 | reject — keep XLM-R |
+
+**Adopted:** `EMBEDDINGS_FILE → data/lyrics_e5large.npy` (intfloat/multilingual-e5-large, mean-pooled,
+"query: " prefix). Lyrics weight unchanged (0.08 was already its optimum). MuQ / ViSoBERT / XLM-R kept.
+
+**Methodological notes (honest):**
+- Fair re-tuning CHANGED one verdict: PhoBERT-large went rejected→tie once segmentation was added
+  (the first pass without VnCoreNLP/pyvi was an unfair handicap). It is now a legitimate equal to
+  ViSoBERT; ViSoBERT kept on secondary grounds (social-media domain match for lyric register; no
+  segmentation dependency; ~4× smaller). PhoBERT used pyvi, not its native VnCoreNLP — a residual
+  gap that would lift its in-domain CV but not flip the ensemble-dominated colour-TE tie.
+- MuQ-MuLan is designed for cross-modal (text↔music) retrieval, NOT intra-modal audio similarity;
+  no published benchmark compares it to MuQ on this task, and CLIP-style theory predicts the
+  text-projected embedding loses acoustic detail → our result (worse coherence) is consistent.
+  Residual test gaps (single-clip vs MuQ's multi-clip; un-retuned COLOR_COHERENCE_ALPHA) left
+  intentionally — non-decisive given theory + the end-metric direction.
+- Lesson reaffirmed: 3/4 SOTA-on-paper candidates did NOT beat the task's end-metric; only e5-large
+  did. Benchmark rank ≠ end-metric fit. Tools: encode_lyrics.py, run_fair_rerun.sh, run_candidate_gates.sh.
