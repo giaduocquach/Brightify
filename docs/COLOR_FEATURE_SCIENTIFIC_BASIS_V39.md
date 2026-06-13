@@ -111,3 +111,23 @@ SelfConsistency +0.045, Symmetry +0.055). **Adopted** (`AUDIO_BACKBONE="muq"`; s
 colour-coherence, valence-audio). Cover index (precomputed on MERT) unaffected. Tools:
 `muq_mert_compare.py`, `muq_migration.py`. Lesson: a model's MARBLE-benchmark edge transfers to our
 VN end-metrics **only after per-task re-optimization** — fixed incumbent weights masked it.
+
+---
+
+# V41 (2026-06-13) — MuQ-arousal adopted (full MuQ backbone consistency)
+
+The arousal label was the last MERT-based piece. Re-tested MuQ-arousal in the post-V40 context.
+At the MERT-inherited tempo weight (0.15) it failed tempo-tracking (ρ(A,BPM)=0.147) — **but that
+weight was wrong for MuQ**: MERT-arousal partially encodes tempo, MuQ does not (ρ≈0 vs BPM), so MuQ
+needs a HIGHER explicit tempo weight. Sweeping (`tools/tune_muq_arousal.py`) found **w_tempo=0.35**:
+DEAM-human-CV **0.692** (> MERT 0.647) AND ρ(A,BPM) **0.466** (clears the 0.20 target both prior
+versions failed), colour-TE **0.0246** ≈ v6h (tie), TE-ordering ALL PASS, journey ✓, r(V,A)=0.114,
+similar-song intrinsic 4 improvements. **Adopted (v6i, `tools/build_v6i_labels.py`).** Now ONE
+consistent backbone everywhere: MuQ for similarity, colour-coherence, valence-audio probe, AND
+arousal probe (+explicit tempo/loudness). MERT remains only in the precomputed cover index + as
+rollback.
+
+**Methodological lesson (thesis-worthy):** a SOTA model (MuQ) first *regressed* the end metric not
+because it was worse, but because it was evaluated with the **incumbent's hyperparameters** (MERT's
+tempo weight). Re-optimizing the new model's own weights flipped it to a clear win. Always re-tune a
+new component's hyperparameters before judging it — don't inherit the old one's settings.

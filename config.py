@@ -632,7 +632,7 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # orthogonality ✓); Whiteford-tempo + journey + ICEAS valence hold. Cost: valence ρ vs
 # GPT 0.71→0.67 / Gemini 0.64→0.56 (small; that agreement is partly circular). Tools:
 # build_grounded_vnlex.py (NRC-VAD-VN) → build_v6h_labels.py.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6h.json")  # grounded NRC-VAD-VN valence + v6f arousal
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6i.json")  # v6h grounded valence + MuQ-arousal (wt=0.35) — full MuQ backbone (V41)
 VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
