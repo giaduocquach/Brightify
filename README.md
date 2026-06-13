@@ -135,18 +135,18 @@ brightify/
 
 ## Documentation
 
-- **[docs/DETAILED_PROJECT_ANALYSIS.md](docs/DETAILED_PROJECT_ANALYSIS.md)** — Comprehensive system analysis (14 sections, 1800+ lines)
 - **[docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)** — High-level architecture overview
+- **[docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md](docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md)** — Comprehensive system audit + upgrade plan
 - **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)** — Endpoint documentation
 - **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** — DB schema + ERD
 - **[docs/DATA_PIPELINE.md](docs/DATA_PIPELINE.md)** — Pipeline phases
+- **[docs/PIPELINE_DIAGRAMS.md](docs/PIPELINE_DIAGRAMS.md)** — Serving-state diagrams (V36–V39)
 - **[docs/PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md](docs/PLAN_PRODUCTION_DATA_ARCHITECTURE_V24.md)** — Production data layout, DB scope, keep/drop plan
 - **[docs/RESEARCH_FOUNDATIONS.md](docs/RESEARCH_FOUNDATIONS.md)** — Academic references (20+ papers)
-- **[docs/AI_FEATURE_EVALUATION.md](docs/AI_FEATURE_EVALUATION.md)** — AI engine evaluation
+- **[docs/COLOR_FEATURE_SCIENTIFIC_BASIS_V39.md](docs/COLOR_FEATURE_SCIENTIFIC_BASIS_V39.md)** — Recommend-by-color scientific basis (current)
 - **[docs/MARKET_ANALYSIS_REPORT.md](docs/MARKET_ANALYSIS_REPORT.md)** — Competitor analysis
-- **[docs/PLAN_SYSTEM_UPGRADE.md](docs/PLAN_SYSTEM_UPGRADE.md)** — v8.0 upgrade plan (MERT, ViDeBERTa, hybrid retrieval, ...)
-- **[docs/PLAN_BACKTEST_METRICS.md](docs/PLAN_BACKTEST_METRICS.md)** — Backtest framework + evaluation metrics
 - **[docs/PLAN_DOCKERIZATION.md](docs/PLAN_DOCKERIZATION.md)** — Docker deployment (master data layout)
+- _Historical planning/research docs are archived under `docs/archive/`._
 
 ## Research foundations
 
@@ -168,7 +168,7 @@ Full citations in [docs/RESEARCH_FOUNDATIONS.md](docs/RESEARCH_FOUNDATIONS.md).
 
 - **Current version**: v7.1 (codebase) / v7.2 (after PhoBERT v2 + DEAM upgrade)
 - **Catalog size**: ~4,300+ Vietnamese songs
-- **In progress**: v8.0 upgrade plan (xem [PLAN_SYSTEM_UPGRADE.md](docs/PLAN_SYSTEM_UPGRADE.md))
+- **In progress**: xem [docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md](docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md)
 
 ## License
 
