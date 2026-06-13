@@ -131,3 +131,28 @@ rollback.
 because it was worse, but because it was evaluated with the **incumbent's hyperparameters** (MERT's
 tempo weight). Re-optimizing the new model's own weights flipped it to a clear win. Always re-tune a
 new component's hyperparameters before judging it — don't inherit the old one's settings.
+
+---
+
+# V42 (2026-06-13) — lexicon fully published (no self-made) + tech-debt cleanup
+
+## Valence lexicon now grounded in TWO published resources (auto-translation improved)
+The served valence (v6i) was already 100% NRC-VAD-VN (no self-made valence words — the earlier
+"GenZ slang" note referred to the *retired* hand lexicon, not the grounded build). To reduce the
+auto-translation caveat, the build now **cross-checks NRC-VAD-VN against the native VnEmoLex**
+(Zenodo 801610, 10,627 VN words w/ polarity): drops words whose NRC-VAD-VN valence sign CONFLICTS
+with VnEmoLex's native polarity (10 likely mistranslations removed) and adds 236 native VN words
+NRC lacks. Coverage 98.2%→**99.3%**; vn_lex EWE reliability 0.78→0.79; colour-TE 0.0250 (no
+regression); all gates green. Every valence word now traces to **NRC-VAD (Mohammad 2018) and/or
+VnEmoLex** — no subjective scores. Only remaining hand element: a 10-word negation list (standard
+closed-class NLP, not valence scores). `tools/build_grounded_vnlex.py` (+VnEmoLex).
+
+## Remaining inherent limitations (cannot fix offline — honest)
+- **n=12 colours / VN not in ICEAS-30:** ICEAS studied exactly the 12 basic colour TERMS, so there
+  are no "more colours" to validate on; no VN-native colour-emotion dataset exists. LOO-CV (r≈0.87)
+  is the held-out validation available. Fixing requires new human colour-emotion data (out of scope:
+  no user-data collection). Stated as a limitation, not papered over.
+- **Cover index built on MERT (backbone is MuQ):** intentional — cover/duplicate detection is a
+  separate semantic-dedup task (a precomputed track→covers exclusion list), validated on MERT and
+  backbone-independent at serving. Not rebuilt on MuQ to avoid re-calibrating thresholds for zero
+  benefit (the list already identifies the real covers). Documented as a deliberate choice.

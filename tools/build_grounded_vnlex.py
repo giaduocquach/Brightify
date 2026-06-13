@@ -18,9 +18,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config as cfg
 
 NRC_VN = "data/external/lexicons/NRC-VAD-Lexicon/OneFilePerLanguage/Vietnamese-NRC-VAD-Lexicon.txt"
+VNEMOLEX = "data/external/lexicons/VnEmoLex.xlsx"   # native VN published (Zenodo 801610)
 OUT = "data/vnlex_grounded_valence.json"
 NEGATORS = {"không", "chẳng", "chả", "đừng", "chưa", "đâu", "khỏi", "kohng", "ko", "k"}
 MIN_WORDS = 2  # need ≥2 matched affective words to score a song
+
+
+def _load_vnemolex():
+    """Native VN polarity → valence proxy. Positive→0.75, Negative→0.25 (both/neither → skip)."""
+    import pandas as pd
+    df = pd.read_excel(VNEMOLEX)
+    out = {}
+    for r in df.itertuples(index=False):
+        w = str(getattr(r, "Vietnamese", "")).strip().lower()
+        pos, neg = int(getattr(r, "Positive", 0) or 0), int(getattr(r, "Negative", 0) or 0)
+        if not w or pos == neg:        # neutral / ambiguous → no valence signal
+            continue
+        out[w] = 0.75 if pos else 0.25
+    return out
 
 
 def _load_nrc_vn():
@@ -49,6 +64,18 @@ def main() -> int:
     import pandas as pd
     uni, bi = _load_nrc_vn()
     print(f"[grounded] NRC-VAD-VN affective words: {len(uni)} unigram, {len(bi)} bigram")
+    # ── cross-check + augment with native VnEmoLex (improves auto-translation quality) ──
+    vnemo = _load_vnemolex()
+    dropped = added = 0
+    for w, vv in list(uni.items()):                 # drop NRC unigrams whose SIGN conflicts native
+        ev = vnemo.get(w)
+        if ev is not None and (vv - 0.5) * (ev - 0.5) < 0:   # opposite polarity → likely mistranslation
+            del uni[w]; dropped += 1
+    for w, ev in vnemo.items():                      # add native words NRC lacks
+        if " " not in w and w not in uni:
+            uni[w] = ev; added += 1
+    print(f"[grounded] VnEmoLex cross-check: dropped {dropped} sign-conflict (mistranslation), "
+          f"added {added} native words → {len(uni)} unigram total")
     df = pd.read_csv(cfg.PROCESSED_FILE)
     lyc = next(c for c in ["lyrics_cleaned", "lyrics", "plain_lyrics"] if c in df.columns)
     tids = df["track_id"].astype(str).tolist()

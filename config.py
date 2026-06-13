@@ -83,8 +83,8 @@ VN_SENTIMENT_VALENCE_FILE = str(DATA_DIR / "vn_sentiment_valence.json")
 # ============================================================================
 # Audio Features
 # ============================================================================
-# Active signals in RECO_SONG_WEIGHTS_MERT: mert(0.82) + va(0.12) + lyrics(0.06)
-# timbral/rhythmic/tonal slots all weight=0 (Essentia degenerate at 44.1kHz).
+# Active signals (V40/V41): audio backbone = MuQ (AUDIO_BACKBONE) cosine 0.76 + va 0.16 +
+# lyrics 0.08. timbral/rhythmic/tonal slots all weight=0 (Essentia degenerate at 44.1kHz).
 # Features kept: used in VA computation, UI display, or journey scoring.
 # Features removed from AUDIO_FEATURES vs legacy:
 #   acousticness, speechiness, instrumentalness, liveness — weight=0, not used in ranking
@@ -99,7 +99,7 @@ AUDIO_FEATURES = [
     'loudness',      # For UI display
     'key',           # Musical key (0-11) — for Camelot/harmonic mix
     'mode',          # Major (1) / Minor (0) — color mapping, valence proxy
-    'arousal',       # DEAM arousal (MERT-probe, R²=0.58) — song_va primary
+    'arousal',       # DEAM arousal — song_va primary (V41: MuQ-probe+tempo+loudness, DEAM-CV 0.69)
 ]
 
 # Normalized features (0-1 scale) — subset of AUDIO_FEATURES
