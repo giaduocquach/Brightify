@@ -149,3 +149,6 @@ CLAUDE.md
 .direnv/
 node_modules/
 backups/
+
+# Thesis LaTeX template (not part of the application)
+SOICT_DATN_Application_VIE_Template/

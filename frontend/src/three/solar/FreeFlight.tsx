@@ -18,7 +18,7 @@ const R = 12; // wander envelope radius
 
 // Free-flight ("similar songs"): the pod wanders a smooth Lissajous path through open
 // space past floating song nodes (title + artist). Driving the pod here means the
-// CameraRig "fly" chase + the seated chibi follow along. The node the pod is nearest
+// third-person camera follow + the seated chibi follow along. The node the pod is nearest
 // to the playing track (store.index) glows brightest.
 export default function FreeFlight() {
   const tracks = useStore((s) => s.flyTracks);
@@ -60,12 +60,14 @@ export default function FreeFlight() {
               opacity={k === index ? 0.95 : 0.4}
               blending={AdditiveBlending} depthWrite={false} />
           </sprite>
-          <Html center distanceFactor={11} position={[0, 0.9, 0]} pointerEvents="none">
-            <div className={`song-card${k === index ? ' is-active' : ''}`}>
-              <span className="song-card-title">{track.track_name}</span>
-              <span className="song-card-artist">{track.artist}</span>
-            </div>
-          </Html>
+          {k === index && (
+            <Html center distanceFactor={3} position={[0, 0.9, 0]} pointerEvents="none">
+              <div className="song-card is-active">
+                <span className="song-card-title">{track.track_name}</span>
+                <span className="song-card-artist">{track.artist}</span>
+              </div>
+            </Html>
+          )}
         </group>
       ))}
     </group>

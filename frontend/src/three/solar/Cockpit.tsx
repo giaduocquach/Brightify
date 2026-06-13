@@ -49,12 +49,14 @@ export default function Cockpit() {
               opacity={k === index ? 0.95 : 0.45}
               blending={AdditiveBlending} depthWrite={false} />
           </sprite>
-          <Html center distanceFactor={9} position={[0, 0.9, 0]} pointerEvents="none">
-            <div className={`song-card${k === index ? ' is-active' : ''}`}>
-              <span className="song-card-title">{t.track_name}</span>
-              <span className="song-card-artist">{t.artist}</span>
-            </div>
-          </Html>
+          {k === index && (
+            <Html center distanceFactor={3} position={[0, 0.9, 0]} pointerEvents="none">
+              <div className="song-card is-active">
+                <span className="song-card-title">{t.track_name}</span>
+                <span className="song-card-artist">{t.artist}</span>
+              </div>
+            </Html>
+          )}
         </group>
       ))}
     </group>

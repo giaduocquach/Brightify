@@ -1,21 +1,28 @@
 import { Suspense, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars, useTexture } from '@react-three/drei';
-import { ACESFilmicToneMapping, BackSide, SRGBColorSpace, type Points } from 'three';
+import { EffectComposer, Bloom, SMAA, Vignette } from '@react-three/postprocessing';
+import { ACESFilmicToneMapping, AdditiveBlending, BackSide, Color, SRGBColorSpace, type Group, type Points } from 'three';
 import { useStore } from '../../state/store';
 import { BODIES, MILKYWAY_TEXTURE, OUTER_RADIUS } from './bodies';
 import { textureUrl } from './textureUrls';
+import { glowTexture } from './glow';
 import CelestialBody from './CelestialBody';
 import Sun from './Sun';
 import OrbitRings from './OrbitRings';
-import CameraRig from './CameraRig';
+import FocusController from './FocusController';
 import Astronaut from './Astronaut';
 import Spaceship from './Spaceship';
 import Cockpit from './Cockpit';
+import CockpitInterior from './CockpitInterior';
+import WarpStreaks from './WarpStreaks';
 import SurfaceRun from './SurfaceRun';
 import FreeFlight from './FreeFlight';
 
-const DPR_MAX = typeof window !== 'undefined' && window.innerWidth < 768 ? 1.5 : 2;
+const IS_MOBILE = typeof window !== 'undefined' && window.innerWidth < 768;
+const DPR_MAX = IS_MOBILE ? 1.5 : 2;
+const STAR_COUNT = IS_MOBILE ? 3500 : 6500;
+const NEBULA_COUNT = IS_MOBILE ? 4 : 9;
 
 function MilkyWay() {
   const tex = useTexture(textureUrl(MILKYWAY_TEXTURE));
@@ -25,6 +32,38 @@ function MilkyWay() {
       <sphereGeometry args={[1, 32, 32]} />
       <meshBasicMaterial map={tex} side={BackSide} depthWrite={false} />
     </mesh>
+  );
+}
+
+// Soft far-field nebula clouds — big additive sprites that drift slowly and tint the
+// void with colour (they catch the bloom pass, giving a glowing-gas feel). Deterministic
+// placement (no Math.random) so it's stable across renders.
+function Nebula() {
+  const ref = useRef<Group>(null);
+  const tex = glowTexture();
+  const puffs = useMemo(() => {
+    const HUES = ['#5b3fb0', '#2f6db0', '#b04f8a', '#2f9e8f'];
+    return Array.from({ length: NEBULA_COUNT }, (_, i) => {
+      const a = i * 2.39996;
+      const r = 120 + (i % 4) * 28;
+      return {
+        pos: [Math.cos(a) * r, ((i * 0.31) % 2 - 1) * 70, Math.sin(a) * r] as [number, number, number],
+        scale: 90 + (i % 5) * 26,
+        color: new Color(HUES[i % HUES.length]),
+        opacity: 0.1 + (i % 3) * 0.04,
+      };
+    });
+  }, []);
+  useFrame((_, dt) => { if (ref.current) ref.current.rotation.y += dt * 0.004; });
+  return (
+    <group ref={ref}>
+      {puffs.map((p, i) => (
+        <sprite key={i} position={p.pos} scale={p.scale}>
+          <spriteMaterial map={tex} color={p.color} transparent opacity={p.opacity}
+            blending={AdditiveBlending} depthWrite={false} />
+        </sprite>
+      ))}
+    </group>
   );
 }
 
@@ -56,7 +95,7 @@ function Dust() {
 
 function Scene() {
   const mode = useStore((s) => s.mode);
-  const overview = mode === 'system' || mode === 'intro';
+  const flight = mode === 'journey' || mode === 'fly';
 
   return (
     <>
@@ -64,7 +103,8 @@ function Scene() {
       <Suspense fallback={null}>
         <MilkyWay />
       </Suspense>
-      <Stars radius={180} depth={80} count={3500} factor={4} saturation={0} fade speed={0.5} />
+      <Nebula />
+      <Stars radius={180} depth={80} count={STAR_COUNT} factor={4} saturation={0} fade speed={0.5} />
       <Dust />
 
       {/* 3-point-ish lighting: the Sun is the key; a dim hemisphere + ambient fill the
@@ -94,27 +134,44 @@ function Scene() {
           <FreeFlight />
         </>
       )}
+      {flight && (
+        <>
+          <CockpitInterior />
+          {!IS_MOBILE && <WarpStreaks />}
+        </>
+      )}
 
       <Astronaut />
-      <CameraRig />
 
-      {/* Drag-to-orbit only in the overview; the cinematic rig drives the others. */}
-      {overview && (
-        <OrbitControls
-          makeDefault
-          enablePan={false}
-          enableZoom
-          enableRotate
-          enableDamping
-          dampingFactor={0.08}
-          rotateSpeed={0.55}
-          zoomSpeed={0.7}
-          minDistance={8}
-          maxDistance={OUTER_RADIUS * 2.4}
-          target={[0, 0, 0]}
-          onChange={() => { (window as unknown as { __orbit?: number }).__orbit = ((window as unknown as { __orbit?: number }).__orbit ?? 0) + 1; }}
-        />
-      )}
+      {/* One OrbitControls owns rotate + zoom in EVERY mode; FocusController only moves
+          the focus point (Sun → planet → ship) so the user keeps their angle/zoom. */}
+      <OrbitControls
+        makeDefault
+        enablePan={false}
+        enableZoom
+        enableRotate
+        enableDamping
+        dampingFactor={0.08}
+        rotateSpeed={0.55}
+        zoomSpeed={0.7}
+        minDistance={2}
+        maxDistance={OUTER_RADIUS * 2.4}
+        onChange={() => { (window as unknown as { __orbit?: number }).__orbit = ((window as unknown as { __orbit?: number }).__orbit ?? 0) + 1; }}
+      />
+      <FocusController />
+
+      {/* Flicker-free postprocessing on macOS (Metal/ANGLE): the MSAA HDR framebuffer —
+          both the composer's own (multisampling) and the canvas hardware one (gl.antialias)
+          — flickers black. So we disable BOTH and anti-alias inside the composer with a
+          cheap SMAA pass instead (the documented r3f postprocessing pattern). */}
+      <EffectComposer enableNormalPass={false} multisampling={0}>
+        {[
+          <Bloom key="bloom" intensity={IS_MOBILE ? 0.4 : 0.55} luminanceThreshold={0.42}
+            luminanceSmoothing={0.9} mipmapBlur radius={0.6} />,
+          <Vignette key="vignette" eskil={false} offset={0.3} darkness={0.65} />,
+          <SMAA key="smaa" />,
+        ]}
+      </EffectComposer>
     </>
   );
 }
@@ -125,7 +182,7 @@ export default function SolarSystem() {
     <Canvas
       camera={{ position: [0, 16, 40], fov: 50, near: 0.1, far: 600 }}
       dpr={[1, DPR_MAX]}
-      gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: ACESFilmicToneMapping }}
+      gl={{ antialias: false, powerPreference: 'high-performance', toneMapping: ACESFilmicToneMapping }}
       style={{ position: 'fixed', inset: 0, zIndex: 0 }}
     >
       <Scene />

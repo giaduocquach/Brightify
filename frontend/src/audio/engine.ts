@@ -103,11 +103,18 @@ class AudioEngine {
 
   // Blend the current track out (on the tail deck) while the next track fades in on
   // the analysed primary deck. Falls back to a plain load+play before the graph exists.
-  async crossfadeTo(url: string, durationSec: number) {
+  //   • equal-power curves (sin/cos) keep perceived loudness constant — a linear ramp
+  //     dips ~3 dB through the middle, which is the audible "hole" in a crossfade;
+  //   • the incoming track is preloaded (await canplay) before its fade-in starts, so
+  //     a buffering stall can't punch a gap into the audible blend;
+  //   • the fade is clamped to the audio actually left on the outgoing track, so its
+  //     tail is never cut off part-way through the fade.
+  async crossfadeTo(url: string, durationSec: number, tailRemainingSec?: number) {
     if (!this.ctx) { await this.load(url); return this.play(); }
-    const dur = Math.max(0.5, durationSec);
+    let dur = Math.max(0.5, durationSec);
+    if (tailRemainingSec && tailRemainingSec > 0.5) dur = Math.min(dur, tailRemainingSec);
 
-    // hand the currently-playing audio to the tail deck and fade it out
+    // hand the currently-playing audio to the tail deck and fade it out (equal-power)
     try {
       const src = this.el.currentSrc || this.el.src;
       if (src) {
@@ -115,22 +122,42 @@ class AudioEngine {
         this.elB.currentTime = this.el.currentTime;
         this.elB.volume = this.el.volume;
         await this.elB.play().catch(() => {});
-        this.fade(this.elB, false, this.elB.volume, 0, dur, () => this.elB.pause());
+        this.fade(this.elB, false, this.elB.volume, 0, dur, 'out', () => this.elB.pause());
       }
     } catch { /* tail is best-effort */ }
 
-    // bring the next track in on the analysed primary deck
+    // bring the next track in on the analysed primary deck — but only once it can play
+    // through, so the fade-in never lands on an un-buffered stall.
     this.fadeIdA++;
     this.el.src = url;
     this.el.load();
     this.el.volume = 0;
+    await this.waitCanPlay(this.el, 4000);
     await this.play();
-    this.fade(this.el, true, 0, this._volume, dur);
+    this.fade(this.el, true, 0, this._volume, dur, 'in');
+  }
+
+  // Resolve once the element has enough buffered to start playing (or after a timeout,
+  // so a slow/blocked load can't hang the crossfade forever).
+  private waitCanPlay(el: HTMLAudioElement, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (el.readyState >= 3 /* HAVE_FUTURE_DATA */) return resolve();
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        el.removeEventListener('canplay', finish);
+        resolve();
+      };
+      el.addEventListener('canplay', finish, { once: true });
+      setTimeout(finish, timeoutMs);
+    });
   }
 
   private fade(
     el: HTMLAudioElement, primary: boolean,
-    from: number, to: number, durSec: number, onDone?: () => void,
+    from: number, to: number, durSec: number,
+    curve: 'linear' | 'in' | 'out' = 'linear', onDone?: () => void,
   ) {
     const id = primary ? ++this.fadeIdA : ++this.fadeIdB;
     const start = performance.now();
@@ -138,7 +165,11 @@ class AudioEngine {
     const tick = () => {
       if ((primary ? this.fadeIdA : this.fadeIdB) !== id) return; // superseded
       const p = Math.min(1, (performance.now() - start) / ms);
-      el.volume = Math.max(0, Math.min(1, from + (to - from) * p));
+      // equal-power easing keeps the summed loudness ~constant across the blend
+      const e = curve === 'in' ? Math.sin(p * Math.PI / 2)
+        : curve === 'out' ? 1 - Math.cos(p * Math.PI / 2)
+        : p;
+      el.volume = Math.max(0, Math.min(1, from + (to - from) * e));
       if (p < 1) requestAnimationFrame(tick); else onDone?.();
     };
     requestAnimationFrame(tick);

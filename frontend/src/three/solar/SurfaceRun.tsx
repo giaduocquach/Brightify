@@ -1,33 +1,49 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { Color, Group, Vector3 } from 'three';
+import { AdditiveBlending, Color, Group, Vector3 } from 'three';
 import { useStore } from '../../state/store';
-import { engine } from '../../audio/engine';
 import { vaToColor } from '../va';
 import { solarRefs } from './refs';
+import { glowTexture } from './glow';
 import { bodyByHex } from './bodies';
 
-const YUP = new Vector3(0, 1, 0);
-const TILT = 0.5; // tilt the run path off the equator so it reads in 3D
+// Smooth wandering direction on the unit sphere (sum of out-of-phase sines → organic,
+// non-repeating, deterministic — no Math.random). Used for the roaming astronaut.
+function wanderDir(t: number, out: Vector3): Vector3 {
+  const theta = t * 0.16 + Math.sin(t * 0.073) * 1.6 + Math.sin(t * 0.031) * 0.8;
+  const phi = Math.sin(t * 0.051) * 0.95 + Math.sin(t * 0.117) * 0.4;
+  const cp = Math.cos(phi);
+  return out.set(cp * Math.cos(theta), Math.sin(phi), cp * Math.sin(theta));
+}
 
-// Explore stage: the astronaut runs a great-circle path on the chosen planet, past
-// one marker per recommended song (title + artist). The runner's angle is driven by
-// playback progress through the queue, so passing marker k ⇔ track k is playing.
-// Order is exactly `results` (the recommend order) — never reshuffled here.
+// Explore stage: the astronaut just ROAMS the chosen planet — a smooth, continuous,
+// random-looking walk (no planted markers). The recommended songs float as small glowing
+// orbs in low orbit around the planet; you wander past them. Only the track that's
+// currently PLAYING shows a small title card — every other song is just a dim orb — so a
+// card can never grow large and cover the screen.
 export default function SurfaceRun() {
   const hex = useStore((s) => s.selectedColors[0]);
   const tracks = useStore((s) => s.results);
   const index = useStore((s) => s.index);
   const body = hex ? bodyByHex(hex) : undefined;
   const n = tracks.length;
+  const tex = glowTexture();
 
-  const u = useMemo(() => new Vector3(1, 0, 0), []);
-  const v = useMemo(() => new Vector3(0, Math.cos(TILT), Math.sin(TILT)), []);
   const colors = useMemo(() => tracks.map((t) => vaToColor(t.valence, t.arousal, new Color())), [tracks]);
+  // golden-angle scatter on a sphere → even spread of song orbs around the planet
+  const orbDirs = useMemo(() => tracks.map((_, k) => {
+    const y = 1 - ((k + 0.5) / Math.max(1, n)) * 2;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const phi = k * 2.39996;
+    return new Vector3(Math.cos(phi) * r, y, Math.sin(phi) * r);
+  }), [tracks, n]);
 
-  const markerRefs = useRef<(Group | null)[]>([]);
+  const cluster = useRef<Group>(null);
+  const orbRefs = useRef<(Group | null)[]>([]);
   const dir = useRef(new Vector3());
+  const dirNext = useRef(new Vector3());
+  const fwd = useRef(new Vector3());
   const center = useRef(new Vector3());
 
   useEffect(() => {
@@ -35,34 +51,33 @@ export default function SurfaceRun() {
     return () => { solarRefs.runnerActive = false; };
   }, []);
 
-  useFrame(() => {
+  useFrame((state) => {
     if (!body || !hex) return;
     const c = solarRefs.bodyPos[hex];
     if (!c) return;
     center.current.copy(c);
+    const t = state.clock.elapsedTime;
 
-    const st = useStore.getState();
-    const { time, duration } = engine.progress(); // live playhead → smooth run
-    const frac = duration > 0 ? time / duration : 0;
-    const idx = Math.max(0, st.index);
-    const p = n > 0 ? (idx + frac) / n : 0;
+    // ── continuous roam: position + tangent forward from the smooth wander path ──
+    wanderDir(t, dir.current).normalize();
+    solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, body.size * 1.01);
+    wanderDir(t + 0.05, dirNext.current).normalize();
+    fwd.current.copy(dirNext.current).sub(dir.current);
+    fwd.current.addScaledVector(dir.current, -fwd.current.dot(dir.current)); // tangent
+    if (fwd.current.lengthSq() < 1e-6) fwd.current.set(0, 0, 1);
+    solarRefs.runnerForward.copy(fwd.current).normalize();
 
-    // runner pose
-    const th = p * Math.PI * 2;
-    dir.current.copy(u).multiplyScalar(Math.cos(th)).addScaledVector(v, Math.sin(th)).normalize();
-    solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, body.size * 1.06);
-    solarRefs.runnerForward
-      .copy(u).multiplyScalar(-Math.sin(th)).addScaledVector(v, Math.cos(th)).normalize();
-
-    // markers
+    // ── song orbs float in low orbit; the cluster slowly turns + each orb bobs ──
+    if (cluster.current) {
+      cluster.current.position.copy(center.current);
+      cluster.current.rotation.y += 0.0008;
+    }
     for (let k = 0; k < n; k++) {
-      const g = markerRefs.current[k];
+      const g = orbRefs.current[k];
       if (!g) continue;
-      const thk = (k / n) * Math.PI * 2;
-      dir.current.copy(u).multiplyScalar(Math.cos(thk)).addScaledVector(v, Math.sin(thk)).normalize();
-      g.position.copy(center.current).addScaledVector(dir.current, body.size * 1.04);
-      g.quaternion.setFromUnitVectors(YUP, dir.current); // pole points radially out
-      g.scale.setScalar(k === idx ? 1.35 : 1);
+      const bob = Math.sin(t * 0.9 + k) * body.size * 0.06;
+      g.position.copy(orbDirs[k]).multiplyScalar(body.size * 1.35 + bob);
+      g.scale.setScalar(k === index ? 1.7 : 0.85);
     }
   });
 
@@ -70,23 +85,26 @@ export default function SurfaceRun() {
   const s = body.size;
 
   return (
-    <group>
+    <group ref={cluster}>
       {tracks.map((t, k) => (
-        <group key={t.track_id || k} ref={(el) => { markerRefs.current[k] = el; }}>
-          <mesh position={[0, s * 0.18, 0]}>
-            <cylinderGeometry args={[s * 0.012, s * 0.012, s * 0.36, 6]} />
-            <meshBasicMaterial color={colors[k]} transparent opacity={0.7} />
+        <group key={t.track_id || k} ref={(el) => { orbRefs.current[k] = el; }}>
+          <mesh>
+            <sphereGeometry args={[s * 0.07, 14, 14]} />
+            <meshStandardMaterial color={colors[k]} emissive={colors[k]}
+              emissiveIntensity={k === index ? 1.8 : 0.7} transparent opacity={k === index ? 1 : 0.55} />
           </mesh>
-          <mesh position={[0, s * 0.4, 0]}>
-            <sphereGeometry args={[s * 0.06, 12, 12]} />
-            <meshStandardMaterial color={colors[k]} emissive={colors[k]} emissiveIntensity={1} />
-          </mesh>
-          <Html center distanceFactor={7} position={[0, s * 0.66, 0]} pointerEvents="none">
-            <div className={`song-card${k === index ? ' is-active' : ''}`}>
-              <span className="song-card-title">{t.track_name}</span>
-              <span className="song-card-artist">{t.artist}</span>
-            </div>
-          </Html>
+          <sprite scale={s * (k === index ? 0.7 : 0.4)}>
+            <spriteMaterial map={tex} color={colors[k]} transparent
+              opacity={k === index ? 0.9 : 0.35} blending={AdditiveBlending} depthWrite={false} />
+          </sprite>
+          {k === index && (
+            <Html center distanceFactor={3} position={[0, s * 0.28, 0]} pointerEvents="none">
+              <div className="song-card is-active">
+                <span className="song-card-title">{t.track_name}</span>
+                <span className="song-card-artist">{t.artist}</span>
+              </div>
+            </Html>
+          )}
         </group>
       ))}
     </group>

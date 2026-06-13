@@ -4,12 +4,13 @@ import { useTexture } from '@react-three/drei';
 import { AdditiveBlending, SRGBColorSpace, type Mesh } from 'three';
 import { engine } from '../../audio/engine';
 import { glowTexture } from './glow';
+import { solarRefs } from './refs';
 import { SUN_SIZE, SUN_TEXTURE } from './bodies';
 import { textureUrl } from './textureUrls';
 
 // The star at the centre. Not one of the twelve colours — a real sun texture with a
 // warm corona; lights every body and the system orbits it.
-export default function Sun() {
+export default function Sun({ onReady }: { onReady?: (m: Mesh | null) => void }) {
   const core = useRef<Mesh>(null);
   const tex = glowTexture();
   const surface = useTexture(textureUrl(SUN_TEXTURE));
@@ -24,16 +25,16 @@ export default function Sun() {
 
   return (
     <group>
-      <mesh ref={core}>
+      <mesh ref={(m) => { core.current = m; solarRefs.sunMesh = m; onReady?.(m); }}>
         <sphereGeometry args={[SUN_SIZE, 48, 48]} />
-        <meshBasicMaterial map={surface} toneMapped={false} />
+        <meshBasicMaterial map={surface} />
       </mesh>
-      <sprite scale={SUN_SIZE * 4.5}>
-        <spriteMaterial map={tex} color={'#ffcf6b'} transparent opacity={0.8}
+      <sprite scale={SUN_SIZE * 3.4}>
+        <spriteMaterial map={tex} color={'#ffcf6b'} transparent opacity={0.6}
           blending={AdditiveBlending} depthWrite={false} />
       </sprite>
-      <sprite scale={SUN_SIZE * 9}>
-        <spriteMaterial map={tex} color={'#ff9a3c'} transparent opacity={0.32}
+      <sprite scale={SUN_SIZE * 6}>
+        <spriteMaterial map={tex} color={'#ff9a3c'} transparent opacity={0.2}
           blending={AdditiveBlending} depthWrite={false} />
       </sprite>
     </group>

@@ -15,6 +15,12 @@ import { useStore } from './state/store';
 export default function App() {
   const mode = useStore((s) => s.mode);
 
+  // In first-person flight, let the canopy be the focus: side panels recede (and return
+  // on hover) via a body flag the stylesheet keys off.
+  useEffect(() => {
+    document.body.dataset.flight = mode === 'journey' || mode === 'fly' ? '1' : '';
+  }, [mode]);
+
   useEffect(() => {
     const store = useStore.getState();
     engine.setVolume(store.volume);

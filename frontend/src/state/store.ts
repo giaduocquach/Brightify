@@ -5,7 +5,8 @@ import { planCrossfade, type CrossfadeTrack } from '../audio/crossfade';
 import { hexToVA } from '../three/va';
 
 const MAX_COLORS = 2; // 1 = static mood, 2 = mood journey (Iso-Principle)
-const XFADE_LEAD_S = 5; // begin blending this many seconds before a track ends
+const XFADE_MAX_S = 13; // cheap pre-gate: only consider a blend within the max fade window
+                        // (planCrossfade clamps to ≤12s); the real lead = the planned duration
 
 // Map a Song to the crossfade policy's track shape (missing fields → graceful fallback).
 function toXf(s: Song): CrossfadeTrack {
@@ -188,18 +189,22 @@ export const useStore = create<State>((set, get) => ({
 
   _setTime: (t, d) => {
     const st = get();
-    // Auto-crossfade: a few seconds before the current track ends, blend into the
-    // next queued track. Fires once per source index; the queue/order is unchanged.
+    // Auto-crossfade: blend into the next queued track so the fade *finishes* exactly as
+    // the current track ends. The lead is the planned fade length (not a fixed 5s), so a
+    // long blend (up to ~12s) has enough runway; we hand `d - t` down so the engine can
+    // clamp the fade to the tail that's actually left. Fires once per source index.
     if (st.crossfadeEnabled && st.isPlaying && d > 0 && st.queue.length > 1
-        && d - t <= XFADE_LEAD_S && xfadeArmed !== st.index) {
-      xfadeArmed = st.index;
+        && d - t <= XFADE_MAX_S && xfadeArmed !== st.index) {
       const ni = (st.index + 1) % st.queue.length;
       const nxt = st.queue[ni];
       if (nxt?.has_audio) {
         const plan = planCrossfade(toXf(st.queue[st.index]), toXf(nxt), st.volume);
-        void engine.crossfadeTo(api.streamUrl(nxt.track_id), plan.duration_s);
-        set({ index: ni, current: nxt, targetV: nxt.valence, targetA: nxt.arousal });
-        return;
+        if (d - t <= plan.duration_s) {
+          xfadeArmed = st.index;
+          void engine.crossfadeTo(api.streamUrl(nxt.track_id), plan.duration_s, d - t);
+          set({ index: ni, current: nxt, targetV: nxt.valence, targetA: nxt.arousal });
+          return;
+        }
       }
     }
     set({ time: t, duration: d });
