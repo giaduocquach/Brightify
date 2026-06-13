@@ -1101,7 +1101,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     """Pillar A: compare 7-signal (no MERT) vs 8-signal (with MERT) recommend_by_song.
 
     Prerequisites:
-        python -m tools.extract_mert_embeddings
+        python -m tools.extract_mert_multilayer
     Gates (all must pass):
         - NDCG@10 ext: paired bootstrap CI99.2% (Bonferroni) lower bound > -0.003
         - ILD_lyrics: mert >= baseline * 0.95  (no regression)
@@ -1124,7 +1124,7 @@ def cmd_run_pillar_a(args: argparse.Namespace) -> int:
     mert_path = cfg.MERT_EMBEDDINGS_FILE
     if not os.path.exists(mert_path):
         print(f"[pillar_a] ERROR: MERT embeddings not found: {mert_path}")
-        print("[pillar_a] Run first:  python -m tools.extract_mert_embeddings")
+        print("[pillar_a] Run first:  python -m tools.extract_mert_multilayer")
         return 1
 
     mert_meta_path = cfg.MERT_EMBEDDINGS_META_FILE
