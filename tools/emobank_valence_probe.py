@@ -8,7 +8,8 @@ Strategy:
   5. Compute Wasserstein distance DEAM_V ↔ catalog_V (transfer-risk proxy)
 
 Scientific basis:
-  - Frozen probe OOD +7% over fine-tune (arXiv:2202.10054, Ghaffari et al.)
+  - Frozen probe OOD +7% over fine-tune (Kumar et al. 2022, ICLR, arXiv:2202.10054 —
+    "Fine-Tuning can Distort Pretrained Features and Underperform Out-of-Distribution")
   - XLM-R multilingual alignment: EN→VN cross-lingual transfer feasible
   - EmoBank: Buechel & Hahn 2017, 10k sentences, 5-point VAD scale [1,5] → mapped [0,1]
   - CCC (Concordance Correlation Coefficient) as primary metric (AVEC standard)

@@ -20,7 +20,7 @@ journey. The whole feature reduces to V-A + an acoustic-coherence refinement.
 | Stage | Design & primary citation | Offline metric | Current result | Limitation |
 |---|---|---|---|---|
 | **Colour set (12)** | 12 Berlin-Kay basic terms (Berlin & Kay 1969); cross-cultural colour-emotion norms (Jonauskaite et al. 2020, ICEAS, n=4598/30 nations, global r=.88); ~12 avoids choice-overload (Scheibehenne 2010) | circumplex coverage / per-colour separation | colours span V-A; pairwise mood separation **0.31** | 12 anchors only; VN not among ICEAS' 30 nations |
-| **V-A space** | Russell (1980) circumplex; colour↔music is **mediated by V-A** (Palmer & Schloss 2013, PNAS, r=.89–.99; Whiteford et al. 2018) | — (architectural) | V-A used as the single matching space | 2-D omits e.g. tension/dominance (Russell-sufficient per GlobalMood 2025) |
+| **V-A space** | Russell (1980) circumplex; colour↔music is **mediated by V-A** (Palmer et al. 2013, PNAS, r=.89–.99; Whiteford et al. 2018) | — (architectural) | V-A used as the single matching space | 2-D omits e.g. tension/dominance (Russell-sufficient per GlobalMood 2025) |
 | **Colour→Valence** | Oklab perceptual space (Ottosson 2020) → ridge fit to ICEAS valence norms | Fisher-z vs ICEAS (n=12); LOO-CV | r = **0.969** CI[0.889, 0.991]; LOO-CV r≈0.87 | n=12 ⇒ wide CI |
 | **Colour→Arousal (V38)** | **Whiteford 2018 colour↔MUSIC**: faster music ↔ lighter+saturated colours, slower ↔ darker. Weights redness +.755, sat +.720, darkness −.549 ⇒ `A = +0.373·redness +0.356·saturation +0.271·lightness` | **independent: measured song tempo (BPM)** | ρ(lightness, BPM)=**+0.46**, ρ(saturation, BPM)=**+0.66** (lighter/saturated → faster songs) | warm-saturated colours (brown, pink) read energetic — *Whiteford-faithful*, may feel counter-intuitive |
 | **Match space** | rank/quantile matching + calibration to catalog distribution (Steck 2018) | targeting error (TE) | TE = **0.0268** (Euclidean, rank space) | rises slightly at edges (catalog supply, see §3) |
@@ -76,8 +76,11 @@ matching/coherence/journey in `core/recommendation_engine.py`. Recommendations a
 ---
 
 ## 5. Key references
+*(citations verified V46, 2026-06-13 — see §6)*
 Berlin & Kay 1969 · Russell 1980 (circumplex) · Valdez & Mehrabian 1994 · Ou & Luo 2004 ·
-Palmer & Schloss 2013 (PNAS) · Whiteford et al. 2018 (i-Perception, *Bach to the Blues*) ·
+Palmer & Schloss **2010** (PNAS, ecological valence theory) · Palmer, Schloss, Xu & Prado-León
+**2013** (PNAS, *Music–color associations are mediated by emotion*, r=.89–.99) ·
+Whiteford et al. 2018 (i-Perception, *Bach to the Blues*) ·
 Jonauskaite et al. 2020 (ICEAS) · Ottosson 2020 (Oklab) · Eerola 2011 · Delbouys 2018 ·
 Steck 2018 (RecSys, calibration) · Dacrema 2019/2021 · Schnabel 2022 · Benjamini & Hochberg 1995 ·
 Vargas & Castells 2011 · Gao 2019 / Mu & Viswanath 2018 / Ethayarajh 2019 (anisotropy) ·
@@ -252,3 +255,40 @@ editorial NDCG** → a safe, low-leverage improvement, kept (no regression). A c
 would require rebuilding the judged pool on e5's own recommendations (OpenAI cost + pool-bias) —
 not worth it for an 8%-weight signal given editorial already answers "neutral". Stated plainly: the
 e5 gain is real but modest and concentrated in intrinsic coherence, not a broad win.
+
+---
+
+# §6 — Citation verification audit (V46, 2026-06-13)
+
+All citations across BOTH features independently web-verified (4 parallel fact-check passes).
+Result: **30+ citations CONFIRMED; 1 fabricated author found & fixed; 3 minor corrections.**
+
+**FIXED — fabricated/wrong attribution:**
+- ❌→✅ "Ghaffari et al. (arXiv:2202.10054)" for frozen-probe-beats-finetune-OOD was WRONG. The real
+  paper is **Kumar, Raghunathan, Jones, Ma & Liang 2022, ICLR — "Fine-Tuning can Distort Pretrained
+  Features and Underperform Out-of-Distribution"**. Claim (+7% OOD) is correct; author was fabricated.
+  Fixed in `tools/emobank_valence_probe.py`.
+
+**FIXED — precision:**
+- Palmer & Schloss: split into **2010** (PNAS, ecological valence theory) vs **Palmer, Schloss, Xu &
+  Prado-León 2013** (PNAS, *Music–color associations are mediated by emotion*, r=.89–.99). The r-range
+  claim correctly belongs to the 2013 paper (now cited as "Palmer et al. 2013").
+
+**NOTED — minor, non-blocking:**
+- Whiteford 2018: **redness loads on the AROUSAL axis** (not happiness) — consistent with our V38
+  arousal formula `A = 0.373·redness + 0.356·saturation + 0.271·lightness` (redness IS in arousal). ✓
+  (The lightness sign follows Whiteford's colour↔MUSIC direction — lighter↔faster — which differs
+  from Valdez's colour-alone result where brightness lowers arousal; documented tension, deliberate.)
+- PMEmo full dataset = **794 clips** (Zhang et al. 2018, ICMR); our pipeline used 767 after
+  download/clean filtering — a subset, not an error.
+- MERT = arXiv:2306.00107 (ICLR 2024); MARBLE = 2306.10548 (NeurIPS 2023 D&B); MuLan = ISMIR 2022
+  (arXiv:2208.12415). All confirmed.
+
+**Everything else CONFIRMED as cited:** MuQ (2501.01108, Tencent), ViSoBERT (EMNLP 2023, UIT),
+PhoBERT (Findings EMNLP 2020, VinAI), XLM-R (Conneau 2020), multilingual-e5 (2402.05672, Microsoft),
+NRC-VAD (Mohammad 2018 ACL), VnEmoLex (Doan & Luu 2022), UIT-VSMEC (Ho 2020), UIT-VSFC (Nguyen 2018
+KSE), EmoBank (Buechel & Hahn 2017 EACL), DEAM (Aljanaki 2017 PLoS ONE), ICEAS (Jonauskaite 2020
+Psych Science), Russell 1980, Valdez & Mehrabian 1994, Oklab (Ottosson 2020), EWE (Grimm & Kroschel
+2005 ASRU), MMR (Carbonell & Goldstein 1998 SIGIR), iso-principle (Altshuler 1948; Starcke 2021/2024),
+anisotropy (Ethayarajh 2019 / Mu & Viswanath 2018 / Gao 2019), FDR (Benjamini & Hochberg 1995),
+calibration (Steck 2018), weak-baselines (Dacrema 2019/2021). → No other fabrications.
