@@ -29,7 +29,7 @@ journey. The whole feature reduces to V-A + an acoustic-coherence refinement.
 | **Semantic coherence** | existing MTG-Jamendo-style `mood_tags` | dominant-mood-tag share | **0.67**; warm→"epic", cool/dark→"meditative" | tags auto-tagged (Essentia) — secondary signal |
 | **2-colour journey** | iso-principle mood trajectory (Starcke 2024, d=0.52; Saari 2016 ~10–15%/step) + acoustic continuity (Knopke 2018) | journey KS vs U[0,1]; ΔBPM/Δtimbre | KS=**0.21** (PASS); smoothness ΔBPM **31→2.7**, Δtimbre **0.87→0.65** | journey is 2-colour (3+ clamped to 2) |
 | **Diversity / dedup** | intra-list diversity & novelty (Vargas & Castells 2011); cover filter | ILD; artist-uniqueness | artist diversity kept; covers excluded | — |
-| **Song→V-A (v6g)** | valence = EWE ensemble of lyrical signals (Grimm & Kroschel EWE), arousal = DEAM-grounded MERT+tempo+loudness | cross-corpus transfer; independent audio ref | PMEmo transfer V **0.69** / A **0.65**; CLAP-ears arousal **0.48** | cross-corpus valence weak in absolute (R²≈.06); offline only |
+| **Song→V-A (v6g)** | valence = EWE ensemble of lyrical signals (Grimm & Kroschel EWE), arousal = DEAM-grounded MERT+tempo+loudness | cross-corpus transfer; independent audio + text refs | PMEmo transfer V **0.69** / A **0.65**; CLAP-ears arousal **0.48**; **independent multilingual XLM-T sentiment vs served valence ρ=0.59** (Phase 4c, non-circular) | cross-corpus valence weak in absolute (R²≈.06); offline only |
 | **Evaluation** | strong baselines (Dacrema 2021); bootstrap CI (Schnabel 2022); FDR (Benjamini-Hochberg 1995); diversity (Vargas 2011) | the full battery above | reproducible suite, CIs reported | offline↔online gap (no user study) |
 
 ---
