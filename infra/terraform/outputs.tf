@@ -9,8 +9,13 @@ output "instance_id" {
 }
 
 output "cloudfront_domain" {
-  description = "Audio CDN domain. Set AUDIO_CDN_BASE=https://<this> in the app .env."
-  value       = aws_cloudfront_distribution.audio.domain_name
+  description = "Audio CDN domain (empty when CloudFront is disabled)."
+  value       = var.enable_cloudfront ? aws_cloudfront_distribution.audio[0].domain_name : ""
+}
+
+output "audio_base_url" {
+  description = "Base URL for audio. Set AUDIO_CDN_BASE to this in the app .env."
+  value       = local.audio_base_url
 }
 
 output "audio_bucket" {

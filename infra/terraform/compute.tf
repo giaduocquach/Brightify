@@ -22,7 +22,7 @@ resource "aws_instance" "app" {
     aws_region   = var.aws_region
     ecr_repo_url = aws_ecr_repository.app.repository_url
     audio_bucket = aws_s3_bucket.audio.id
-    cdn_domain   = aws_cloudfront_distribution.audio.domain_name
+    audio_base   = local.audio_base_url
   })
 
   # Re-run user_data only when its content changes.

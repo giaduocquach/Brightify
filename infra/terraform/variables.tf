@@ -62,3 +62,9 @@ variable "app_origins" {
   type        = string
   default     = "*"
 }
+
+variable "enable_cloudfront" {
+  description = "Use CloudFront in front of S3 for audio. Set false for new AWS accounts where CloudFront is not yet verified — audio is then served directly from S3 (public-read, HTTPS, Range, CORS). Flip to true + apply once the account is verified."
+  type        = bool
+  default     = true
+}

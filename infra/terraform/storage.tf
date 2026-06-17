@@ -2,6 +2,10 @@ resource "random_id" "suffix" {
   byte_length = 4
 }
 
+locals {
+  audio_base_url = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.audio[0].domain_name}" : "https://${aws_s3_bucket.audio.id}.s3.${data.aws_region.current.name}.amazonaws.com"
+}
+
 # ---------------------------------------------------------------------------
 # ECR — holds the prebuilt app image pushed by CI
 # ---------------------------------------------------------------------------
@@ -40,11 +44,13 @@ resource "aws_s3_bucket" "audio" {
 }
 
 resource "aws_s3_bucket_public_access_block" "audio" {
-  bucket                  = aws_s3_bucket.audio.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+  bucket             = aws_s3_bucket.audio.id
+  block_public_acls  = true
+  ignore_public_acls = true
+  # When CloudFront is off, audio is served directly from S3 via a public-read
+  # bucket policy, so policy-based public access must be allowed.
+  block_public_policy     = var.enable_cloudfront
+  restrict_public_buckets = var.enable_cloudfront
 }
 
 # CORS so the browser's crossOrigin="anonymous" audio (Web Audio crossfade)
@@ -61,6 +67,7 @@ resource "aws_s3_bucket_cors_configuration" "audio" {
 }
 
 resource "aws_cloudfront_origin_access_control" "audio" {
+  count                             = var.enable_cloudfront ? 1 : 0
   name                              = "${var.project}-audio-oac"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
@@ -68,6 +75,7 @@ resource "aws_cloudfront_origin_access_control" "audio" {
 }
 
 resource "aws_cloudfront_distribution" "audio" {
+  count           = var.enable_cloudfront ? 1 : 0
   enabled         = true
   comment         = "${var.project} audio CDN"
   price_class     = "PriceClass_200" # includes SE Asia; cheaper than All
@@ -77,7 +85,7 @@ resource "aws_cloudfront_distribution" "audio" {
   origin {
     domain_name              = aws_s3_bucket.audio.bucket_regional_domain_name
     origin_id                = "s3-audio"
-    origin_access_control_id = aws_cloudfront_origin_access_control.audio.id
+    origin_access_control_id = aws_cloudfront_origin_access_control.audio[0].id
   }
 
   default_cache_behavior {
@@ -104,27 +112,41 @@ resource "aws_cloudfront_distribution" "audio" {
   }
 }
 
-# Allow only this CloudFront distribution to read the bucket.
-data "aws_iam_policy_document" "audio_s3" {
+# CloudFront mode: only the distribution may read the bucket (via OAC).
+data "aws_iam_policy_document" "audio_cf" {
+  count = var.enable_cloudfront ? 1 : 0
   statement {
     sid       = "AllowCloudFrontRead"
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.audio.arn}/*"]
-
     principals {
       type        = "Service"
       identifiers = ["cloudfront.amazonaws.com"]
     }
-
     condition {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.audio.arn]
+      values   = [aws_cloudfront_distribution.audio[0].arn]
+    }
+  }
+}
+
+# Direct-S3 mode (no CloudFront): public read of objects (not listing).
+data "aws_iam_policy_document" "audio_public" {
+  count = var.enable_cloudfront ? 0 : 1
+  statement {
+    sid       = "PublicReadObjects"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.audio.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "audio" {
-  bucket = aws_s3_bucket.audio.id
-  policy = data.aws_iam_policy_document.audio_s3.json
+  bucket     = aws_s3_bucket.audio.id
+  policy     = var.enable_cloudfront ? data.aws_iam_policy_document.audio_cf[0].json : data.aws_iam_policy_document.audio_public[0].json
+  depends_on = [aws_s3_bucket_public_access_block.audio]
 }

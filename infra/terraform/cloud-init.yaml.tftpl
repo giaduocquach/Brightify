@@ -20,8 +20,8 @@ write_files:
       AWS_REGION=${aws_region}
       ECR_REPO_URL=${ecr_repo_url}
       AUDIO_BUCKET=${audio_bucket}
-      # AUDIO_CDN_BASE must use https:// — the app builds {base}/{track_id}.mp3
-      AUDIO_CDN_BASE=https://${cdn_domain}
+      # AUDIO_CDN_BASE — the app builds {base}/{track_id}.mp3 (CloudFront or direct S3)
+      AUDIO_CDN_BASE=${audio_base}
 
 runcmd:
   # Docker engine + compose plugin (convenience script installs both)
