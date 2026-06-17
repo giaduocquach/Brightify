@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -35,8 +35,24 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
     _music_path = music_path
     _artist_images_path = artist_images_path
 
-    # Pre-cache file existence to avoid per-request stat() calls
-    if _music_path and _music_path.exists():
+    # Build the set of track_ids that have audio. This drives has_audio (and the
+    # status endpoints), which the frontend uses to enable play buttons.
+    # CDN mode: local music_files/ is absent, so read the manifest synced to S3.
+    # Local mode: glob the music_files/ directory.
+    if cfg.AUDIO_CDN_BASE:
+        manifest = Path(cfg.AUDIO_MANIFEST_FILE)
+        if manifest.exists():
+            import json
+            with open(manifest, encoding="utf-8") as fh:
+                _mp3_cache = set(json.load(fh))
+            logger.info("Audio CDN mode: %d track ids from manifest %s", len(_mp3_cache), manifest)
+        elif _music_path and _music_path.exists():
+            _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
+            logger.warning("AUDIO_CDN_BASE set but no manifest — fell back to local glob (%d)", len(_mp3_cache))
+        else:
+            _mp3_cache = set()
+            logger.warning("AUDIO_CDN_BASE set but no manifest and no local music_files — has_audio will be False")
+    elif _music_path and _music_path.exists():
         _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
     album_art_dir = cfg.ALBUM_ART_DIR
     if album_art_dir.exists():
@@ -146,6 +162,8 @@ def _song_to_dict(row, idx):
         'fade_out_cue_s': _serialize(row.get('fade_out_cue_s')),
         'fade_in_cue_s': _serialize(row.get('fade_in_cue_s')),
         'downbeat_times_json': row.get('downbeat_times_json') if pd.notna(row.get('downbeat_times_json')) else None,
+        'vocal_start_s': _serialize(row.get('vocal_start_s')),
+        'vocal_end_s': _serialize(row.get('vocal_end_s')),
         'timbre_bright': _serialize(row.get('timbre_bright')),
         'mood_quadrant': str(row.get('mood_quadrant', '')),
         'fused_emotion': str(row.get('fused_emotion', '')),
@@ -492,9 +510,14 @@ async def get_song_details(song_id: str):
 
 
 @router.get("/song/{song_id}/similar")
-async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, le=30)):
+async def get_similar_songs(
+    song_id: str,
+    count: int = Query(default=10, ge=1, le=30),
+    exclude: str = Query(default="", description="CSV of already-played track_ids to skip (endless radio)"),
+):
     """Get songs similar to a given song using multi-faceted AI similarity"""
     try:
+        exclude_ids = [t for t in exclude.split(",") if t][:120]
         df = _recommender.df
         # Resolve track_id to index
         if not song_id.isdigit():
@@ -508,7 +531,7 @@ async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, l
         else:
             resolved_idx = int(song_id)
         
-        results = _recommender.recommend_by_song(resolved_idx, top_k=count)
+        results = _recommender.recommend_by_song(resolved_idx, top_k=count, exclude_ids=exclude_ids)
         df_results = results
         songs = []
         for idx, row in df_results.iterrows():
@@ -573,9 +596,17 @@ async def get_track_info(song_index: str):
 
 @router.get("/audio/stream/{track_id}")
 async def stream_audio(track_id: str):
-    """Stream a local MP3 file"""
+    """Stream an MP3.
+
+    If AUDIO_CDN_BASE is configured, redirect to the CDN (CloudFront → S3) so
+    range/seek and egress are handled by the CDN. Otherwise serve from local disk
+    (dev/local). track_id is validated to alnum/-/_ so the redirect URL is safe.
+    """
     if not all(c.isalnum() or c in '-_' for c in track_id):
         raise HTTPException(status_code=400, detail="Invalid track ID")
+
+    if cfg.AUDIO_CDN_BASE:
+        return RedirectResponse(url=f"{cfg.AUDIO_CDN_BASE}/{track_id}.mp3", status_code=302)
 
     file_path = _music_path / f"{track_id}.mp3"
     if not file_path.exists():
@@ -590,24 +621,22 @@ async def stream_audio(track_id: str):
 
 @router.get("/audio/status/{track_id}")
 async def get_audio_status(track_id: str):
-    """Check if audio file exists for a track"""
-    file_path = _music_path / f"{track_id}.mp3"
-    exists = file_path.exists()
-    return {
-        "track_id": track_id,
-        "available": exists,
-        "file_size": file_path.stat().st_size if exists else 0,
-    }
+    """Check if audio is available for a track (local file or CDN manifest)."""
+    available = track_id in _mp3_cache
+    # file_size only meaningful in local mode (0 when served from the CDN)
+    file_size = 0
+    if available and not cfg.AUDIO_CDN_BASE and _music_path:
+        fp = _music_path / f"{track_id}.mp3"
+        if fp.exists():
+            file_size = fp.stat().st_size
+    return {"track_id": track_id, "available": available, "file_size": file_size}
 
 
 @router.get("/audio/batch-status")
 async def get_batch_audio_status(track_ids: str = Query(..., description="Comma-separated track IDs")):
-    """Batch check audio availability"""
+    """Batch check audio availability (local file or CDN manifest)."""
     ids = [tid.strip() for tid in track_ids.split(",") if tid.strip()]
-    result = {}
-    for tid in ids[:100]:
-        fp = _music_path / f"{tid}.mp3"
-        result[tid] = fp.exists()
+    result = {tid: (tid in _mp3_cache) for tid in ids[:100]}
     return {"status": result, "available_count": sum(result.values()), "total": len(result)}
 
 

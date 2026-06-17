@@ -1,0 +1,80 @@
+# AWS single-EC2 override (t3.medium, 4GB RAM).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
+#    or: make aws
+#
+# Differences vs base:
+#   - app/migrate pull a prebuilt image from ECR instead of building on the box
+#   - PhoBERT disabled (SKIP_PHOBERT_LOAD) + audio served from CloudFront (AUDIO_CDN_BASE)
+#   - postgres tuned down for a 4GB box (base values target a large host)
+#   - nginx serves the real React SPA (static_spa/) instead of the dead static/ app
+#   - single app replica, modest resource caps so the box doesn't OOM
+#
+# Required env (.env): APP_IMAGE, AUDIO_CDN_BASE, POSTGRES_* , ALLOWED_ORIGINS, BRIGHTIFY_ADMIN_KEY
+
+services:
+  app:
+    image: ${APP_IMAGE}
+    build: !reset null          # pull from ECR, never build on the EC2 host
+    container_name: !reset null # replicas need compose-assigned names
+    environment:
+      SKIP_PHOBERT_LOAD: "True"
+      AUDIO_CDN_BASE: ${AUDIO_CDN_BASE}
+      HF_HUB_OFFLINE: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.5"
+        reservations:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  migrate:
+    image: ${APP_IMAGE}
+    build: !reset null
+
+  db:
+    # Tuned for a 4GB box (base targets a large host with shared_buffers=2GB)
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=1000
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.0"
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.5"
+
+  nginx:
+    # Pure reverse proxy: the app image (built in CI with a fresh SPA) serves the
+    # React SPA itself, so nginx proxies everything to app — no host static mount
+    # to drift. Swap in the AWS site config (conf.d.aws) that proxies "/" to app.
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d.aws:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/letsencrypt:ro
+      - ./nginx/www:/var/www/certbot:ro
+      - ${LOGS_PATH:-./logs}/nginx:/var/log/nginx

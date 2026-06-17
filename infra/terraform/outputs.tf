@@ -1,0 +1,29 @@
+output "app_public_ip" {
+  description = "Elastic IP of the app server. Point your DNS A record here."
+  value       = aws_eip.app.public_ip
+}
+
+output "instance_id" {
+  description = "EC2 instance id (used by the CI deploy via SSM)."
+  value       = aws_instance.app.id
+}
+
+output "cloudfront_domain" {
+  description = "Audio CDN domain. Set AUDIO_CDN_BASE=https://<this> in the app .env."
+  value       = aws_cloudfront_distribution.audio.domain_name
+}
+
+output "audio_bucket" {
+  description = "S3 bucket for MP3s. Upload with: aws s3 sync music_files/ s3://<bucket>/ --content-type audio/mpeg"
+  value       = aws_s3_bucket.audio.id
+}
+
+output "ecr_repository_url" {
+  description = "ECR repo URL. APP_IMAGE=<this>:<tag>"
+  value       = aws_ecr_repository.app.repository_url
+}
+
+output "github_deploy_role_arn" {
+  description = "Role ARN for GitHub Actions (set as AWS_DEPLOY_ROLE_ARN secret)."
+  value       = aws_iam_role.github_deploy.arn
+}

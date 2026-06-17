@@ -57,7 +57,11 @@ def _hydrate_crossfade_columns(rec):
     """
     if rec is None or rec.df is None:
         return
-    crossfade_cols = ('loudness_lufs', 'fade_out_cue_s', 'fade_in_cue_s', 'downbeat_times_json')
+    # duration_ms is reconciled to the real file length in the DB (ffprobe); the CSV's
+    # track_duration_ms is stale. Pull it so planCrossfade gets the true duration — a wrong
+    # duration breaks the outroLen → blend/sequential decision even when vocal_end_s is present.
+    crossfade_cols = ('loudness_lufs', 'fade_out_cue_s', 'fade_in_cue_s', 'downbeat_times_json',
+                      'vocal_start_s', 'vocal_end_s', 'duration_ms')
     try:
         from db.engine import engine
         from sqlalchemy import text
@@ -65,7 +69,8 @@ def _hydrate_crossfade_columns(rec):
         with engine.connect() as conn:
             db_df = _pd.read_sql(
                 text("""
-                    SELECT track_id, loudness_lufs, fade_out_cue_s, fade_in_cue_s, downbeat_times_json
+                    SELECT track_id, loudness_lufs, fade_out_cue_s, fade_in_cue_s, downbeat_times_json,
+                           vocal_start_s, vocal_end_s, duration_ms
                     FROM songs
                 """),
                 conn,

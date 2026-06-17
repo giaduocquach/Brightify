@@ -1,4 +1,4 @@
-Planet, Sun, Moon and Milky-Way textures in this folder are from
+Planet, Sun and Moon textures in this folder are from
 Solar System Scope (https://www.solarsystemscope.com/textures/),
 licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
 
@@ -8,8 +8,16 @@ Hubble Space Telescope.
 
 Attribution: "Textures © Solar System Scope (CC BY 4.0)".
 
-Files: 2k_sun, 2k_mercury, 2k_venus_atmosphere, 2k_earth_daymap,
-2k_earth_clouds, 2k_moon, 2k_mars, 2k_jupiter, 2k_saturn,
-2k_saturn_ring_alpha, 2k_uranus, 2k_neptune, 2k_stars_milky_way.
+2K base maps (bundled): 2k_sun, 2k_mercury, 2k_venus_atmosphere, 2k_earth_daymap,
+2k_earth_clouds, 2k_earth_nightmap, 2k_moon, 2k_mars, 2k_jupiter, 2k_saturn,
+2k_saturn_ring_alpha, 2k_uranus, 2k_neptune, 2k_pluto.
 
-Pluto, the comet and the black hole are rendered procedurally (no texture).
+High-res 4K hero maps (in public/textures4k/, loaded on demand for the focused
+planet on capable devices; downscaled from Solar System Scope 8K originals):
+4k_mercury, 4k_earth_daymap, 4k_mars, 4k_jupiter, 4k_saturn.
+
+Milky Way backdrop: 4k_milkyway_panorama.jpg — from the ESO GigaGalaxy Zoom
+"Milky Way panorama" (eso0932a), © ESO/S. Brunier, licensed CC BY 4.0
+(https://www.eso.org/public/images/eso0932a/). 360° equirectangular all-sky.
+
+The comet and the black hole are rendered procedurally (no texture).

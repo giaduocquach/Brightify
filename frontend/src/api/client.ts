@@ -4,6 +4,7 @@ export interface WhyExplanation {
   reason?: string;
   top_signal?: string;
   song_emotion_vi?: string;
+  mood_match?: number;   // 0..1 RBF closeness of the song's V-A to the chosen colour
   [k: string]: unknown;
 }
 
@@ -28,6 +29,15 @@ export interface Song {
   key?: number;
   danceability?: number;
   duration_ms?: number;
+  // Analysed crossfade cues / level (Phase-3 columns, may be null per track).
+  loudness_lufs?: number;
+  fade_out_cue_s?: number;
+  fade_in_cue_s?: number;
+  downbeat_times_json?: string;
+  mood_quadrant?: string;
+  duration_s?: number;
+  vocal_start_s?: number;
+  vocal_end_s?: number;
 }
 
 interface RawSong {
@@ -54,6 +64,14 @@ interface RawSong {
   key?: number;
   danceability?: number;
   track_duration_ms?: number;
+  loudness_lufs?: number;
+  fade_out_cue_s?: number;
+  fade_in_cue_s?: number;
+  downbeat_times_json?: string;
+  mood_quadrant?: string;
+  duration_s?: number;
+  vocal_start_s?: number;
+  vocal_end_s?: number;
 }
 
 export interface ColorMood {
@@ -94,6 +112,14 @@ export function normalizeSong(r: RawSong): Song {
     key: r.key,
     danceability: r.danceability,
     duration_ms: r.track_duration_ms,
+    loudness_lufs: r.loudness_lufs,
+    fade_out_cue_s: r.fade_out_cue_s,
+    fade_in_cue_s: r.fade_in_cue_s,
+    downbeat_times_json: r.downbeat_times_json,
+    mood_quadrant: r.mood_quadrant,
+    duration_s: r.duration_s,
+    vocal_start_s: r.vocal_start_s,
+    vocal_end_s: r.vocal_end_s,
   };
 }
 
@@ -121,6 +147,7 @@ export const api = {
     topK = 12,
     diversityPenalty = 0.15,
     novelty = 0.5,
+    excludeIds: string[] = [],
   ): Promise<ColorResult> {
     const data = await postJSON<{
       results: RawSong[];
@@ -130,6 +157,7 @@ export const api = {
       top_k: topK,
       diversity_penalty: diversityPenalty,
       novelty,
+      exclude_ids: excludeIds,
     });
     return {
       results: (data.results || []).map(normalizeSong),
@@ -138,9 +166,10 @@ export const api = {
     };
   },
 
-  async getSimilar(songId: number | string, count = 12): Promise<Song[]> {
+  async getSimilar(songId: number | string, count = 12, excludeIds: string[] = []): Promise<Song[]> {
+    const exclude = excludeIds.length ? `&exclude=${encodeURIComponent(excludeIds.join(','))}` : '';
     const data = await getJSON<{ songs?: RawSong[]; results?: RawSong[]; similar?: RawSong[] }>(
-      `/api/song/${songId}/similar?count=${count}`,
+      `/api/song/${songId}/similar?count=${count}${exclude}`,
     );
     return (data.songs || data.results || data.similar || []).map(normalizeSong);
   },
@@ -151,6 +180,11 @@ export const api = {
       `/api/audio/batch-status?track_ids=${trackIds.join(',')}`,
     );
     return data.status || {};
+  },
+
+  async getSongLyrics(trackId: string): Promise<string | null> {
+    const data = await getJSON<{ song?: { lyrics?: string } }>(`/api/song/${encodeURIComponent(trackId)}`);
+    return data.song?.lyrics ?? null;
   },
 
   streamUrl: (trackId: string) => `/api/audio/stream/${trackId}`,

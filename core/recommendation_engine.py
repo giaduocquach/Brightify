@@ -30,6 +30,18 @@ def detect_artist_column(df):
     return None
 
 
+# Columns the result-builders must carry through so the API (and the frontend Smart
+# Crossfade) sees per-track loudness, cue points, downbeats, vocal regions and the
+# (DB-reconciled) duration. Hydrated from the DB at startup; without these in the
+# allowlist, recommend_by_song / _build_result_df silently drop them → planCrossfade
+# loses vocal_end_s/duration and mis-decides the transition. duration_ms (DB) takes
+# precedence over the stale CSV track_duration_ms in api _song_to_dict.
+CROSSFADE_PASSTHROUGH_COLS = [
+    'loudness_lufs', 'fade_out_cue_s', 'fade_in_cue_s', 'downbeat_times_json',
+    'vocal_start_s', 'vocal_end_s', 'duration_ms', 'track_duration_ms', 'mp3_duration_s',
+]
+
+
 class MusicRecommender:
 
     def __init__(self,
@@ -586,11 +598,23 @@ class MusicRecommender:
             self.df.loc[missing_mask, "fused_emotion"] = fallback
             logger.info(f"[CLAP] Filled {n_missing} missing labels via V-A heuristic")
 
+    def _resolve_indices(self, track_ids):
+        """Map track_id strings → positional indices into the score arrays.
+
+        df has a positional RangeIndex (see api/music.py similar-song resolution),
+        so df.index values are valid indices into the (n_songs,) score vectors.
+        Returns [] when nothing matches — callers treat that as "exclude nothing".
+        """
+        if not track_ids or 'track_id' not in self.df.columns:
+            return []
+        return self.df.index[self.df['track_id'].isin(set(track_ids))].tolist()
+
     def recommend_by_colors(self,
                            color_hexes,
                            top_k=DEFAULT_TOP_K,
                            weights=None,
-                           diversity_penalty=DIVERSITY_PENALTY):
+                           diversity_penalty=DIVERSITY_PENALTY,
+                           exclude_ids=None):
 
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
@@ -629,13 +653,17 @@ class MusicRecommender:
 
         per_color_va = np.array(per_color_va, dtype=float)  # (C, 2)
 
+        # Endless-radio: drop already-played tracks so re-querying the same colour
+        # yields fresh songs (no loop → avoids the inverted-U satiation curve).
+        exclude_idx = self._resolve_indices(exclude_ids)
+
         return self._rank_by_color_features(
             per_color_va, per_color_emotion, per_color_lyrics,
-            color_hexes, top_k, diversity_penalty)
+            color_hexes, top_k, diversity_penalty, exclude_idx=exclude_idx)
 
     def _rank_by_color_features(self, per_color_va, per_color_emotion,
                                 per_color_lyrics, color_hexes, top_k,
-                                diversity_penalty):
+                                diversity_penalty, exclude_idx=None):
         """Pure V-A heteroscedastic RBF scorer (F3 V19).
 
         Matches colour V-A against song V-A using per-axis bandwidth (σ_V>σ_A —
@@ -727,6 +755,12 @@ class MusicRecommender:
                 alpha = COLOR_CALIBRATION_ALPHA
                 final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
 
+            # Endless-radio exclusion: sink already-played songs below every legit
+            # score (scores ≥ 0) so all three selectors below skip them — mirrors the
+            # reference-song exclusion in recommend_by_song (final_scores[idx] = -1).
+            if exclude_idx:
+                final_scores[exclude_idx] = -1.0
+
             # V37: acoustic-coherence selection — V-A picks the mood region, MERT makes
             # the set an on-vibe cluster (feel alike + feel like the colour). Supersedes the
             # V-A-diversity MMR below (which scattered results). Falls back if MERT missing.
@@ -788,7 +822,8 @@ class MusicRecommender:
         # (Saari 2016). top_k=10 waypoints across the path achieves this spacing.
         if COLOR_JOURNEY_ENABLED:
             idxs = self._journey_waypoint_sample(
-                per_color_va[0], per_color_va[1], top_k, diversity_penalty)
+                per_color_va[0], per_color_va[1], top_k, diversity_penalty,
+                exclude_idx=exclude_idx)
             res = self._build_result_df(idxs)
             if not res.empty and 'original_index' in res.columns:
                 res = res.copy()
@@ -904,7 +939,8 @@ class MusicRecommender:
         return [int(cand[li]) for li in selected]
 
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
-                                  diversity_penalty: float) -> list[int]:
+                                  diversity_penalty: float,
+                                  exclude_idx=None) -> list[int]:
         """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
 
         Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
@@ -921,6 +957,8 @@ class MusicRecommender:
         _sa = COLOR_SCORE_VA_SIGMA_A
 
         excluded = np.zeros(n, dtype=bool)
+        if exclude_idx:  # endless-radio: never re-pick an already-played song
+            excluded[exclude_idx] = True
         artist_counts: dict[str, int] = {}
         artists = (self.df[self.artist_col].fillna('__unknown__').values
                    if self.artist_col else None)
@@ -987,7 +1025,9 @@ class MusicRecommender:
             return self._bpm_arr
         import json as _json
         arr = np.full(self.n_songs, np.nan, dtype=float)
-        path = "data/clean_bpm.json"
+        # Resolve from DATA_DIR (serving release), not CWD-relative — otherwise in
+        # Docker (CWD=/app) this missed the mounted serving data and BPM went NaN.
+        path = globals().get("CLEAN_BPM_FILE", "data/clean_bpm.json")
         if os.path.exists(path):
             try:
                 d = _json.load(open(path))
@@ -1011,7 +1051,8 @@ class MusicRecommender:
                     'fused_valence', 'fused_energy', 'fused_emotion', 'color_hex',
                     'track_url', 'preview_url', 'track_id', 'original_index',
                     'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
-                    'mood_quadrant', 'album_name', 'artist_ids']
+                    'mood_quadrant', 'album_name', 'artist_ids',
+                    *CROSSFADE_PASSTHROUGH_COLS]
         if self.artist_col and self.artist_col not in optional:
             optional.append(self.artist_col)
         cols = [c for c in optional if c in rows.columns]
@@ -1180,7 +1221,8 @@ class MusicRecommender:
                          song_id_or_name,
                          top_k=DEFAULT_TOP_K,
                          weights=None,
-                         diversity_penalty=DIVERSITY_PENALTY):
+                         diversity_penalty=DIVERSITY_PENALTY,
+                         exclude_ids=None):
         """
         Multi-faceted song similarity with 7 complementary signals.
 
@@ -1324,6 +1366,12 @@ class MusicRecommender:
         if ENABLE_COVER_FILTER and self._cover_exclude:
             for cover_idx in self._cover_exclude.get(song_idx, set()):
                 final_scores[cover_idx] = -1
+
+        # Endless-radio: drop already-played tracks so re-querying the same seed
+        # song keeps surfacing fresh similars instead of looping the same list.
+        exclude_idx = self._resolve_indices(exclude_ids)
+        if exclude_idx:
+            final_scores[exclude_idx] = -1
 
         # No RRF for recommend_by_song: the multi-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because
@@ -1486,7 +1534,8 @@ class MusicRecommender:
         optional = ['similarity_score', 'valence', 'energy', 'arousal', 'fused_valence',
                    'fused_energy', 'fused_emotion', 'color_hex', 'track_url', 'preview_url', 'track_id',
                    'original_index', 'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
-                   'mood_quadrant', 'album_name', 'artist_ids', 'key', 'mode']
+                   'mood_quadrant', 'album_name', 'artist_ids', 'key', 'mode',
+                   *CROSSFADE_PASSTHROUGH_COLS]
         cols.extend([c for c in optional if c in results.columns])
 
         return results[cols].reset_index(drop=True)

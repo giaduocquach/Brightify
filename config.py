@@ -45,6 +45,18 @@ CHECKPOINTS_DIR = _resolve_path_env("BRIGHTIFY_CHECKPOINTS_DIR", SERVING_ROOT / 
 MUSIC_DIR = _resolve_path_env("BRIGHTIFY_MUSIC_DIR", MEDIA_ROOT / "music_files")
 ALBUM_ART_DIR = _resolve_path_env("BRIGHTIFY_ALBUM_ART_DIR", MEDIA_ROOT / "album_art")
 ARTIST_IMAGES_DIR = _resolve_path_env("BRIGHTIFY_ARTIST_IMAGES_DIR", MEDIA_ROOT / "artist_images")
+
+# Optional CDN base URL for audio (e.g. a CloudFront distribution in front of an
+# S3 bucket holding the MP3s). When set, /api/audio/stream/{id} returns a 302
+# redirect to f"{AUDIO_CDN_BASE}/{id}.mp3" so streaming/egress is offloaded to the
+# CDN instead of the app. When empty (dev/local), MP3s are served from MUSIC_DIR.
+AUDIO_CDN_BASE = os.environ.get("AUDIO_CDN_BASE", "").rstrip("/")
+
+# JSON list of track_ids that have an MP3 (filename stems). In CDN mode the local
+# music_files/ dir is absent, so this manifest is the source of truth for
+# has_audio. Generated from music_files/ when syncing to S3 (`make audio-manifest`).
+AUDIO_MANIFEST_FILE = str(DATA_DIR / "audio_manifest.json")
+
 ARCHIVE_ROOT = _resolve_path_env("BRIGHTIFY_ARCHIVE_ROOT", PROJECT_ROOT / "var" / "archive")
 RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" / "runtime")
 
@@ -70,6 +82,13 @@ CROSSFADE_FEATURES_FILE = str(DATA_DIR / "crossfade_features.json")
 PHOBERT_MODEL = 'vinai/phobert-base-v2'  # PhoBERT v2 (RoBERTa-base, 135M params, AGPL-3.0)
 MAX_SEQUENCE_LENGTH = 512  # Maximum tokens for BERT
 BATCH_SIZE = 32  # Batch size for embedding generation
+
+# Skip loading the PhoBERT model weights at startup. PhoBERT is loaded eagerly
+# but never invoked on any request path: runtime emotion comes from precomputed
+# EMOTION_LABELS_FILE (full catalog coverage) + the pure-Python lexicon, and
+# emotions_to_valence_arousal() does no model inference. Set True in production
+# to save ~850 MB RAM and the model download. Default False keeps dev unchanged.
+SKIP_PHOBERT_LOAD = os.environ.get("SKIP_PHOBERT_LOAD", "False") == "True"
 
 # ============================================================================
 # Audio Features
@@ -159,6 +178,7 @@ TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
 # Catches: same song different title/case, feat. versions, cross-lingual (April Lie / Tháng Tư).
 ENABLE_COVER_FILTER = os.environ.get("ENABLE_COVER_FILTER", "True") == "True"
 COVER_INDEX_FILE    = str(DATA_DIR / "cover_index.json")
+CLEAN_BPM_FILE      = str(DATA_DIR / "clean_bpm.json")  # clean librosa BPM per track (tempo signal)
 
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 82% (audio), V-A 12% (mood), lyrics 6% (genre cue).

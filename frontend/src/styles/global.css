@@ -9,7 +9,9 @@
   --panel-border: rgba(255, 255, 255, 0.09);
   --text: #f4f2fb;
   --text-dim: rgba(244, 242, 251, 0.66);
-  --text-faint: rgba(244, 242, 251, 0.4);
+  /* 0.6 keeps small meaningful text (result-why, hud-eyebrow, ptime) ≥4.5:1 on --bg
+     even under the translucent panel; decorative-only glyphs may go fainter inline. */
+  --text-faint: rgba(244, 242, 251, 0.6);
   --accent: #a78bfa;
   --accent-2: #67e8f9;
   --play: #22c55e;

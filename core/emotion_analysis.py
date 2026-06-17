@@ -339,9 +339,15 @@ class VietnameseEmotionLexicon:
 
 class EmotionClassifier:
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, skip_model_load: bool = False):
         """Initialize emotion classifier with PhoBERT.
         Uses config.PHOBERT_MODEL by default (vinai/phobert-base-v2).
+
+        When skip_model_load is True the PhoBERT weights are NOT loaded
+        (self.available=False). encode_lyrics() then returns None just like the
+        model-failed-to-load path, while emotions_to_valence_arousal() — which
+        is pure-Python — keeps working. Used in production where runtime emotion
+        comes from precomputed labels and PhoBERT is never invoked.
         """
         if model_name is None:
             try:
@@ -351,15 +357,23 @@ class EmotionClassifier:
                 model_name = 'vinai/phobert-base-v2'
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        try:
-            self.model = AutoModel.from_pretrained(model_name)
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model.to(self.device)
-            self.model.eval()
-            self.available = True
-        except Exception as e:
-            logger.warning("Could not load PhoBERT model: %s", e)
+        if skip_model_load:
+            logger.info("SKIP_PHOBERT_LOAD set — PhoBERT weights not loaded (encode_lyrics disabled)")
+            self.model = None
+            self.tokenizer = None
             self.available = False
+        else:
+            try:
+                self.model = AutoModel.from_pretrained(model_name)
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+                self.model.to(self.device)
+                self.model.eval()
+                self.available = True
+            except Exception as e:
+                logger.warning("Could not load PhoBERT model: %s", e)
+                self.model = None
+                self.tokenizer = None
+                self.available = False
 
         # Emotion dimension mapping (based on Russell's Circumplex Model)
         self.emotion_dimensions = {
@@ -530,7 +544,12 @@ def get_emotion_analyzer():
         _emotion_lexicon = VietnameseEmotionLexicon()
 
     if _emotion_classifier is None:
-        _emotion_classifier = EmotionClassifier()
+        try:
+            import config as app_config
+            skip_load = app_config.SKIP_PHOBERT_LOAD
+        except (ImportError, AttributeError):
+            skip_load = False
+        _emotion_classifier = EmotionClassifier(skip_model_load=skip_load)
 
     if _emotion_fusion is None:
         _emotion_fusion = MultimodalEmotionFusion(audio_weight=0.5, lyrics_weight=0.5)
