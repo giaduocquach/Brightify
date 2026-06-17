@@ -174,14 +174,16 @@ class MusicRecommender:
             try:
                 mert_raw = np.load(MERT_EMBEDDINGS_FILE)
                 if mert_raw.shape[0] == self.n_songs and mert_raw.ndim == 2 and mert_raw.shape[1] > 0:
+                    mert_raw = mert_raw.astype(np.float64)  # float64 reductions → cross-platform reproducible
                     norms = np.linalg.norm(mert_raw, axis=1, keepdims=True)
                     norms[norms == 0] = 1
-                    self.mert_matrix = (mert_raw / norms).astype(np.float32)
+                    mert_norm = mert_raw / norms                       # float64
+                    self.mert_matrix = mert_norm.astype(np.float32)
                     # V37: anisotropy-corrected (mean-centred + renormalised) MERT for
                     # acoustic-coherence scoring. Raw MERT cosines saturate ~0.9 (narrow
                     # cone) so they can't discriminate "feel alike"; centring restores
                     # dynamic range (random≈0.0 vs near-neighbour≈0.45). See _coherent_cluster_select.
-                    mc = self.mert_matrix - self.mert_matrix.mean(axis=0, keepdims=True)
+                    mc = mert_norm - mert_norm.mean(axis=0, keepdims=True)   # float64
                     mcn = np.linalg.norm(mc, axis=1, keepdims=True)
                     mcn[mcn == 0] = 1
                     self.mert_centered = (mc / mcn).astype(np.float32)
@@ -211,9 +213,14 @@ class MusicRecommender:
                     pos = {str(t): i for i, t in enumerate(order)}
                     muq = np.array([muq[pos[t]] if t in pos else np.full(muq.shape[1], np.nan)
                                     for t in tids])
-                nn = np.linalg.norm(muq, axis=1, keepdims=True); nn[nn == 0] = 1
-                self.mert_matrix = (muq / nn).astype(np.float32)
-                mc = muq - np.nanmean(muq, axis=0, keepdims=True)
+                # float64 for the mean-centring + norms: float32 reductions差 ~1e-5 between
+                # arm64 (Accelerate) and amd64 (OpenBLAS), which shifts mert_centered enough to
+                # flip the greedy coherence cascade → different colour order per host. Computing
+                # in float64 then storing float32 yields byte-identical embeddings everywhere.
+                muq64 = muq.astype(np.float64)
+                nn = np.linalg.norm(muq64, axis=1, keepdims=True); nn[nn == 0] = 1
+                self.mert_matrix = (muq64 / nn).astype(np.float32)
+                mc = muq64 - np.nanmean(muq64, axis=0, keepdims=True)
                 mcn = np.linalg.norm(mc, axis=1, keepdims=True); mcn[mcn == 0] = 1
                 self.mert_centered = (mc / mcn).astype(np.float32)
                 # Tracks absent from muq_metadata become NaN rows above; the nn==0 guard does NOT
