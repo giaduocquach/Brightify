@@ -31,4 +31,7 @@ runcmd:
   # App directory layout on the root volume
   - mkdir -p /opt/${project}
   - chown -R ubuntu:ubuntu /opt/${project}
+  # SSM runs deploy commands as root on an ubuntu-owned repo → git would refuse
+  # ("dubious ownership"). Trust the repo dir system-wide so git works for any user.
+  - git config --system --add safe.directory /opt/${project}
   - echo "Brightify host ready. Clone the repo into /opt/${project} and run the Phase 2 data load." > /opt/${project}/READY.txt

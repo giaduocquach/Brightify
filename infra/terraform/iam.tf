@@ -80,10 +80,14 @@ data "aws_iam_policy_document" "github_assume" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
+    # Allow any ref/environment from THIS repo. deploy.yml uses
+    # `environment: production`, so the token sub is
+    # `repo:<owner>/<repo>:environment:production` (not `:ref:refs/heads/main`);
+    # a wildcard covers both forms while still scoping to the single repo.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"]
+      values   = ["repo:${var.github_repo}:*"]
     }
   }
 }

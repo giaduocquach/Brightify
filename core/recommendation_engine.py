@@ -908,9 +908,13 @@ class MusicRecommender:
         cand = _argsort_desc_stable(scores, n_cand)            # top V-A candidates (global idx)
         rel = scores[cand].astype(float)
         rel = (rel - rel.min()) / (rel.max() - rel.min() + 1e-9)   # → [0,1]
-        # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster
+        # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster.
+        # float64: the coherence matmul drives a greedy cascade (one different pick shifts
+        # the centroid → whole list diverges). float32 BLAS differs by ~1e-5 across CPUs
+        # (arm64 Accelerate vs amd64 OpenBLAS), too coarse for round-6 to absorb; float64
+        # BLAS agrees to ~1e-13 → reproducible selection on every host.
         M = (getattr(self, 'mert_centered', None) if getattr(self, 'mert_centered', None) is not None
-             else self.mert_matrix)[cand]                      # (n_cand, D), L2-normalised
+             else self.mert_matrix)[cand].astype(np.float64)   # (n_cand, D), L2-normalised
         artists = (self.df[self.artist_col].fillna('__unknown__').values
                    if self.artist_col else None)
         cover_excl = getattr(self, '_cover_exclude', {}) if ENABLE_COVER_FILTER else {}

@@ -15,6 +15,8 @@ cd /opt/brightify
 [ -f /opt/brightify/deploy.env ] && . /opt/brightify/deploy.env
 
 # Sync compose/nginx/scripts to the exact deployed commit (.env + var/ are gitignored, untouched).
+# SSM runs this as root on an ubuntu-owned repo → trust the dir so git won't refuse.
+git config --global --add safe.directory /opt/brightify 2>/dev/null || true
 git fetch origin --quiet
 git reset --hard "${GIT_SHA}"
 
