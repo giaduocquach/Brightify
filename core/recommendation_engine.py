@@ -30,6 +30,21 @@ def detect_artist_column(df):
     return None
 
 
+def _argsort_desc_stable(scores, k=None):
+    """Descending argsort that is reproducible across CPU/BLAS platforms.
+
+    Ranking scores are float32 BLAS products (e.g. MERT/MuQ cosine @ centroid),
+    whose last bits differ between arm64 (Apple Accelerate) and amd64 (OpenBLAS).
+    A bare ``np.argsort(x)[::-1]`` is non-stable, so those ~1e-7 differences flip
+    near-tied songs and the same color returns a slightly different order per host.
+    Rounding absorbs the ULP noise; a stable sort then keeps ascending index order
+    for equal-rounded scores (a fixed tie-break) → identical output everywhere.
+    """
+    rounded = np.round(np.asarray(scores, dtype=np.float64), 6)
+    order = np.argsort(-rounded, kind='stable')
+    return order[:k] if k is not None else order
+
+
 # Columns the result-builders must carry through so the API (and the frontend Smart
 # Crossfade) sees per-track loudness, cue points, downbeats, vocal regions and the
 # (DB-reconciled) duration. Hydrated from the DB at startup; without these in the
@@ -775,7 +790,7 @@ class MusicRecommender:
             elif COLOR_MMR_VA_DIVERSITY:
                 lam = COLOR_MMR_VA_LAMBDA
                 n_cand = min(top_k * 5, self.n_songs)
-                top_cands = np.argsort(final_scores)[::-1][:n_cand]
+                top_cands = _argsort_desc_stable(final_scores, n_cand)
                 va_cands = match_va[top_cands]           # (n_cand, 2) — match space
                 rel = final_scores[top_cands]             # (n_cand,)
                 selected_local, remaining = [], list(range(n_cand))
@@ -861,7 +876,7 @@ class MusicRecommender:
         rrf = np.zeros(self.n_songs)
         for sc in score_stack:
             ranks = np.empty(self.n_songs, dtype=float)
-            ranks[np.argsort(sc)[::-1]] = np.arange(self.n_songs)
+            ranks[_argsort_desc_stable(sc)] = np.arange(self.n_songs)
             rrf += 1.0 / (RRF_K + ranks + 1.0)
         rrf_norm = rrf / (rrf.max() + 1e-12)
         res = self._fast_rank(rrf_norm, top_k, diversity_penalty)
@@ -890,7 +905,7 @@ class MusicRecommender:
         """
         alpha = COLOR_COHERENCE_ALPHA
         n_cand = min(top_k * COLOR_COHERENCE_OVERFETCH, self.n_songs)
-        cand = np.argsort(scores)[::-1][:n_cand]               # top V-A candidates (global idx)
+        cand = _argsort_desc_stable(scores, n_cand)            # top V-A candidates (global idx)
         rel = scores[cand].astype(float)
         rel = (rel - rel.min()) / (rel.max() - rel.min() + 1e-9)   # → [0,1]
         # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster
@@ -918,7 +933,7 @@ class MusicRecommender:
                     if cnt:
                         combo[j] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
             pick = None
-            for j in np.argsort(combo)[::-1]:
+            for j in _argsort_desc_stable(combo):
                 li = remaining[int(j)]
                 if int(cand[li]) in blocked:
                     continue
@@ -1450,11 +1465,11 @@ class MusicRecommender:
             cand_arr = np.asarray(restrict_to, dtype=np.int64)
             cand_scores = scores[cand_arr]
             n = min(top_k * 4, len(cand_arr))
-            top_local = np.argsort(cand_scores)[::-1][:n]
+            top_local = _argsort_desc_stable(cand_scores, n)
             top_indices = cand_arr[top_local]
         else:
             n_candidates = min(top_k * 4, self.n_songs)
-            top_indices = np.argsort(scores)[::-1][:n_candidates]
+            top_indices = _argsort_desc_stable(scores, n_candidates)
 
         # Filter by minimum threshold
         valid = scores[top_indices] >= MIN_SIMILARITY_THRESHOLD

@@ -38,8 +38,21 @@ $SSH "$SSH_USER@$HOST" 'sudo mkdir -p /opt/brightify/var/serving_releases && sud
 rsync -avz --delete -e "$SSH" "var/serving_releases/$REL/" \
   "$SSH_USER@$HOST:/opt/brightify/var/serving_releases/$REL/"
 
-echo "[5/5] Point 'current' symlink on EC2"
+echo "[5/6] Point 'current' symlink on EC2"
 $SSH "$SSH_USER@$HOST" "ln -sfn $REL /opt/brightify/var/serving_releases/current"
 
+# vocal_regions.csv is a DB-seed input (not a runtime/serving-release file): it
+# feeds `tools.backfill_vocal_regions` which populates Song.vocal_start_s/vocal_end_s
+# (vocal-aware crossfade anchors). Without it the DB columns are NULL and crossfade
+# falls back to fade_out_cue_s. Place it where the app container can read it.
+echo "[6/6] Sync vocal_regions.csv for the vocal-regions backfill"
+$SSH "$SSH_USER@$HOST" 'mkdir -p /opt/brightify/data'
+if [ -f data/vocal_regions.csv ]; then
+  rsync -az -e "$SSH" data/vocal_regions.csv "$SSH_USER@$HOST:/opt/brightify/data/vocal_regions.csv"
+else
+  echo "  (warning) data/vocal_regions.csv not found locally — skip"
+fi
+
 echo
-echo "Done. Next: ssh $SSH_USER@$HOST, fill /opt/brightify/.env, then run scripts/aws-bootstrap.sh"
+echo "Done. Next: ssh $SSH_USER@$HOST, fill /opt/brightify/.env, run scripts/aws-bootstrap.sh,"
+echo "then once up: docker compose -f docker-compose.yml -f docker-compose.aws.yml run --rm app python -m tools.backfill_vocal_regions"

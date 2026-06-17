@@ -28,6 +28,10 @@ $COMPOSE pull app migrate
 $COMPOSE run --rm migrate          # alembic upgrade head
 $COMPOSE up -d
 
+# nginx config is bind-mounted (compose up won't recreate it) — reload so any
+# conf.d.aws change from this commit takes effect. Ignore if nginx isn't up yet.
+docker exec brightify_nginx nginx -s reload 2>/dev/null || true
+
 # Health gate — fail the deploy if the app does not come up.
 for i in $(seq 1 12); do
   if curl -fsS http://localhost/api/health >/dev/null; then
