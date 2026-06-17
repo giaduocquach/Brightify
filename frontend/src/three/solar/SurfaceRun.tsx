@@ -1,94 +1,136 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
-import { Color, Group, Vector3 } from 'three';
+import { Euler, Vector3 } from 'three';
 import { useStore } from '../../state/store';
-import { engine } from '../../audio/engine';
-import { vaToColor } from '../va';
 import { solarRefs } from './refs';
-import { bodyByHex } from './bodies';
+import { bodyByHex, locomotionFor, orbitPosAt } from './bodies';
 
-const YUP = new Vector3(0, 1, 0);
-const TILT = 0.5; // tilt the run path off the equator so it reads in 3D
+const TAU = Math.PI * 2;
+const RING_EULER = new Euler(Math.PI / 2 - 0.35, 0, 0); // matches the Saturn ring mesh tilt
+const SINK_EULER = new Euler(1.3, 0, 0);                 // matches the black-hole accretion disk tilt
 
-// Explore stage: the astronaut runs a great-circle path on the chosen planet, past
-// one marker per recommended song (title + artist). The runner's angle is driven by
-// playback progress through the queue, so passing marker k ⇔ track k is playing.
-// Order is exactly `results` (the recommend order) — never reshuffled here.
+// Smooth wandering direction on the unit sphere (sum of out-of-phase sines → organic,
+// non-repeating, deterministic — no Math.random). Used for walk/hop/float.
+function wanderDir(t: number, out: Vector3): Vector3 {
+  const theta = t * 0.16 + Math.sin(t * 0.073) * 1.6 + Math.sin(t * 0.031) * 0.8;
+  const phi = Math.sin(t * 0.051) * 0.95 + Math.sin(t * 0.117) * 0.4;
+  const cp = Math.cos(phi);
+  return out.set(cp * Math.cos(theta), Math.sin(phi), cp * Math.sin(theta));
+}
+
+// Build an orthonormal basis (u, v in-plane; n = normal) for a plane given by an Euler tilt,
+// matching how the corresponding mesh (ring / disk) is rotated.
+function planeBasis(e: Euler) {
+  return {
+    u: new Vector3(1, 0, 0).applyEuler(e),
+    v: new Vector3(0, 1, 0).applyEuler(e),
+    n: new Vector3(0, 0, 1).applyEuler(e),
+  };
+}
+
+// Explore stage: each frame writes the shared runner refs (position/forward/up/stance/sink),
+// DISPATCHED by the body's locomotion type, so the astronaut moves differently on each body:
+//   walk (rocky) · hop (Moon, low-gravity) · float (gas giants) · ringwalk (Saturn rings) ·
+//   surf (ride the comet along its orbit) · sink (spiral into the black hole). Renders nothing.
 export default function SurfaceRun() {
   const hex = useStore((s) => s.selectedColors[0]);
-  const tracks = useStore((s) => s.results);
-  const index = useStore((s) => s.index);
   const body = hex ? bodyByHex(hex) : undefined;
-  const n = tracks.length;
 
-  const u = useMemo(() => new Vector3(1, 0, 0), []);
-  const v = useMemo(() => new Vector3(0, Math.cos(TILT), Math.sin(TILT)), []);
-  const colors = useMemo(() => tracks.map((t) => vaToColor(t.valence, t.arousal, new Color())), [tracks]);
-
-  const markerRefs = useRef<(Group | null)[]>([]);
   const dir = useRef(new Vector3());
+  const dirNext = useRef(new Vector3());
+  const fwd = useRef(new Vector3());
   const center = useRef(new Vector3());
+  const a = useRef(new Vector3());
+  const b = useRef(new Vector3());
+  const ring = useMemo(() => planeBasis(RING_EULER), []);
+  const sink = useMemo(() => planeBasis(SINK_EULER), []);
+  const frozenT = useRef(0); // reduced-motion freezes the wander/orbit/sink path
 
   useEffect(() => {
     solarRefs.runnerActive = true;
     return () => { solarRefs.runnerActive = false; };
   }, []);
 
-  useFrame(() => {
+  // tangent of the wander path (for walk/hop/float) → runnerForward
+  const wanderTangent = (t: number, scale: number) => {
+    wanderDir(t * scale, dir.current).normalize();
+    wanderDir(t * scale + 0.05, dirNext.current).normalize();
+    fwd.current.copy(dirNext.current).sub(dir.current);
+    fwd.current.addScaledVector(dir.current, -fwd.current.dot(dir.current)); // project to tangent
+    if (fwd.current.lengthSq() < 1e-6) fwd.current.set(0, 0, 1);
+    solarRefs.runnerForward.copy(fwd.current).normalize();
+    solarRefs.runnerUp.copy(dir.current);
+  };
+
+  useFrame((state) => {
     if (!body || !hex) return;
+    if (useStore.getState().mode === 'boarding') return; // freeze under the tractor beam
     const c = solarRefs.bodyPos[hex];
     if (!c) return;
     center.current.copy(c);
+    if (!solarRefs.reducedMotion) frozenT.current = state.clock.elapsedTime;
+    const t = solarRefs.reducedMotion ? frozenT.current : state.clock.elapsedTime;
+    const size = body.size;
+    const stance = locomotionFor(body);
+    solarRefs.runnerStance = stance;
+    solarRefs.runnerSink = 0;
 
-    const st = useStore.getState();
-    const { time, duration } = engine.progress(); // live playhead → smooth run
-    const frac = duration > 0 ? time / duration : 0;
-    const idx = Math.max(0, st.index);
-    const p = n > 0 ? (idx + frac) / n : 0;
-
-    // runner pose
-    const th = p * Math.PI * 2;
-    dir.current.copy(u).multiplyScalar(Math.cos(th)).addScaledVector(v, Math.sin(th)).normalize();
-    solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, body.size * 1.06);
-    solarRefs.runnerForward
-      .copy(u).multiplyScalar(-Math.sin(th)).addScaledVector(v, Math.cos(th)).normalize();
-
-    // markers
-    for (let k = 0; k < n; k++) {
-      const g = markerRefs.current[k];
-      if (!g) continue;
-      const thk = (k / n) * Math.PI * 2;
-      dir.current.copy(u).multiplyScalar(Math.cos(thk)).addScaledVector(v, Math.sin(thk)).normalize();
-      g.position.copy(center.current).addScaledVector(dir.current, body.size * 1.04);
-      g.quaternion.setFromUnitVectors(YUP, dir.current); // pole points radially out
-      g.scale.setScalar(k === idx ? 1.35 : 1);
+    switch (stance) {
+      case 'hop': {
+        wanderTangent(t, 0.6); // slower wander
+        const air = Math.pow(Math.abs(Math.sin(t * 3.0)), 0.6); // low-gravity hang-time
+        solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * (1.03 + air * 0.6));
+        break;
+      }
+      case 'float': {
+        wanderTangent(t, 0.3); // drift slowly above the cloud tops
+        const bob = Math.sin(t * 0.8) * 0.03;
+        solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * (1.18 + bob));
+        break;
+      }
+      case 'ringwalk': {
+        const ang = t * 0.25;
+        const radius = size * (1.45 + 0.35 * (0.5 + 0.5 * Math.sin(t * 0.2))); // drift within the ring band
+        a.current.copy(ring.u).multiplyScalar(Math.cos(ang) * radius);
+        b.current.copy(ring.v).multiplyScalar(Math.sin(ang) * radius);
+        solarRefs.runnerPos.copy(center.current).add(a.current).add(b.current);
+        a.current.copy(ring.u).multiplyScalar(-Math.sin(ang));
+        b.current.copy(ring.v).multiplyScalar(Math.cos(ang));
+        solarRefs.runnerForward.copy(a.current).add(b.current).normalize();
+        solarRefs.runnerUp.copy(ring.n);
+        break;
+      }
+      case 'surf': {
+        solarRefs.runnerUp.copy(center.current).normalize(); // stand "up" away from the Sun
+        if (solarRefs.runnerUp.lengthSq() < 1e-6) solarRefs.runnerUp.set(0, 1, 0);
+        solarRefs.runnerPos.copy(center.current).addScaledVector(solarRefs.runnerUp, size * 0.8);
+        orbitPosAt(body, t + 0.12, a.current);
+        orbitPosAt(body, t - 0.12, b.current);
+        solarRefs.runnerForward.copy(a.current).sub(b.current).normalize(); // ride the orbital velocity
+        if (solarRefs.runnerForward.lengthSq() < 1e-6) solarRefs.runnerForward.set(0, 0, 1);
+        break;
+      }
+      case 'sink': {
+        const LOOP = 9, TURNS = 3;
+        const u = (t % LOOP) / LOOP; // 0=outer → 1=horizon, then respawns
+        solarRefs.runnerSink = u;
+        const radius = size * 4 * (1 - u);
+        const ang = u * TAU * TURNS;
+        a.current.copy(sink.u).multiplyScalar(Math.cos(ang) * radius);
+        b.current.copy(sink.v).multiplyScalar(Math.sin(ang) * radius);
+        solarRefs.runnerPos.copy(center.current).add(a.current).add(b.current);
+        a.current.copy(sink.u).multiplyScalar(-Math.sin(ang));
+        b.current.copy(sink.v).multiplyScalar(Math.cos(ang));
+        solarRefs.runnerForward.copy(a.current).add(b.current).normalize();
+        solarRefs.runnerUp.copy(sink.n);
+        break;
+      }
+      default: { // walk (rocky)
+        wanderTangent(t, 1.0);
+        solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * 1.03);
+      }
     }
   });
 
-  if (!body || !hex || n === 0) return null;
-  const s = body.size;
-
-  return (
-    <group>
-      {tracks.map((t, k) => (
-        <group key={t.track_id || k} ref={(el) => { markerRefs.current[k] = el; }}>
-          <mesh position={[0, s * 0.18, 0]}>
-            <cylinderGeometry args={[s * 0.012, s * 0.012, s * 0.36, 6]} />
-            <meshBasicMaterial color={colors[k]} transparent opacity={0.7} />
-          </mesh>
-          <mesh position={[0, s * 0.4, 0]}>
-            <sphereGeometry args={[s * 0.06, 12, 12]} />
-            <meshStandardMaterial color={colors[k]} emissive={colors[k]} emissiveIntensity={1} />
-          </mesh>
-          <Html center distanceFactor={7} position={[0, s * 0.66, 0]} pointerEvents="none">
-            <div className={`song-card${k === index ? ' is-active' : ''}`}>
-              <span className="song-card-title">{t.track_name}</span>
-              <span className="song-card-artist">{t.artist}</span>
-            </div>
-          </Html>
-        </group>
-      ))}
-    </group>
-  );
+  return null;
 }

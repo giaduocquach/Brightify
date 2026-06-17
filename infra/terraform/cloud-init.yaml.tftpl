@@ -1,0 +1,34 @@
+#cloud-config
+# Bootstraps the Brightify EC2 host: Docker, AWS CLI, git, and app directories.
+# The actual `docker compose up` happens after data is loaded (see infra README
+# Phase 2), and subsequent deploys are driven by GitHub Actions via SSM.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - git
+  - awscli
+  - jq
+  - unzip
+
+write_files:
+  - path: /opt/${project}/deploy.env
+    permissions: "0640"
+    content: |
+      # Sourced by the deploy. Secrets (.env) live next to the repo, not here.
+      AWS_REGION=${aws_region}
+      ECR_REPO_URL=${ecr_repo_url}
+      AUDIO_BUCKET=${audio_bucket}
+      # AUDIO_CDN_BASE — the app builds {base}/{track_id}.mp3 (CloudFront or direct S3)
+      AUDIO_CDN_BASE=${audio_base}
+
+runcmd:
+  # Docker engine + compose plugin (convenience script installs both)
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker ubuntu
+  - systemctl enable --now docker
+  # App directory layout on the root volume
+  - mkdir -p /opt/${project}
+  - chown -R ubuntu:ubuntu /opt/${project}
+  - echo "Brightify host ready. Clone the repo into /opt/${project} and run the Phase 2 data load." > /opt/${project}/READY.txt

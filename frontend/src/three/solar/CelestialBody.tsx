@@ -1,24 +1,32 @@
-import { useMemo, useRef, useState } from 'react';
+import { Suspense, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import {
-  AdditiveBlending, Color, DoubleSide, Group, RingGeometry, Vector3,
+  DoubleSide, Group, RingGeometry, Vector3,
 } from 'three';
 import type { BodyDef } from './bodies';
+import { orbitPosAt } from './bodies';
 import { EMOTION_COLORS } from '../../data/colors';
 import { useStore } from '../../state/store';
 import { engine } from '../../audio/engine';
 import { solarRefs } from './refs';
-import { glowTexture } from './glow';
 import { useBodyTextures } from './planetTextures';
+import { useDeviceTier } from './deviceTier';
+import { hasHiRes } from './texturesHi';
+import { isFocused } from './focus';
+import { useHiResMap } from './useHiResMap';
+import { giantParamsFor } from './giantConfig';
 import Atmosphere from './Atmosphere';
+import GasGiantDetail from './GasGiantDetail';
+import Comet from './Comet';
+import BlackHole from './BlackHole';
 
 // ── Saturn-style ring with radial-correct UVs (sample the strip texture by radius) ──
 function PlanetRing({ def }: { def: BodyDef }) {
   const { ring } = useBodyTextures(def);
   const geo = useMemo(() => {
     const inner = def.size * 1.35;
-    const outer = def.size * 2.3;
+    const outer = def.size * 2.0; // contained so the ring never reaches the neighbouring orbits
     const g = new RingGeometry(inner, outer, 128);
     const pos = g.attributes.position;
     const uv = g.attributes.uv;
@@ -42,14 +50,27 @@ function PlanetRing({ def }: { def: BodyDef }) {
 function TexturedSphere({ def }: { def: BodyDef }) {
   const { map, clouds, night, bump } = useBodyTextures(def);
   const cloudRef = useRef<Group>(null);
-  useFrame((_, dt) => { if (cloudRef.current) cloudRef.current.rotation.y += dt * 0.015; });
+  // Adaptive LOD: on capable devices, the planet you're close to (explore/journey) swaps its
+  // day map to 4K; everyone else (and all distant planets) stays on the 2K baseline. The 2K
+  // map renders the whole time (`hi ?? map`) so the upgrade reads as a sharpen, never a flash.
+  const tier = useDeviceTier();
+  const mode = useStore((s) => s.mode);
+  const sel = useStore((s) => s.selectedColors);
+  const active = tier === 'high' && hasHiRes(def.hex) && isFocused(mode, sel, def.hex);
+  const hi = useHiResMap(def.hex, active);
+  const activeMap = hi ?? map;
+  // Ice giants (Uranus/Neptune): tint the map + add a subtle detail shell so they don't read
+  // as flat single-colour discs. Tint is free (every tier); the shell is high-tier only.
+  const giant = giantParamsFor(def.hex);
+  useFrame((_, dt) => { if (cloudRef.current && !solarRefs.reducedMotion) cloudRef.current.rotation.y += dt * 0.015; });
 
   return (
     <>
       <mesh>
         <sphereGeometry args={[def.size, 64, 64]} />
         <meshStandardMaterial
-          map={map}
+          map={activeMap}
+          color={giant ? giant.tint : undefined}
           bumpMap={bump}
           bumpScale={bump ? 0.015 : 0}
           // Earth city-lights: emissive only reads where the day map is dark, so it
@@ -61,6 +82,7 @@ function TexturedSphere({ def }: { def: BodyDef }) {
           metalness={0.0}
         />
       </mesh>
+      {giant && tier === 'high' && <GasGiantDetail def={def} params={giant} />}
       {clouds && (
         <group ref={cloudRef}>
           <mesh>
@@ -84,62 +106,6 @@ function PlutoSphere({ def }: { def: BodyDef }) {
   );
 }
 
-// ── Comet: icy nucleus + glowing green coma + tail ──
-function Comet({ def, color }: { def: BodyDef; color: Color }) {
-  const tex = glowTexture();
-  const tail = useRef<Group>(null);
-  useFrame(() => {
-    const p = solarRefs.bodyPos[def.hex];
-    if (tail.current && p) tail.current.rotation.y = Math.atan2(p.x, p.z);
-  });
-  return (
-    <>
-      <mesh>
-        <icosahedronGeometry args={[def.size * 0.6, 1]} />
-        <meshStandardMaterial color="#dfeee6" roughness={0.4} emissive={color} emissiveIntensity={0.3} />
-      </mesh>
-      <sprite scale={def.size * 3}>
-        <spriteMaterial map={tex} color={color} transparent opacity={0.8}
-          blending={AdditiveBlending} depthWrite={false} />
-      </sprite>
-      <group ref={tail}>
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <sprite key={i} position={[0, 0, def.size * (1.6 + i * 1.2)]} scale={def.size * (2.6 - i * 0.36)}>
-            <spriteMaterial map={tex} color={color} transparent opacity={(0.55 - i * 0.08)}
-              blending={AdditiveBlending} depthWrite={false} />
-          </sprite>
-        ))}
-      </group>
-    </>
-  );
-}
-
-// ── Black hole: dark core + bright rotating accretion disk + lensing halo ──
-function BlackHole({ def, color }: { def: BodyDef; color: Color }) {
-  const tex = glowTexture();
-  const disk = useRef<Group>(null);
-  const ringGeo = useMemo(() => new RingGeometry(def.size * 1.3, def.size * 2.6, 96), [def.size]);
-  useFrame((_, dt) => { if (disk.current) disk.current.rotation.z += dt * 0.5; });
-  return (
-    <>
-      <mesh>
-        <sphereGeometry args={[def.size, 32, 32]} />
-        <meshBasicMaterial color="#04030a" />
-      </mesh>
-      <group ref={disk} rotation={[1.3, 0.2, 0]}>
-        <mesh geometry={ringGeo}>
-          <meshBasicMaterial color="#ffb066" side={DoubleSide} transparent opacity={0.9}
-            blending={AdditiveBlending} depthWrite={false} />
-        </mesh>
-      </group>
-      <sprite scale={def.size * 5}>
-        <spriteMaterial map={tex} color={color} transparent opacity={0.35}
-          blending={AdditiveBlending} depthWrite={false} />
-      </sprite>
-    </>
-  );
-}
-
 // One celestial body: orbits (around the Sun, or its parent for the Moon), renders
 // the realistic geometry for its kind, wears an emotion-hue atmosphere, and acts as
 // the colour-selection control. The `hex` it passes to toggleColor never changes.
@@ -155,39 +121,38 @@ export default function CelestialBody({ def }: { def: BodyDef }) {
   const { toggleColor, setHover } = useStore.getState();
 
   const info = useMemo(() => EMOTION_COLORS.find((c) => c.hex === def.hex), [def.hex]);
-  const color = useMemo(() => new Color(def.hex), [def.hex]);
 
   const worldPos = useMemo(() => {
     const v = new Vector3();
     solarRefs.bodyPos[def.hex] = v;
     return v;
   }, [def.hex]);
+  // Last live clock time, so reduced-motion freezes orbits where they are (no jump).
+  const frozenTime = useRef(0);
 
   useFrame((state, dt) => {
-    const t = state.clock.elapsedTime;
-    // orbit centre: the Sun, or the parent body (Moon → Earth)
-    let cx = 0, cy = 0, cz = 0;
-    if (def.parent) {
-      const p = solarRefs.bodyPos[def.parent];
-      if (p) { cx = p.x; cy = p.y; cz = p.z; }
-    }
-    const ang = def.phase + t * def.orbitSpeed;
-    const e = def.eccentricity ?? 0;
-    const r = e ? def.orbitRadius * (1 - e * e) / (1 + e * Math.cos(ang)) : def.orbitRadius;
-    const x = cx + Math.cos(ang) * r;
-    const z = cz + Math.sin(ang) * r;
-    const y = cy + Math.sin(ang * 1.3) * r * def.inclination;
-    worldPos.set(x, y, z);
-    if (group.current) group.current.position.set(x, y, z);
+    const rm = solarRefs.reducedMotion;
+    if (!rm) frozenTime.current = state.clock.elapsedTime;
+    const t = rm ? frozenTime.current : state.clock.elapsedTime;
+    // orbit centre: the Sun, or the parent body (Moon → Earth). Shared `orbitPosAt` keeps the
+    // ellipse math identical to what SurfaceRun's surf handler uses for the comet's velocity.
+    const parent = def.parent ? solarRefs.bodyPos[def.parent] : null;
+    orbitPosAt(def, t, worldPos, parent);
+    if (group.current) group.current.position.copy(worldPos);
 
-    // self-rotation (slowed for the planet you're running on, so the path stays put)
-    if (spin.current) spin.current.rotation.y += dt * (exploring ? def.spinSpeed * 0.08 : def.spinSpeed);
-    // selected bodies breathe with the music (mesh only, not the orbit)
-    if (tilt.current) tilt.current.scale.setScalar(selected ? 1 + engine.features.rms * 0.4 : 1);
+    // self-rotation (slowed for the planet you're running on, so the path stays put; frozen under reduced-motion)
+    if (spin.current && !rm) spin.current.rotation.y += dt * (exploring ? def.spinSpeed * 0.08 : def.spinSpeed);
+    // scale = hover bump (so clicks visibly register) × audio breathe (selected). Lerped → spring feel.
+    if (tilt.current) {
+      const target = (hovered ? 1.1 : 1) * (selected ? 1 + engine.features.rms * 0.4 : 1);
+      const cur = tilt.current.scale.x;
+      tilt.current.scale.setScalar(cur + (target - cur) * Math.min(1, dt * 12));
+    }
   });
 
   const dim = focused && !selected;
-  const showAtmo = def.kind === 'planet' || def.kind === 'ringed' || def.kind === 'moon';
+  // Procedural showpieces (comet/black hole) bring their own glow → no fresnel atmosphere.
+  const showAtmo = !def.special && (def.kind === 'planet' || def.kind === 'ringed' || def.kind === 'moon');
 
   const enter = () => { setHovered(true); setHover(def.hex); document.body.style.cursor = 'pointer'; };
   const leave = () => { setHovered(false); setHover(null); document.body.style.cursor = 'default'; };
@@ -199,22 +164,44 @@ export default function CelestialBody({ def }: { def: BodyDef }) {
       onPointerOut={(e) => { e.stopPropagation(); leave(); }}
       onClick={(e) => { e.stopPropagation(); toggleColor(def.hex); }}
     >
-      <group ref={tilt} rotation={[0, 0, def.axialTilt]}>
-        <group ref={spin}>
-          {def.kind === 'comet' ? (
-            <Comet def={def} color={color} />
-          ) : def.kind === 'blackhole' ? (
-            <BlackHole def={def} color={color} />
-          ) : def.texture ? (
-            <TexturedSphere def={def} />
-          ) : (
-            <PlutoSphere def={def} />
-          )}
+      {def.special === 'comet' ? (
+        <Comet def={def} selected={selected} />
+      ) : def.special === 'blackhole' ? (
+        <BlackHole def={def} selected={selected} />
+      ) : (
+        <group ref={tilt} rotation={[0, 0, def.axialTilt]}>
+          <group ref={spin}>
+            {/* fallback: a flat emotion-hue sphere until the texture streams in (no blank/blurry pop) */}
+            <Suspense fallback={
+              <mesh>
+                <sphereGeometry args={[def.size, 32, 32]} />
+                <meshStandardMaterial color={def.hex} roughness={1} metalness={0} />
+              </mesh>
+            }>
+              {def.texture ? (
+                <TexturedSphere def={def} />
+              ) : (
+                <PlutoSphere def={def} />
+              )}
+            </Suspense>
+          </group>
         </group>
-      </group>
+      )}
+
+      {/* invisible (opacity 0) but raycastable halo so distant specks — the comet (r48) and
+          black hole (r70) — stay easy to hover/click despite being sub-pixel on screen. */}
+      {def.special && (
+        <mesh>
+          <sphereGeometry args={[Math.max(def.size * 4, 2), 8, 8]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
 
       {showAtmo && (
-        <Atmosphere hex={def.hex} size={def.size} intensity={selected ? 1.9 : dim ? 0.5 : 1.1} />
+        // A thin, faint limb rim (high fresnel power = edge-only) so the photoreal texture
+        // reads as a real planet — not a glowing colour ball — while keeping a hint of the
+        // emotion hue. Brighter only when the body is the selected destination.
+        <Atmosphere hex={def.hex} size={def.size} intensity={selected ? 0.85 : hovered ? 0.6 : dim ? 0.18 : 0.34} power={5.0} />
       )}
 
       {(hovered || selected) && info && (

@@ -31,14 +31,30 @@ import config as cfg
 PROJECT_ROOT = cfg.PROJECT_ROOT
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "var" / "serving_releases"
 
+# (config value, dest subdir, required). Destination filename is derived from the
+# source basename so the release always matches what config/runtime expects —
+# no hardcoded names to drift. Active set reflects the current config (V41: MuQ
+# backbone + e5-large lyrics + emotion_labels_v6i). Optional files are skipped
+# when absent.
+_RUNTIME_SPEC = [
+    (cfg.PROCESSED_FILE,             "data",        True),   # song catalog
+    (cfg.EMBEDDINGS_FILE,            "data",        True),   # lyrics_e5large.npy
+    (cfg.EMBEDDINGS_META_FILE,       "data",        True),   # embeddings_metadata.json
+    (cfg.MUQ_EMBEDDINGS_FILE,        "data",        True),   # muq_embeddings.npy (active backbone)
+    (cfg.MUQ_METADATA_FILE,          "data",        True),   # muq_metadata.json
+    (cfg.RELABELED_EMOTIONS_FILE,    "data",        True),   # emotion_labels_v6i.json
+    (cfg.PHASE1_ARTISTS_FILE,        "checkpoints", True),
+    (cfg.MERT_EMBEDDINGS_FILE,       "data",        False),  # optional (ENABLE_MERT)
+    (cfg.MERT_EMBEDDINGS_META_FILE,  "data",        False),
+    (cfg.COVER_INDEX_FILE,           "data",        False),  # cover dedup clusters
+    (cfg.CLEAN_BPM_FILE,             "data",        False),  # tempo signal
+    (cfg.AUDIO_MANIFEST_FILE,        "data",        False),  # has_audio source in CDN mode
+]
+
 RUNTIME_FILES = [
-    ("data/vietnamese_music_processed_full.csv", Path(cfg.PROCESSED_FILE)),
-    ("data/vietnamese_music_embeddings_full.npy", Path(cfg.EMBEDDINGS_FILE)),
-    ("data/embeddings_metadata.json", Path(cfg.EMBEDDINGS_META_FILE)),
-    ("data/mert_embeddings.npy", Path(cfg.MERT_EMBEDDINGS_FILE)),
-    ("data/mert_metadata.json", Path(cfg.MERT_EMBEDDINGS_META_FILE)),
-    ("data/emotion_labels_v5c.json", Path(cfg.RELABELED_EMOTIONS_FILE)),
-    ("checkpoints/phase1_artists.csv", Path(cfg.PHASE1_ARTISTS_FILE)),
+    (f"{subdir}/{Path(value).name}", Path(value))
+    for value, subdir, required in _RUNTIME_SPEC
+    if required or Path(value).exists()
 ]
 
 
@@ -63,27 +79,29 @@ def _copy_or_link(src: Path, dst: Path, copy_mode: bool) -> None:
         shutil.copy2(src, dst)
 
 
-def _validate_runtime_contract() -> dict[str, int]:
-    df = pd.read_csv(cfg.PROCESSED_FILE)
+def _validate_runtime_contract(no_music: bool) -> dict[str, int]:
+    df = pd.read_csv(cfg.PROCESSED_FILE, low_memory=False)
     n_songs = len(df)
 
-    embeddings = np.load(cfg.EMBEDDINGS_FILE, mmap_mode="r")
-    mert = np.load(cfg.MERT_EMBEDDINGS_FILE, mmap_mode="r")
+    lyrics = np.load(cfg.EMBEDDINGS_FILE, mmap_mode="r")
+    muq = np.load(cfg.MUQ_EMBEDDINGS_FILE, mmap_mode="r")
     with open(cfg.EMBEDDINGS_META_FILE, "r", encoding="utf-8") as handle:
         embedding_meta = json.load(handle)
     with open(cfg.RELABELED_EMOTIONS_FILE, "r", encoding="utf-8") as handle:
         emotions = json.load(handle)
 
-    mp3_files = sorted(cfg.MUSIC_DIR.glob("*.mp3"))
-
+    # Per-song counts must equal the catalog size. Optional/superset files
+    # (cover_index, clean_bpm — keyed lookups) are intentionally not enforced.
     checks = {
         "songs": n_songs,
-        "lyrics_embeddings": int(embeddings.shape[0]),
+        "lyrics_embeddings": int(lyrics.shape[0]),
+        "muq_embeddings": int(muq.shape[0]),
         "embedding_meta_track_ids": len(embedding_meta.get("track_ids", [])),
-        "mert_rows": int(mert.shape[0]),
         "emotion_labels": len(emotions),
-        "music_files": len(mp3_files),
     }
+    if not no_music:
+        checks["music_files"] = len(sorted(cfg.MUSIC_DIR.glob("*.mp3")))
+
     mismatches = {
         key: value for key, value in checks.items()
         if key != "songs" and value != n_songs
@@ -107,8 +125,8 @@ def _link_music_files(dst_root: Path, copy_mode: bool) -> dict[str, int]:
     return {"count": count, "total_bytes": total_bytes}
 
 
-def build_release(output_root: Path, release_name: str, copy_mode: bool) -> Path:
-    checks = _validate_runtime_contract()
+def build_release(output_root: Path, release_name: str, copy_mode: bool, no_music: bool = False) -> Path:
+    checks = _validate_runtime_contract(no_music=no_music)
     release_dir = output_root / release_name
     if release_dir.exists():
         raise FileExistsError(f"Release already exists: {release_dir}")
@@ -127,7 +145,10 @@ def build_release(output_root: Path, release_name: str, copy_mode: bool) -> Path
             "sha256": _sha256_file(src),
         })
 
-    music_stats = _link_music_files(release_dir, copy_mode=copy_mode)
+    if no_music:
+        music_stats = {"count": 0, "total_bytes": 0, "skipped": True}
+    else:
+        music_stats = _link_music_files(release_dir, copy_mode=copy_mode)
 
     manifest = {
         "release_name": release_name,
@@ -156,10 +177,13 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--release-name", type=str)
     parser.add_argument("--copy", action="store_true", help="copy files instead of hard-linking")
+    parser.add_argument("--no-music", action="store_true",
+                        help="data-only release (AWS: MP3s live in S3, not in the release)")
     args = parser.parse_args()
 
     release_name = args.release_name or datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    release_dir = build_release(args.output_root.resolve(), release_name, copy_mode=args.copy)
+    release_dir = build_release(args.output_root.resolve(), release_name,
+                                copy_mode=args.copy, no_music=args.no_music)
     print(f"[serving-release] created {release_dir}")
 
 

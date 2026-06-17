@@ -120,6 +120,9 @@ class Song(Base):
     fade_out_cue_s = Column(Float, nullable=True, comment="Outro start (s) — last structural boundary before silence")
     fade_in_cue_s = Column(Float, nullable=True, comment="Intro end (s) — first structural boundary after silence")
     downbeat_times_json = Column(Text, nullable=True, comment="JSON array of downbeat timestamps for beat-aligned mixing")
+    # Smart Crossfade Tier 3 — vocal regions (Demucs stem separation) for vocal-aware mixing
+    vocal_start_s = Column(Float, nullable=True, comment="First vocal onset (s) — end of instrumental intro")
+    vocal_end_s = Column(Float, nullable=True, comment="Last vocal offset (s) — start of instrumental outro")
     speechiness = Column(Float)
     acousticness = Column(Float)
     instrumentalness = Column(Float)

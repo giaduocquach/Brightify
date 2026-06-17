@@ -40,16 +40,20 @@ else
   echo "Database already has $SONG_COUNT songs, skipping seed"
 fi
 
-# 6. Warmup HuggingFace model cache
-echo "Warming up model cache (PhoBERT + CLIP)..."
-docker compose run --rm app python -c "
-from transformers import AutoTokenizer, AutoModel, CLIPModel, CLIPProcessor
+# 6. Warmup HuggingFace model cache (skip entirely when PhoBERT is disabled)
+# CLIP removed: not used by the running app. PhoBERT is the only runtime model
+# and is unused when SKIP_PHOBERT_LOAD=True — emotion labels are precomputed.
+if [ "${SKIP_PHOBERT_LOAD:-False}" = "True" ]; then
+  echo "SKIP_PHOBERT_LOAD=True — skipping model warmup (no runtime model needed)"
+else
+  echo "Warming up model cache (PhoBERT)..."
+  docker compose run --rm app python -c "
+from transformers import AutoTokenizer, AutoModel
 AutoTokenizer.from_pretrained('vinai/phobert-base-v2')
 AutoModel.from_pretrained('vinai/phobert-base-v2')
-CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
-CLIPModel.from_pretrained('openai/clip-vit-base-patch32')
-print('Models cached')
+print('PhoBERT cached')
 "
+fi
 
 # 7. Start full stack
 echo "Starting full stack..."

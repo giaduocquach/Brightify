@@ -1,10 +1,9 @@
 """Music browse, search, and audio streaming API routes."""
 
 import logging
-import unicodedata
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -12,11 +11,6 @@ import pandas as pd
 import random
 
 import config as cfg
-
-
-def _strip_accents(text: str) -> str:
-    """Normalize Vietnamese diacritics → ASCII so 'yeu' matches 'yêu'."""
-    return unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode("ascii")
 
 from api.cache import cache_get, cache_set, make_key
 
@@ -41,8 +35,24 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
     _music_path = music_path
     _artist_images_path = artist_images_path
 
-    # Pre-cache file existence to avoid per-request stat() calls
-    if _music_path and _music_path.exists():
+    # Build the set of track_ids that have audio. This drives has_audio (and the
+    # status endpoints), which the frontend uses to enable play buttons.
+    # CDN mode: local music_files/ is absent, so read the manifest synced to S3.
+    # Local mode: glob the music_files/ directory.
+    if cfg.AUDIO_CDN_BASE:
+        manifest = Path(cfg.AUDIO_MANIFEST_FILE)
+        if manifest.exists():
+            import json
+            with open(manifest, encoding="utf-8") as fh:
+                _mp3_cache = set(json.load(fh))
+            logger.info("Audio CDN mode: %d track ids from manifest %s", len(_mp3_cache), manifest)
+        elif _music_path and _music_path.exists():
+            _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
+            logger.warning("AUDIO_CDN_BASE set but no manifest — fell back to local glob (%d)", len(_mp3_cache))
+        else:
+            _mp3_cache = set()
+            logger.warning("AUDIO_CDN_BASE set but no manifest and no local music_files — has_audio will be False")
+    elif _music_path and _music_path.exists():
         _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
     album_art_dir = cfg.ALBUM_ART_DIR
     if album_art_dir.exists():
@@ -152,6 +162,8 @@ def _song_to_dict(row, idx):
         'fade_out_cue_s': _serialize(row.get('fade_out_cue_s')),
         'fade_in_cue_s': _serialize(row.get('fade_in_cue_s')),
         'downbeat_times_json': row.get('downbeat_times_json') if pd.notna(row.get('downbeat_times_json')) else None,
+        'vocal_start_s': _serialize(row.get('vocal_start_s')),
+        'vocal_end_s': _serialize(row.get('vocal_end_s')),
         'timbre_bright': _serialize(row.get('timbre_bright')),
         'mood_quadrant': str(row.get('mood_quadrant', '')),
         'fused_emotion': str(row.get('fused_emotion', '')),
@@ -299,73 +311,6 @@ async def search_songs(q: str = Query(..., min_length=1), limit: int = Query(def
     songs = [_song_to_dict(row, idx) for idx, row in results.iterrows()]
 
     return {"success": True, "songs": songs, "query": q, "total": len(songs)}
-
-
-@router.get("/songs/search/unified")
-async def search_unified(
-    q: str = Query(..., min_length=1),
-    match_limit: int = Query(default=8, ge=1, le=20),
-    related_limit: int = Query(default=8, ge=0, le=20),
-):
-    """F3 — one box, layered results: exact name/lyrics matches first
-    ("🎯 Khớp nhất"), then semantically-related / same-vibe songs below
-    ("🔗 Liên quan"). Handles name/artist, a typed lyric line, OR a vibe
-    description — whatever the user types, the closest hit surfaces on top."""
-    df = _recommender.df
-    query = q.strip().lower()
-    if not query:
-        return {"success": True, "query": q, "matches": [], "related": []}
-
-    query_plain = _strip_accents(query)
-
-    def _contains(col):
-        s = df[col].astype(str).str.lower()
-        exact = s.str.contains(query, na=False, regex=False)
-        # Also match when query or data has no diacritics (e.g. "yeu" → "yêu")
-        plain = s.map(_strip_accents).str.contains(query_plain, na=False, regex=False)
-        return exact | plain
-
-    # ── Layer 1: literal MATCHES — name/artist/album, then a lyric line ──
-    name_mask = _contains('track_name')
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            name_mask = name_mask | _contains(col)
-            break
-    if 'album_name' in df.columns:
-        name_mask = name_mask | _contains('album_name')
-
-    name_idx = list(df.index[name_mask])
-    name_set = set(name_idx)
-    lyrics_idx = []
-    for lcol in ['plain_lyrics', 'lyrics_cleaned']:
-        if lcol in df.columns:
-            lyrics_idx = [i for i in df.index[_contains(lcol)] if i not in name_set]
-            break  # prefer plain_lyrics
-
-    match_idx = (name_idx + lyrics_idx)[:match_limit]
-    matched_ids, matches = set(), []
-    for i in match_idx:
-        s = _song_to_dict(df.loc[i], i)
-        s['match_kind'] = 'name' if i in name_set else 'lyrics'
-        matched_ids.add(s.get('track_id'))
-        matches.append(s)
-
-    # ── Layer 2: RELATED / same-vibe (semantic), excluding the matches ──
-    related = []
-    if related_limit > 0:
-        try:
-            rdf = _recommender.recommend_by_lyrics_keywords(q, top_k=related_limit + len(matched_ids) + 6)
-            for idx, row in rdf.iterrows():
-                s = _song_to_dict(row, row.get('original_index', idx))
-                if s.get('track_id') in matched_ids:
-                    continue
-                related.append(s)
-                if len(related) >= related_limit:
-                    break
-        except Exception:
-            logging.getLogger(__name__).debug("unified search: related layer skipped", exc_info=True)
-
-    return {"success": True, "query": q, "matches": matches, "related": related}
 
 
 # ============================================================================
@@ -565,9 +510,14 @@ async def get_song_details(song_id: str):
 
 
 @router.get("/song/{song_id}/similar")
-async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, le=30)):
+async def get_similar_songs(
+    song_id: str,
+    count: int = Query(default=10, ge=1, le=30),
+    exclude: str = Query(default="", description="CSV of already-played track_ids to skip (endless radio)"),
+):
     """Get songs similar to a given song using multi-faceted AI similarity"""
     try:
+        exclude_ids = [t for t in exclude.split(",") if t][:120]
         df = _recommender.df
         # Resolve track_id to index
         if not song_id.isdigit():
@@ -581,7 +531,7 @@ async def get_similar_songs(song_id: str, count: int = Query(default=10, ge=1, l
         else:
             resolved_idx = int(song_id)
         
-        results = _recommender.recommend_by_song(resolved_idx, top_k=count)
+        results = _recommender.recommend_by_song(resolved_idx, top_k=count, exclude_ids=exclude_ids)
         df_results = results
         songs = []
         for idx, row in df_results.iterrows():
@@ -646,9 +596,17 @@ async def get_track_info(song_index: str):
 
 @router.get("/audio/stream/{track_id}")
 async def stream_audio(track_id: str):
-    """Stream a local MP3 file"""
+    """Stream an MP3.
+
+    If AUDIO_CDN_BASE is configured, redirect to the CDN (CloudFront → S3) so
+    range/seek and egress are handled by the CDN. Otherwise serve from local disk
+    (dev/local). track_id is validated to alnum/-/_ so the redirect URL is safe.
+    """
     if not all(c.isalnum() or c in '-_' for c in track_id):
         raise HTTPException(status_code=400, detail="Invalid track ID")
+
+    if cfg.AUDIO_CDN_BASE:
+        return RedirectResponse(url=f"{cfg.AUDIO_CDN_BASE}/{track_id}.mp3", status_code=302)
 
     file_path = _music_path / f"{track_id}.mp3"
     if not file_path.exists():
@@ -663,24 +621,22 @@ async def stream_audio(track_id: str):
 
 @router.get("/audio/status/{track_id}")
 async def get_audio_status(track_id: str):
-    """Check if audio file exists for a track"""
-    file_path = _music_path / f"{track_id}.mp3"
-    exists = file_path.exists()
-    return {
-        "track_id": track_id,
-        "available": exists,
-        "file_size": file_path.stat().st_size if exists else 0,
-    }
+    """Check if audio is available for a track (local file or CDN manifest)."""
+    available = track_id in _mp3_cache
+    # file_size only meaningful in local mode (0 when served from the CDN)
+    file_size = 0
+    if available and not cfg.AUDIO_CDN_BASE and _music_path:
+        fp = _music_path / f"{track_id}.mp3"
+        if fp.exists():
+            file_size = fp.stat().st_size
+    return {"track_id": track_id, "available": available, "file_size": file_size}
 
 
 @router.get("/audio/batch-status")
 async def get_batch_audio_status(track_ids: str = Query(..., description="Comma-separated track IDs")):
-    """Batch check audio availability"""
+    """Batch check audio availability (local file or CDN manifest)."""
     ids = [tid.strip() for tid in track_ids.split(",") if tid.strip()]
-    result = {}
-    for tid in ids[:100]:
-        fp = _music_path / f"{tid}.mp3"
-        result[tid] = fp.exists()
+    result = {tid: (tid in _mp3_cache) for tid in ids[:100]}
     return {"status": result, "available_count": sum(result.values()), "total": len(result)}
 
 

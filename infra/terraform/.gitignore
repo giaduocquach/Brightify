@@ -1,0 +1,12 @@
+# Terraform state and local files — never commit
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+# Generated EC2 private key — never commit
+*.pem

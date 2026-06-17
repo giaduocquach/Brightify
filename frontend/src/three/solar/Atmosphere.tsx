@@ -26,7 +26,7 @@ export default function Atmosphere({
   );
 
   return (
-    <mesh scale={size * 1.18}>
+    <mesh scale={size * 1.13}>
       <sphereGeometry args={[1, 48, 48]} />
       <shaderMaterial
         vertexShader={ATMO_VERT}

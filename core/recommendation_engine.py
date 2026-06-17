@@ -30,6 +30,33 @@ def detect_artist_column(df):
     return None
 
 
+def _argsort_desc_stable(scores, k=None):
+    """Descending argsort that is reproducible across CPU/BLAS platforms.
+
+    Ranking scores are float32 BLAS products (e.g. MERT/MuQ cosine @ centroid),
+    whose last bits differ between arm64 (Apple Accelerate) and amd64 (OpenBLAS).
+    A bare ``np.argsort(x)[::-1]`` is non-stable, so those ~1e-7 differences flip
+    near-tied songs and the same color returns a slightly different order per host.
+    Rounding absorbs the ULP noise; a stable sort then keeps ascending index order
+    for equal-rounded scores (a fixed tie-break) → identical output everywhere.
+    """
+    rounded = np.round(np.asarray(scores, dtype=np.float64), 6)
+    order = np.argsort(-rounded, kind='stable')
+    return order[:k] if k is not None else order
+
+
+# Columns the result-builders must carry through so the API (and the frontend Smart
+# Crossfade) sees per-track loudness, cue points, downbeats, vocal regions and the
+# (DB-reconciled) duration. Hydrated from the DB at startup; without these in the
+# allowlist, recommend_by_song / _build_result_df silently drop them → planCrossfade
+# loses vocal_end_s/duration and mis-decides the transition. duration_ms (DB) takes
+# precedence over the stale CSV track_duration_ms in api _song_to_dict.
+CROSSFADE_PASSTHROUGH_COLS = [
+    'loudness_lufs', 'fade_out_cue_s', 'fade_in_cue_s', 'downbeat_times_json',
+    'vocal_start_s', 'vocal_end_s', 'duration_ms', 'track_duration_ms', 'mp3_duration_s',
+]
+
+
 class MusicRecommender:
 
     def __init__(self,
@@ -586,11 +613,23 @@ class MusicRecommender:
             self.df.loc[missing_mask, "fused_emotion"] = fallback
             logger.info(f"[CLAP] Filled {n_missing} missing labels via V-A heuristic")
 
+    def _resolve_indices(self, track_ids):
+        """Map track_id strings → positional indices into the score arrays.
+
+        df has a positional RangeIndex (see api/music.py similar-song resolution),
+        so df.index values are valid indices into the (n_songs,) score vectors.
+        Returns [] when nothing matches — callers treat that as "exclude nothing".
+        """
+        if not track_ids or 'track_id' not in self.df.columns:
+            return []
+        return self.df.index[self.df['track_id'].isin(set(track_ids))].tolist()
+
     def recommend_by_colors(self,
                            color_hexes,
                            top_k=DEFAULT_TOP_K,
                            weights=None,
-                           diversity_penalty=DIVERSITY_PENALTY):
+                           diversity_penalty=DIVERSITY_PENALTY,
+                           exclude_ids=None):
 
         if isinstance(color_hexes, str):
             color_hexes = [color_hexes]
@@ -629,25 +668,17 @@ class MusicRecommender:
 
         per_color_va = np.array(per_color_va, dtype=float)  # (C, 2)
 
-        # Pillar F — apply VN holiday + time-of-day V-A shift to every colour's V-A
-        if ENABLE_VN_CONTEXT:
-            try:
-                from core.vn_context import get_context_shift
-                ctx = get_context_shift()
-                per_color_va = np.clip(
-                    per_color_va + np.array([ctx["valence_shift"], ctx["arousal_shift"]]),
-                    0.0, 1.0,
-                )
-            except Exception:
-                pass
+        # Endless-radio: drop already-played tracks so re-querying the same colour
+        # yields fresh songs (no loop → avoids the inverted-U satiation curve).
+        exclude_idx = self._resolve_indices(exclude_ids)
 
         return self._rank_by_color_features(
             per_color_va, per_color_emotion, per_color_lyrics,
-            color_hexes, top_k, diversity_penalty)
+            color_hexes, top_k, diversity_penalty, exclude_idx=exclude_idx)
 
     def _rank_by_color_features(self, per_color_va, per_color_emotion,
                                 per_color_lyrics, color_hexes, top_k,
-                                diversity_penalty):
+                                diversity_penalty, exclude_idx=None):
         """Pure V-A heteroscedastic RBF scorer (F3 V19).
 
         Matches colour V-A against song V-A using per-axis bandwidth (σ_V>σ_A —
@@ -739,6 +770,12 @@ class MusicRecommender:
                 alpha = COLOR_CALIBRATION_ALPHA
                 final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
 
+            # Endless-radio exclusion: sink already-played songs below every legit
+            # score (scores ≥ 0) so all three selectors below skip them — mirrors the
+            # reference-song exclusion in recommend_by_song (final_scores[idx] = -1).
+            if exclude_idx:
+                final_scores[exclude_idx] = -1.0
+
             # V37: acoustic-coherence selection — V-A picks the mood region, MERT makes
             # the set an on-vibe cluster (feel alike + feel like the colour). Supersedes the
             # V-A-diversity MMR below (which scattered results). Falls back if MERT missing.
@@ -753,7 +790,7 @@ class MusicRecommender:
             elif COLOR_MMR_VA_DIVERSITY:
                 lam = COLOR_MMR_VA_LAMBDA
                 n_cand = min(top_k * 5, self.n_songs)
-                top_cands = np.argsort(final_scores)[::-1][:n_cand]
+                top_cands = _argsort_desc_stable(final_scores, n_cand)
                 va_cands = match_va[top_cands]           # (n_cand, 2) — match space
                 rel = final_scores[top_cands]             # (n_cand,)
                 selected_local, remaining = [], list(range(n_cand))
@@ -800,7 +837,8 @@ class MusicRecommender:
         # (Saari 2016). top_k=10 waypoints across the path achieves this spacing.
         if COLOR_JOURNEY_ENABLED:
             idxs = self._journey_waypoint_sample(
-                per_color_va[0], per_color_va[1], top_k, diversity_penalty)
+                per_color_va[0], per_color_va[1], top_k, diversity_penalty,
+                exclude_idx=exclude_idx)
             res = self._build_result_df(idxs)
             if not res.empty and 'original_index' in res.columns:
                 res = res.copy()
@@ -838,7 +876,7 @@ class MusicRecommender:
         rrf = np.zeros(self.n_songs)
         for sc in score_stack:
             ranks = np.empty(self.n_songs, dtype=float)
-            ranks[np.argsort(sc)[::-1]] = np.arange(self.n_songs)
+            ranks[_argsort_desc_stable(sc)] = np.arange(self.n_songs)
             rrf += 1.0 / (RRF_K + ranks + 1.0)
         rrf_norm = rrf / (rrf.max() + 1e-12)
         res = self._fast_rank(rrf_norm, top_k, diversity_penalty)
@@ -867,7 +905,7 @@ class MusicRecommender:
         """
         alpha = COLOR_COHERENCE_ALPHA
         n_cand = min(top_k * COLOR_COHERENCE_OVERFETCH, self.n_songs)
-        cand = np.argsort(scores)[::-1][:n_cand]               # top V-A candidates (global idx)
+        cand = _argsort_desc_stable(scores, n_cand)            # top V-A candidates (global idx)
         rel = scores[cand].astype(float)
         rel = (rel - rel.min()) / (rel.max() - rel.min() + 1e-9)   # → [0,1]
         # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster
@@ -895,7 +933,7 @@ class MusicRecommender:
                     if cnt:
                         combo[j] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
             pick = None
-            for j in np.argsort(combo)[::-1]:
+            for j in _argsort_desc_stable(combo):
                 li = remaining[int(j)]
                 if int(cand[li]) in blocked:
                     continue
@@ -916,7 +954,8 @@ class MusicRecommender:
         return [int(cand[li]) for li in selected]
 
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
-                                  diversity_penalty: float) -> list[int]:
+                                  diversity_penalty: float,
+                                  exclude_idx=None) -> list[int]:
         """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
 
         Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
@@ -933,6 +972,8 @@ class MusicRecommender:
         _sa = COLOR_SCORE_VA_SIGMA_A
 
         excluded = np.zeros(n, dtype=bool)
+        if exclude_idx:  # endless-radio: never re-pick an already-played song
+            excluded[exclude_idx] = True
         artist_counts: dict[str, int] = {}
         artists = (self.df[self.artist_col].fillna('__unknown__').values
                    if self.artist_col else None)
@@ -999,7 +1040,9 @@ class MusicRecommender:
             return self._bpm_arr
         import json as _json
         arr = np.full(self.n_songs, np.nan, dtype=float)
-        path = "data/clean_bpm.json"
+        # Resolve from DATA_DIR (serving release), not CWD-relative — otherwise in
+        # Docker (CWD=/app) this missed the mounted serving data and BPM went NaN.
+        path = globals().get("CLEAN_BPM_FILE", "data/clean_bpm.json")
         if os.path.exists(path):
             try:
                 d = _json.load(open(path))
@@ -1023,33 +1066,12 @@ class MusicRecommender:
                     'fused_valence', 'fused_energy', 'fused_emotion', 'color_hex',
                     'track_url', 'preview_url', 'track_id', 'original_index',
                     'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
-                    'mood_quadrant', 'album_name', 'artist_ids']
+                    'mood_quadrant', 'album_name', 'artist_ids',
+                    *CROSSFADE_PASSTHROUGH_COLS]
         if self.artist_col and self.artist_col not in optional:
             optional.append(self.artist_col)
         cols = [c for c in optional if c in rows.columns]
         return rows[cols].reset_index(drop=True)
-
-    def _sequence_journey(self, res, p1, p2):
-        """Order selected songs along the V-A path P1 → P2 (Iso-Principle, V23).
-
-        Projects each song's V-A onto the journey vector (p1→p2), giving a position
-        t∈[0,1]; sorting by t makes the playlist start at colour A's mood and shift
-        smoothly to colour B's. Replaces interleaved order (mood-whiplash).
-        Basis: Iso-Principle (Starcke & von Georgi 2024, d=0.52); affective arc
-        (Neto 2025). Retrieval (which songs) is unchanged — only the ORDER.
-        """
-        p1 = np.asarray(p1, float); p2 = np.asarray(p2, float)
-        axis = p2 - p1
-        denom = float(axis @ axis)
-        idxs = [int(i) for i in res['original_index'].tolist()]
-        if denom < 1e-9:               # two colours nearly identical → no journey
-            return res
-        # t = normalised projection of (songVA - p1) onto (p2 - p1), clamped [0,1]
-        t = {i: float(np.clip(((self.song_va[i] - p1) @ axis) / denom, 0.0, 1.0))
-             for i in idxs}
-        order = sorted(idxs, key=lambda i: t[i])
-        res = res.set_index('original_index').loc[order].reset_index()
-        return res
 
     def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s,
                          src_hex=None):
@@ -1214,7 +1236,8 @@ class MusicRecommender:
                          song_id_or_name,
                          top_k=DEFAULT_TOP_K,
                          weights=None,
-                         diversity_penalty=DIVERSITY_PENALTY):
+                         diversity_penalty=DIVERSITY_PENALTY,
+                         exclude_ids=None):
         """
         Multi-faceted song similarity with 7 complementary signals.
 
@@ -1359,6 +1382,12 @@ class MusicRecommender:
             for cover_idx in self._cover_exclude.get(song_idx, set()):
                 final_scores[cover_idx] = -1
 
+        # Endless-radio: drop already-played tracks so re-querying the same seed
+        # song keeps surfacing fresh similars instead of looping the same list.
+        exclude_idx = self._resolve_indices(exclude_ids)
+        if exclude_idx:
+            final_scores[exclude_idx] = -1
+
         # No RRF for recommend_by_song: the multi-signal weighted fusion is already
         # the right ranking function here.  RRF pre-filtering hurts recall because
         # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
@@ -1436,11 +1465,11 @@ class MusicRecommender:
             cand_arr = np.asarray(restrict_to, dtype=np.int64)
             cand_scores = scores[cand_arr]
             n = min(top_k * 4, len(cand_arr))
-            top_local = np.argsort(cand_scores)[::-1][:n]
+            top_local = _argsort_desc_stable(cand_scores, n)
             top_indices = cand_arr[top_local]
         else:
             n_candidates = min(top_k * 4, self.n_songs)
-            top_indices = np.argsort(scores)[::-1][:n_candidates]
+            top_indices = _argsort_desc_stable(scores, n_candidates)
 
         # Filter by minimum threshold
         valid = scores[top_indices] >= MIN_SIMILARITY_THRESHOLD
@@ -1520,163 +1549,11 @@ class MusicRecommender:
         optional = ['similarity_score', 'valence', 'energy', 'arousal', 'fused_valence',
                    'fused_energy', 'fused_emotion', 'color_hex', 'track_url', 'preview_url', 'track_id',
                    'original_index', 'thumbnail_url', 'danceability', 'tempo', 'timbre_bright',
-                   'mood_quadrant', 'album_name', 'artist_ids', 'key', 'mode']
+                   'mood_quadrant', 'album_name', 'artist_ids', 'key', 'mode',
+                   *CROSSFADE_PASSTHROUGH_COLS]
         cols.extend([c for c in optional if c in results.columns])
 
         return results[cols].reset_index(drop=True)
-
-    def recommend_by_lyrics_keywords(self, keywords, top_k=10, weights=None, diversity_penalty=0.15):
-        """
-        Hybrid lyrics search: keyword matching + PhoBERT semantic similarity.
-
-        Pipeline:
-        1. PhoBERT encode query → cosine similarity vs all song embeddings
-           (Nguyen & Nguyen 2020: PhoBERT captures Vietnamese semantic meaning)
-        2. Keyword term matching in lyrics/track_name/artist
-        3. Hybrid score = α·semantic + β·keyword + γ·centroid
-           When keyword matches exist: α=0.40, β=0.35, γ=0.25
-           Pure semantic fallback: α=1.0
-
-        This replaces the previous random fallback when no keyword matches,
-        enabling genuine semantic discovery (e.g. "tình yêu mùa đông" finds
-        winter-love songs even without exact word matches).
-        """
-        df = self.df.copy()
-        keywords_lower = keywords.lower().strip()
-        terms = [t.strip() for t in keywords_lower.split() if t.strip()]
-
-        if not terms:
-            return df.head(0)
-
-        # --- PhoBERT semantic similarity (always computed when available) ---
-        semantic_scores = None
-        if self.embeddings_normalized is not None and self.emotion_classifier.available:
-            query_emb = self.emotion_classifier.encode_lyrics(keywords)
-            if query_emb is not None:
-                norm = np.linalg.norm(query_emb)
-                if norm > 0:
-                    query_emb = query_emb / norm
-                    semantic_scores = self.embeddings_normalized @ query_emb
-                    semantic_scores = (semantic_scores + 1) / 2  # → [0, 1]
-
-        # --- Keyword matching ---
-        if 'lyrics_cleaned' not in df.columns:
-            # No lyrics column: rely on semantic only
-            if semantic_scores is not None:
-                df['_final_score'] = semantic_scores
-                result = df.nlargest(top_k, '_final_score').copy()
-                result['similarity_score'] = result['_final_score'].values
-                result['original_index'] = result.index
-                return result.drop(columns=['_final_score'])
-            return df.head(0)
-
-        lyrics_col = df['lyrics_cleaned'].fillna('').str.lower()
-        match_scores = pd.Series(0.0, index=df.index)
-        for term in terms:
-            match_scores += lyrics_col.str.count(term).clip(upper=5)
-
-        # Also check track name and artist
-        name_col = df['track_name'].fillna('').str.lower()
-        match_scores += name_col.str.count(keywords_lower).clip(upper=3) * 2
-
-        artist_col_name = detect_artist_column(df)
-        if artist_col_name:
-            artist_col = df[artist_col_name].fillna('').str.lower()
-            match_scores += artist_col.str.count(keywords_lower).clip(upper=2) * 1.5
-
-        has_matches = (match_scores > 0).any()
-
-        if has_matches:
-            matched = df[match_scores > 0].copy()
-            matched['_match_score'] = match_scores[match_scores > 0]
-            max_match = matched['_match_score'].max()
-            if max_match > 0:
-                matched['_kw_norm'] = matched['_match_score'] / max_match
-            else:
-                matched['_kw_norm'] = 0.0
-
-            # Semantic score for matched subset
-            matched['_sem'] = 0.0
-            if semantic_scores is not None:
-                matched['_sem'] = semantic_scores[matched.index]
-
-            # E8 — emotion/V-A term for mood/vibe queries.
-            # The centroid-γ term (0.25) was removed (E8 2026-05-30): it added noise
-            # without clear benefit (V11 plan), and V-A/emotion alignment is the right
-            # signal for "vibe" intent.  We gate this term on whether the query looks
-            # like a mood description (≥2 tokens and a non-trivial emotion score).
-            # E8 — emotion/V-A alignment for mood/vibe queries (≥2 tokens).
-            # Encodes the query's emotional intent as a V-A coordinate and scores
-            # songs by Gaussian RBF proximity (σ=0.25). Only applied when the
-            # emotion classifier returns a meaningful emotion dict. Silent on failure.
-            matched['_emo_va'] = 0.0
-            if len(terms) >= 2:
-                try:
-                    q_emo = self.emotion_lexicon.analyze_lyrics(keywords)
-                    if q_emo and max(q_emo.values(), default=0) > 0.05:
-                        q_v, q_a = self.emotion_classifier.emotions_to_valence_arousal(q_emo)
-                        va_dist = np.sqrt(
-                            (self.song_va[:, 0] - q_v) ** 2 +
-                            (self.song_va[:, 1] - q_a) ** 2
-                        )
-                        va_sim = np.exp(-(va_dist ** 2) / (2 * 0.25 ** 2))
-                        mid = matched.index.tolist()
-                        matched['_emo_va'] = va_sim[mid]
-                except Exception:
-                    pass
-
-            # Hybrid: keyword 40% + semantic 45% + emotion/V-A 15%
-            # (centroid-γ removed; emotion/V-A adds the mood-alignment signal)
-            matched['_final_score'] = (
-                0.40 * matched['_kw_norm'] +
-                0.45 * matched['_sem'] +
-                0.15 * matched['_emo_va']
-            )
-
-            matched = matched.sort_values('_final_score', ascending=False)
-            result = matched.head(top_k).copy()
-        elif semantic_scores is not None:
-            # No keyword matches — pure semantic search
-            df['_final_score'] = semantic_scores
-            result = df.nlargest(top_k, '_final_score').copy()
-        else:
-            return df.head(0)
-
-        result['original_index'] = result.index
-        result['similarity_score'] = result['_final_score'].values
-
-        for col in ['_match_score', '_kw_norm', '_sem', '_emo_va', '_final_score']:
-            if col in result.columns:
-                result = result.drop(columns=[col])
-
-        # Cross-encoder reranking (Pillar C) — applied when ENABLE_RERANKER=True
-        if ENABLE_RERANKER and len(result) >= 2:
-            try:
-                from core.reranker import get_reranker
-                reranker = get_reranker(RERANKER_MODEL)
-                if reranker is not None and 'original_index' in result.columns:
-                    orig_indices = result['original_index'].tolist()
-                    passages = []
-                    for i in orig_indices:
-                        row = self.df.iloc[i]
-                        parts = [str(row.get('track_name', '') or '')]
-                        if self.artist_col:
-                            parts.append(str(row.get(self.artist_col, '') or ''))
-                        if 'lyrics_cleaned' in self.df.columns:
-                            parts.append(str(row.get('lyrics_cleaned', '') or '')[:200])
-                        passages.append(' '.join(p for p in parts if p))
-                    reranked = reranker.rerank(
-                        keywords, passages, orig_indices,
-                        top_k=min(len(orig_indices), RERANKER_TOP_K),
-                    )
-                    idx_order = {v: i for i, v in enumerate(reranked)}
-                    result = result[result['original_index'].isin(idx_order)].copy()
-                    result['_rr'] = result['original_index'].map(idx_order)
-                    result = result.sort_values('_rr').drop(columns=['_rr']).reset_index(drop=True)
-            except Exception as _e:
-                logger.debug(f"[Reranker] rerank failed: {_e}")
-
-        return result
 
     def get_song_info(self, song_id):
         """Get song details"""

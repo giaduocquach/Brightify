@@ -12,7 +12,6 @@
     "@react-three/drei": "^10.0.6",
     "@react-three/fiber": "^9.1.2",
     "@react-three/postprocessing": "^3.0.4",
-    "gsap": "^3.15.0",
     "postprocessing": "^6.39.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

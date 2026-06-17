@@ -1,6 +1,7 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    UI layer — overlays above the fixed 3D canvas (z-index 0).
-   Layers: canvas 0 · home/orb labels 5 · arc 40 · player 50 · now-playing 100
+   Layers: canvas 0 · cockpit 4 · home/orb labels 5 · hud 6 · navpanel 7 ·
+           player 50 · intro 80
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* ── 3D orb labels (drei <Html>) ─────────────────────────────────────────── */
@@ -107,25 +108,10 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.journey-banner {
-  position: relative;
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px; margin-bottom: 12px;
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem; color: var(--text);
-  overflow: hidden;
-}
-.journey-grad {
-  position: absolute; inset: 0; opacity: 0.28;
-  background: linear-gradient(90deg, var(--c-from), var(--c-to));
-}
-.journey-banner strong { position: relative; }
-
 .results-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: flex-end;
   margin-bottom: 10px; padding: 0 4px;
 }
-.results-count { font-size: 0.8rem; color: var(--text-dim); }
 .btn-play-all {
   padding: 7px 14px; border-radius: var(--radius-sm);
   background: var(--play); color: #04210f; font-weight: 600; font-size: 0.82rem;
@@ -142,6 +128,9 @@
 .result-row:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
 .result-row:disabled { opacity: 0.4; cursor: not-allowed; }
 .result-row.is-playing { background: rgba(167, 139, 250, 0.14); }
+.result-row[draggable="true"]:active { cursor: grabbing; }
+.result-grip { width: 10px; flex-shrink: 0; color: var(--text-faint); font-size: 0.9rem; line-height: 1; cursor: grab; opacity: 0; transition: opacity 0.15s; }
+.result-row:hover .result-grip { opacity: 0.65; }
 .result-num { width: 18px; text-align: center; color: var(--text-faint); font-size: 0.8rem; flex-shrink: 0; }
 .result-art {
   width: 42px; height: 42px; border-radius: 8px; overflow: hidden; flex-shrink: 0;
@@ -151,24 +140,6 @@
 .result-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .result-title { font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .result-artist { font-size: 0.78rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.result-why { font-size: 0.72rem; color: var(--text-faint); margin-top: 2px; }
-.result-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-
-/* ── Emotion arc ─────────────────────────────────────────────────────────── */
-.emotion-arc {
-  pointer-events: none;
-  transition: opacity 0.4s ease;
-}
-.emotion-arc--mini {
-  position: fixed;
-  left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--player-h) + 4px);
-  width: min(460px, 92vw); height: 54px;
-  z-index: 40;
-}
-.emotion-arc--mini.is-hidden { opacity: 0; }
-.emotion-arc--full { width: 100%; height: 84px; }
-.emotion-arc canvas { width: 100%; height: 100%; display: block; }
 
 /* ── Player bar ──────────────────────────────────────────────────────────── */
 .player {
@@ -185,6 +156,16 @@
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   border-top: 1px solid var(--panel-border);
+}
+.player-error {
+  position: absolute;
+  bottom: 100%; margin-bottom: 8px;
+  left: 50%; transform: translateX(-50%);
+  padding: 7px 14px; border-radius: var(--radius-sm);
+  background: rgba(190, 0, 50, 0.92); color: #fff;
+  font-size: 0.82rem; font-weight: 500; white-space: nowrap;
+  box-shadow: var(--shadow-lg); pointer-events: none;
+  animation: npoIn 0.3s var(--ease-out);
 }
 .player-track {
   display: flex; align-items: center; gap: 12px; min-width: 0; justify-self: start;
@@ -210,6 +191,8 @@
   background: #fff; color: #07061a;
 }
 .pbtn-play:hover { background: #fff; transform: scale(1.06); }
+.pbtn-toggle { width: 34px; height: 34px; font-size: 0.95rem; }
+.pbtn-toggle.is-on { color: var(--accent-2); background: rgba(103, 232, 249, 0.16); }
 
 .player-progress { display: flex; align-items: center; gap: 10px; width: 100%; }
 .ptime { font-size: 0.72rem; color: var(--text-faint); font-variant-numeric: tabular-nums; width: 34px; text-align: center; }
@@ -218,41 +201,9 @@
 
 .player-right { display: flex; align-items: center; gap: 10px; justify-self: end; }
 .vol-ico { font-size: 0.9rem; opacity: 0.7; }
-.vol { width: 90px; accent-color: var(--accent); cursor: pointer; }
+.vol { width: 72px; accent-color: var(--accent); cursor: pointer; }
 
-/* ── Now playing overlay ─────────────────────────────────────────────────── */
-.npo {
-  position: fixed; inset: 0; z-index: 100;
-  display: flex; align-items: center; justify-content: center;
-  animation: npoIn 0.4s var(--ease-out);
-}
 @keyframes npoIn { from { opacity: 0; } to { opacity: 1; } }
-.npo-vignette {
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at center, rgba(5, 4, 16, 0.5) 30%, rgba(5, 4, 16, 0.92) 100%);
-}
-.npo-panel {
-  position: relative; z-index: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 22px;
-  width: min(460px, 90vw); padding: 28px 24px;
-}
-.npo-art {
-  width: 256px; height: 256px; border-radius: 18px; overflow: hidden;
-  box-shadow: 0 0 70px rgba(167, 139, 250, 0.35), 0 18px 50px rgba(0, 0, 0, 0.6);
-}
-.npo-art img { width: 100%; height: 100%; object-fit: cover; }
-.npo-meta { text-align: center; }
-.npo-title { font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; }
-.npo-artist { font-size: 0.95rem; color: var(--text-dim); margin-top: 4px; }
-.npo-controls { display: flex; align-items: center; gap: 22px; }
-.npo-close {
-  position: absolute; top: 20px; right: 24px; z-index: 2;
-  width: 42px; height: 42px; border-radius: 50%; font-size: 1.4rem;
-  background: rgba(255, 255, 255, 0.12); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.18s;
-}
-.npo-close:hover { background: rgba(255, 255, 255, 0.22); }
 
 /* ── Astronaut speech bubble (drei <Html>) ───────────────────────────────── */
 .astro-speech {
@@ -275,31 +226,31 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  min-width: 84px;
-  max-width: 180px;
-  padding: 5px 9px;
-  border-radius: 9px;
+  min-width: 64px;
+  max-width: 128px;
+  padding: 3px 7px;
+  border-radius: 8px;
   background: rgba(8, 7, 22, 0.7);
   border: 1px solid var(--panel-border);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   text-align: center;
   user-select: none;
-  opacity: 0.62;
+  opacity: 0.6;
   transition: opacity 0.25s, transform 0.25s var(--ease-spring);
 }
 .song-card.is-active {
   opacity: 1;
-  transform: scale(1.12);
+  transform: scale(1.1);
   border-color: rgba(255, 255, 255, 0.4);
-  box-shadow: 0 0 22px rgba(167, 139, 250, 0.4);
+  box-shadow: 0 0 18px rgba(167, 139, 250, 0.4);
 }
 .song-card-title {
-  font-size: 0.8rem; font-weight: 600; color: #fff;
+  font-size: 0.62rem; font-weight: 600; color: #fff;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .song-card-artist {
-  font-size: 0.68rem; color: var(--text-dim);
+  font-size: 0.54rem; color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -378,12 +329,6 @@
   flex: 1; font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
   font-size: 0.68rem; letter-spacing: 0.16em; color: var(--accent-2);
 }
-.navpanel-home {
-  width: 26px; height: 26px; border-radius: 7px; font-size: 0.95rem;
-  color: var(--accent-2); border: 1px solid rgba(124, 199, 255, 0.3);
-  background: rgba(124, 199, 255, 0.06);
-}
-.navpanel-home:hover { color: #fff; background: rgba(124, 199, 255, 0.18); }
 .navpanel-grid { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
 .nav-dot {
   display: flex; align-items: center; gap: 9px;
@@ -414,8 +359,13 @@
 }
 .pbtn-pill:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); transform: translateY(-1px); }
 .pbtn-pill.is-on { color: #04210f; background: var(--accent-2); border-color: transparent; }
+.pbtn-pill:disabled { opacity: 0.5; cursor: default; transform: none; }
 .pill-state { font-size: 0.62rem; opacity: 0.85; letter-spacing: 0.06em; }
-.npo-extra { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ── Journey pacing (2-colour: longer = slower A→B arc) ──────────────────── */
+.journey-pacing { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
+.journey-pacing-label { font-size: 0.72rem; color: var(--text-dim); letter-spacing: 0.04em; }
+.journey-pacing .pbtn-pill { height: 28px; padding: 0 11px; font-size: 0.74rem; }
 
 /* ── Cockpit canopy (journey first-person) ───────────────────────────────── */
 .cockpit {
@@ -423,22 +373,6 @@
   inset: 0;
   z-index: 4;
   pointer-events: none;
-}
-.cockpit-frame {
-  position: absolute;
-  inset: 0;
-  /* visor vignette + faint glass rim suggesting a canopy */
-  box-shadow:
-    inset 0 0 180px 40px rgba(3, 2, 10, 0.82),
-    inset 0 0 0 2px rgba(124, 199, 255, 0.12);
-  border-radius: 36px;
-}
-.cockpit-frame::after {
-  content: '';
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  height: calc(var(--player-h) + 70px);
-  background: linear-gradient(0deg, rgba(6, 8, 18, 0.9) 18%, rgba(6, 8, 18, 0) 100%);
 }
 .cockpit-ticker {
   position: absolute;
@@ -463,6 +397,20 @@
 .cockpit-ticker-song {
   font-size: 0.92rem; font-weight: 600; color: #fff;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 66vw;
+}
+
+/* In first-person flight, side panels recede so the canopy view dominates; hovering
+   (or focusing) any of them brings it back to full so the info is still reachable. */
+body[data-flight="1"] .navpanel,
+body[data-flight="1"] .hud {
+  opacity: 0.32;
+  transition: opacity 0.45s ease;
+}
+body[data-flight="1"] .navpanel:hover,
+body[data-flight="1"] .navpanel:focus-within,
+body[data-flight="1"] .hud:hover,
+body[data-flight="1"] .hud:focus-within {
+  opacity: 1;
 }
 
 /* ── Side HUD (explore / journey) ────────────────────────────────────────── */
@@ -540,13 +488,111 @@
 }
 .hud-back:hover { color: var(--text); transform: translateX(-2px); }
 
+/* ── Legibility: bridge chip · V-A circumplex · journey arc · badges (Phase 2) ─ */
+.bridge-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bridge-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--panel-border);
+  font-size: 0.72rem; color: var(--text-dim);
+}
+.bridge-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.bridge-emotion { color: var(--text); font-weight: 600; }
+.bridge-va { font-variant-numeric: tabular-nums; color: var(--text-faint); letter-spacing: 0.02em; }
+
+.whycolor { margin-top: 8px; }
+.whycolor-toggle {
+  font-size: 0.74rem; color: var(--accent-2); padding: 2px 0;
+  border-bottom: 1px dashed rgba(103, 232, 249, 0.4);
+}
+.whycolor-toggle:hover { color: var(--text); }
+.whycolor-body {
+  margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  animation: npoIn 0.25s var(--ease-out);
+}
+.whycolor-note { font-size: 0.74rem; color: var(--text-dim); line-height: 1.5; text-align: center; }
+.whycolor-note strong { color: var(--text); }
+.whycolor-cite { font-size: 0.66rem; color: var(--text-faint); font-style: italic; }
+
+.va-map { width: 152px; height: 152px; }
+.va-frame { fill: rgba(255, 255, 255, 0.02); stroke: var(--panel-border); }
+.va-axis { stroke: rgba(255, 255, 255, 0.12); stroke-dasharray: 3 3; }
+.va-quad { fill: var(--text-faint); font-size: 8px; font-family: var(--font-body); }
+.va-song { opacity: 0.55; }
+.va-color { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5)); }
+
+.journey-arc { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 0.72rem; }
+.ja-end {
+  font-weight: 700; white-space: nowrap; max-width: 6em;
+  overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.65);
+}
+.ja-track { position: relative; flex: 1; height: 6px; border-radius: 3px; }
+.ja-grad { position: absolute; inset: 0; border-radius: 3px; background: linear-gradient(90deg, var(--c-from), var(--c-to)); opacity: 0.55; }
+.ja-marker {
+  position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+  transform: translate(-50%, -50%); border: 2px solid #fff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6); transition: left 0.6s var(--ease-out);
+}
+
+/* ── Immersive elevation: mode badge · onboarding (Phase 3) ──────────────────── */
+.mode-badge {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 7; display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 14px; border-radius: 999px;
+  background: rgba(8, 7, 22, 0.55); border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.1em;
+  color: var(--text-dim); text-transform: uppercase; pointer-events: none;
+}
+.mode-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+
+.onboard-hint {
+  position: fixed; left: 50%; bottom: calc(var(--player-h) + 30px);
+  transform: translateX(-50%); z-index: 7;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 22px; border-radius: 16px;
+  background: rgba(8, 7, 22, 0.6); border: 1px solid var(--panel-border);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  text-align: center; pointer-events: none; max-width: 82vw;
+  animation: npoIn 0.6s var(--ease-out);
+}
+.onboard-row { font-size: 0.92rem; color: var(--text); font-weight: 600; }
+.onboard-sub { font-size: 0.76rem; color: var(--text-dim); font-weight: 400; }
+
+.astro-speech-sub { display: block; margin-top: 2px; font-size: 0.7rem; font-weight: 400; color: var(--text-faint); }
+
+/* ── Lyrics panel (centred reading view, toggled from the player) ─────────────── */
+.lyrics-panel {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 60; width: min(440px, 92vw); max-height: 70vh;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  animation: npoIn 0.3s var(--ease-out);
+}
+.lyrics-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 16px 18px; border-bottom: 1px solid var(--panel-border);
+}
+.lyrics-meta { display: flex; flex-direction: column; min-width: 0; }
+.lyrics-title { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; }
+.lyrics-artist { font-size: 0.82rem; color: var(--text-dim); }
+.lyrics-close {
+  width: 30px; height: 30px; border-radius: 8px; font-size: 0.9rem; color: var(--text-dim);
+  border: 1px solid var(--panel-border); flex-shrink: 0;
+}
+.lyrics-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.lyrics-body { overflow-y: auto; padding: 16px 18px; }
+.lyrics-text { font-family: var(--font-body); white-space: pre-wrap; line-height: 1.7; font-size: 0.92rem; color: var(--text); }
+.lyrics-empty { color: var(--text-dim); text-align: center; padding: 24px; }
+
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .player { grid-template-columns: 1fr auto; gap: 10px; padding: 0 12px; }
   .player-right { display: none; }
   .player-center { width: auto; }
   .player-progress { display: none; }
-  .npo-art { width: 200px; height: 200px; }
   .results-panel { max-height: 40vh; }
 
   .hud {

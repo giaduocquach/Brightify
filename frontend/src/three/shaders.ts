@@ -88,3 +88,165 @@ void main(){
   float fres = pow(1.0 - max(dot(vNormal, vView), 0.0), uPower);
   gl_FragColor = vec4(uColor, fres * uIntensity);
 }`;
+
+// Accretion disk for the black hole: a flat RingGeometry (XY plane) shaded entirely in the
+// fragment stage. fbm noise in a sheared polar space gives swirling filaments that rotate
+// faster on the inside (differential rotation); a hot-inner→cool-outer ramp + a one-sided
+// Doppler brightening sell a real accretion disk. No raymarching / lensing → cheap.
+export const DISK_VERT = /* glsl */ `
+varying vec2 vPos;
+void main(){
+  vPos = position.xy;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+export const DISK_FRAG = /* glsl */ `
+${SIMPLEX}
+uniform float uTime, uInner, uOuter, uInnerSpeed, uOuterSpeed, uDoppler, uDopplerDir, uSelected;
+uniform vec3 uColHot, uColMid, uColOuter;
+varying vec2 vPos;
+float fbm(vec3 p){ float s = 0.0, a = 0.5; for(int i = 0; i < 4; i++){ s += a * snoise(p); p *= 2.0; a *= 0.5; } return s; }
+void main(){
+  float r = length(vPos);
+  float rn = clamp((r - uInner) / (uOuter - uInner), 0.0, 1.0);
+  float theta = atan(vPos.y, vPos.x);
+  float ang = theta + uTime * mix(uInnerSpeed, uOuterSpeed, rn); // inner spins faster
+  vec2 sw = vec2(cos(ang), sin(ang)) * (1.0 + rn * 3.0);         // seam-free polar sample
+  float n = fbm(vec3(sw, uTime * 0.05 + rn * 2.0));
+  float fil = clamp(0.5 + 0.6 * n, 0.0, 1.0);
+  vec3 col = rn < 0.5 ? mix(uColHot, uColMid, rn * 2.0)
+                      : mix(uColMid, uColOuter, (rn - 0.5) * 2.0);
+  float dop = 1.0 + uDoppler * cos(theta - uDopplerDir);         // one limb brighter
+  float hot = mix(1.9, 0.6, rn);                                 // inner edge blooms
+  float bright = fil * dop * hot * (1.0 + uSelected * 0.4);
+  float edge = smoothstep(0.0, 0.07, rn) * (1.0 - smoothstep(0.8, 1.0, rn));
+  float a = edge * (0.35 + 0.65 * fil);
+  gl_FragColor = vec4(col * bright, a);
+}`;
+
+// Screen-space gravitational lensing for the black hole (postprocessing Effect form;
+// `aspect` is provided by the EffectMaterial). `mainUv` bends the sampling UV radially around
+// the hole's screen position (a single dependent read → NOT a convolution, so it merges with
+// Bloom/SMAA) so the background warps around it; `mainImage` then darkens a void at the core
+// and adds a bright Einstein/photon ring on the already-sampled colour. THIS is what makes it
+// read as a HOLE bending space, not a black ball. uStrength=0 → passthrough (off-screen/far).
+export const LENS_FRAG = /* glsl */ `
+uniform vec2 uLensPos;
+uniform float uLensRadius;
+uniform float uStrength;
+void mainUv(inout vec2 uv){
+  if (uStrength < 0.001) return;
+  vec2 asp = vec2(aspect, 1.0);
+  vec2 d = (uv - uLensPos) * asp;                    // circularize (aspect-corrected)
+  float dist = length(d);
+  float R = uLensRadius;
+  float bend = uStrength * R / max(dist, R * 0.35);  // ∝ 1/dist deflection
+  bend *= 1.0 - smoothstep(R * 3.0, R * 5.0, dist);  // taper to 0 far out
+  uv -= (d / max(dist, 1e-4) / asp) * bend * 0.06;   // pull background inward around the hole
+}
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor){
+  if (uStrength < 0.001) { outputColor = inputColor; return; }
+  vec2 asp = vec2(aspect, 1.0);
+  vec2 d = (uv - uLensPos) * asp;
+  float dist = length(d);
+  float R = uLensRadius;
+  float shadow = smoothstep(R * 0.62, R * 0.42, dist);          // dark void at the core
+  float ring = exp(-pow((dist - R * 0.85) / (R * 0.10), 2.0));  // thin Einstein ring
+  vec3 ringCol = vec3(1.0, 0.92, 0.78) * ring * uStrength * 1.4;
+  vec3 col = mix(inputColor.rgb, vec3(0.0), shadow) + ringCol;
+  outputColor = vec4(col, inputColor.a);
+}`;
+
+// Comet tail as a GPU particle cloud (THREE.Points). Each particle streams along local +Y
+// (the tail group already aims +Y anti-sunward) with age `t`, widening + a deterministic
+// wobble + an optional sideways curve (dust tail). Fades and shrinks with age → a living,
+// vivid tail instead of a flat cone. Cheap: only uTime updates per frame.
+export const COMET_TAIL_VERT = /* glsl */ `
+attribute float aSeed;
+attribute float aLength01;
+uniform float uTime, uLen, uSpeed, uWidth, uCurve, uSize, uPixelRatio;
+varying float vAge;
+void main(){
+  float t = fract(aLength01 + uTime * uSpeed * (0.6 + aSeed * 0.8)); // 0=head → 1=tip
+  float ang = aSeed * 6.2831853;
+  float wob = sin(aSeed * 12.0 + t * 9.0 + uTime * 1.5) * uWidth * 0.4 * t;
+  vec3 pos;
+  pos.x = cos(ang) * uWidth * (0.15 + t) + wob + uCurve * t * t * uLen;
+  pos.z = sin(ang) * uWidth * (0.15 + t);
+  pos.y = t * uLen;
+  vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+  gl_Position = projectionMatrix * mv;
+  vAge = t;
+  gl_PointSize = uSize * uPixelRatio * (1.0 - t * 0.5) * (260.0 / max(-mv.z, 0.1));
+}`;
+
+export const COMET_TAIL_FRAG = /* glsl */ `
+uniform sampler2D uTex;
+uniform vec3 uColNear, uColFar;
+uniform float uOpacity;
+varying float vAge;
+void main(){
+  float a = texture2D(uTex, gl_PointCoord).a;
+  vec3 col = mix(uColNear, uColFar, vAge);
+  gl_FragColor = vec4(col, a * (1.0 - vAge) * uOpacity);
+}`;
+
+// Subtle gas-giant detail shell for Uranus/Neptune — a thin additive sphere over the textured
+// planet adding faint latitudinal BANDS, faint cloud STREAKS, and a soft limb haze, so the
+// near-featureless ice giants read as real atmospheres instead of flat single-colour discs.
+// vLat = object-space latitude (spin about Y preserves it); reuse SIMPLEX.
+export const GIANT_VERT = /* glsl */ `
+varying float vLat;
+varying vec3 vNormalV;
+varying vec3 vViewV;
+varying vec3 vDir;
+void main(){
+  vLat = normalize(normal).y;
+  vDir = normalize(position);
+  vNormalV = normalize(normalMatrix * normal);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vViewV = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+
+export const GIANT_FRAG = /* glsl */ `
+${SIMPLEX}
+uniform float uTime, uBandStrength, uBandFreq, uStreakStrength, uOpacity;
+uniform vec3 uTint;
+varying float vLat;
+varying vec3 vNormalV;
+varying vec3 vViewV;
+varying vec3 vDir;
+void main(){
+  float band = sin(vLat * uBandFreq + snoise(vec3(0.0, vLat * 3.0, uTime * 0.02)) * 0.6) * 0.5 + 0.5;
+  float streak = snoise(vDir * 4.0 + vec3(0.0, 0.0, uTime * 0.03)) * 0.5 + 0.5;
+  float fres = pow(1.0 - max(dot(vNormalV, vViewV), 0.0), 3.0);  // limb haze
+  float intensity = uOpacity * (band * uBandStrength * 8.0 + streak * uStreakStrength * 6.0 + fres * 0.35);
+  gl_FragColor = vec4(uTint, clamp(intensity, 0.0, 0.6));
+}`;
+
+// Twinkling coloured stars (round soft points). Each star has a deterministic phase + size so
+// it shimmers subtly (very low amplitude — real space doesn't atmospherically twinkle, this is
+// just for "alive"), with a few bright "hero" stars. Uses the geometry's `color` attribute.
+export const STAR_VERT = /* glsl */ `
+attribute vec3 color;
+attribute float aPhase;
+attribute float aSize;
+uniform float uTime, uPixelRatio;
+varying vec3 vCol;
+void main(){
+  float tw = 0.85 + 0.15 * sin(uTime * 1.5 + aPhase);
+  vCol = color * tw;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = aSize * uPixelRatio * (300.0 / max(-mv.z, 0.1));
+}`;
+
+export const STAR_FRAG = /* glsl */ `
+varying vec3 vCol;
+void main(){
+  float d = length(gl_PointCoord - 0.5);
+  float a = 1.0 - smoothstep(0.35, 0.5, d);
+  if (a < 0.01) discard;
+  gl_FragColor = vec4(vCol, a);
+}`;

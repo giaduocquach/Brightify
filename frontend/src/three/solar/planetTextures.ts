@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useThree } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import { SRGBColorSpace, type Texture } from 'three';
 import type { BodyDef } from './bodies';
@@ -16,6 +17,10 @@ export interface BodyTextures {
 // Only call from a component that renders for a body with `def.texture` set, so the
 // hook input is non-empty and stable for that instance.
 export function useBodyTextures(def: BodyDef): BodyTextures {
+  // Max anisotropy is the #1 sharpness factor at grazing angles (planet limbs, rings,
+  // close flybys). drei caches Texture objects, so set it once per object (guarded below).
+  const maxAniso = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+
   const urls = useMemo(() => {
     const u: Record<string, string> = {};
     if (def.texture) u.map = textureUrl(def.texture);
@@ -27,10 +32,25 @@ export function useBodyTextures(def: BodyDef): BodyTextures {
   }, [def.texture, def.clouds, def.night, def.bump, def.ring]);
 
   const tex = useTexture(urls) as unknown as BodyTextures;
-  // colour maps are sRGB; bump is linear data (leave as-is)
+  // colour maps are sRGB; bump is linear data (leave its colorSpace as-is, but it still
+  // benefits from anisotropic sampling).
   if (tex.map) tex.map.colorSpace = SRGBColorSpace;
   if (tex.clouds) tex.clouds.colorSpace = SRGBColorSpace;
   if (tex.night) tex.night.colorSpace = SRGBColorSpace;
   if (tex.ring) tex.ring.colorSpace = SRGBColorSpace;
+  applyAniso(tex.map, maxAniso);
+  applyAniso(tex.clouds, maxAniso);
+  applyAniso(tex.night, maxAniso);
+  applyAniso(tex.bump, maxAniso);
+  applyAniso(tex.ring, maxAniso);
   return tex;
+}
+
+// Set max anisotropic filtering once per cached Texture (the `!==` guard avoids redundant
+// `needsUpdate` churn on every render, since drei returns the same object each time).
+function applyAniso(t: Texture | undefined, maxAniso: number): void {
+  if (t && t.anisotropy !== maxAniso) {
+    t.anisotropy = maxAniso;
+    t.needsUpdate = true;
+  }
 }

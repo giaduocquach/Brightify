@@ -45,6 +45,18 @@ CHECKPOINTS_DIR = _resolve_path_env("BRIGHTIFY_CHECKPOINTS_DIR", SERVING_ROOT / 
 MUSIC_DIR = _resolve_path_env("BRIGHTIFY_MUSIC_DIR", MEDIA_ROOT / "music_files")
 ALBUM_ART_DIR = _resolve_path_env("BRIGHTIFY_ALBUM_ART_DIR", MEDIA_ROOT / "album_art")
 ARTIST_IMAGES_DIR = _resolve_path_env("BRIGHTIFY_ARTIST_IMAGES_DIR", MEDIA_ROOT / "artist_images")
+
+# Optional CDN base URL for audio (e.g. a CloudFront distribution in front of an
+# S3 bucket holding the MP3s). When set, /api/audio/stream/{id} returns a 302
+# redirect to f"{AUDIO_CDN_BASE}/{id}.mp3" so streaming/egress is offloaded to the
+# CDN instead of the app. When empty (dev/local), MP3s are served from MUSIC_DIR.
+AUDIO_CDN_BASE = os.environ.get("AUDIO_CDN_BASE", "").rstrip("/")
+
+# JSON list of track_ids that have an MP3 (filename stems). In CDN mode the local
+# music_files/ dir is absent, so this manifest is the source of truth for
+# has_audio. Generated from music_files/ when syncing to S3 (`make audio-manifest`).
+AUDIO_MANIFEST_FILE = str(DATA_DIR / "audio_manifest.json")
+
 ARCHIVE_ROOT = _resolve_path_env("BRIGHTIFY_ARCHIVE_ROOT", PROJECT_ROOT / "var" / "archive")
 RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" / "runtime")
 
@@ -59,7 +71,6 @@ PROCESSED_FILE = str(DATA_DIR / "vietnamese_music_processed_full.csv")
 #   --out data/lyrics_e5large.npy   (mean-pooled, L2-normalised, "query: " prefix; gitignored artifact).
 EMBEDDINGS_FILE = os.environ.get("EMBEDDINGS_FILE", str(DATA_DIR / "lyrics_e5large.npy"))
 LYRICS_EMBED_MODEL = "intfloat/multilingual-e5-large"
-EMBEDDINGS_FILE_PHOBERT = str(DATA_DIR / "vietnamese_music_embeddings_full.npy")  # kept for ablation
 EMBEDDINGS_META_FILE = str(DATA_DIR / "embeddings_metadata.json")
 ARTIST_IMAGES_DATA_FILE = str(DATA_DIR / "artist_images.json")
 PHASE1_ARTISTS_FILE = str(CHECKPOINTS_DIR / "phase1_artists.csv")
@@ -71,19 +82,13 @@ CROSSFADE_FEATURES_FILE = str(DATA_DIR / "crossfade_features.json")
 PHOBERT_MODEL = 'vinai/phobert-base-v2'  # PhoBERT v2 (RoBERTa-base, 135M params, AGPL-3.0)
 MAX_SEQUENCE_LENGTH = 512  # Maximum tokens for BERT
 BATCH_SIZE = 32  # Batch size for embedding generation
-# VN Sentence-BERT (dangvantuan/vietnamese-embedding): SimCSE contrastive-trained on VN.
-# avg pairwise cosine 0.587 vs PhoBERT mean-pool 0.856 → much less anisotropic → better retrieval.
-# Switch: set EMBEDDINGS_FILE = VNSBERT_EMBEDDINGS_FILE after eval confirms improvement.
-VNSBERT_MODEL          = "dangvantuan/vietnamese-embedding"
-VNSBERT_EMBEDDINGS_FILE = str(DATA_DIR / "vnsbert_embeddings.npy")
 
-# V6e: pretrained Vietnamese sentiment transformer (frozen, zero-shot) used OFFLINE
-# to produce a context-aware lyrical valence signal. GROUNDED build (tools/build_grounded_vnsent.py):
-# frozen ViSoBERT (Nguyen 2023, EMNLP) + Ridge probe on UIT-VSMEC (Ho 2020, peer-reviewed),
-# emotion→valence via NRC-VAD — every component citable, no fine-tune, offline-only. The legacy
-# wonrax community head (unpublished corpus) is retained only as a reference/fallback artifact.
-VN_SENTIMENT_MODEL = os.environ.get("VN_SENTIMENT_MODEL", "wonrax/phobert-base-vietnamese-sentiment")
-VN_SENTIMENT_VALENCE_FILE = str(DATA_DIR / "vnsent_grounded_valence.json")
+# Skip loading the PhoBERT model weights at startup. PhoBERT is loaded eagerly
+# but never invoked on any request path: runtime emotion comes from precomputed
+# EMOTION_LABELS_FILE (full catalog coverage) + the pure-Python lexicon, and
+# emotions_to_valence_arousal() does no model inference. Set True in production
+# to save ~850 MB RAM and the model download. Default False keeps dev unchanged.
+SKIP_PHOBERT_LOAD = os.environ.get("SKIP_PHOBERT_LOAD", "False") == "True"
 
 # ============================================================================
 # Audio Features
@@ -131,7 +136,6 @@ LIGHTNESS_RANGE = (20, 80)     # Mode & Acousticness → Lightness
 # ============================================================================
 
 # Default weights for multimodal recommendation [audio, lyrics, color]
-DEFAULT_WEIGHTS = [0.40, 0.40, 0.20]
 
 # Task-specific weights
 # NOTE: recommend-by-color is PURE V-A (rank-space heteroscedastic RBF; F2/F3 ablation
@@ -139,7 +143,6 @@ DEFAULT_WEIGHTS = [0.40, 0.40, 0.20]
 # The old WEIGHTS_COLOR_QUERY=[0.30,0.35,0.35] was a never-used display artifact, removed.
 WEIGHTS_MOOD_QUERY = [0.50, 0.30, 0.20]   # User selects mood
 WEIGHTS_SONG_QUERY = [0.40, 0.40, 0.20]   # Similar song search
-WEIGHTS_LYRICS_QUERY = [0.25, 0.55, 0.20] # Lyrics-based search
 
 # recommend_by_song fusion weights.
 # Signal layout (8-dim, MERT path): [timbral, rhythmic, tonal, lyrics, va, emotion, mood, mert]
@@ -175,6 +178,7 @@ TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
 # Catches: same song different title/case, feat. versions, cross-lingual (April Lie / Tháng Tư).
 ENABLE_COVER_FILTER = os.environ.get("ENABLE_COVER_FILTER", "True") == "True"
 COVER_INDEX_FILE    = str(DATA_DIR / "cover_index.json")
+CLEAN_BPM_FILE      = str(DATA_DIR / "clean_bpm.json")  # clean librosa BPM per track (tempo signal)
 
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 82% (audio), V-A 12% (mood), lyrics 6% (genre cue).
@@ -445,10 +449,6 @@ COLOR_DISTANCE_METHOD = 'CIEDE2000'  # Options: 'CIEDE2000', 'EUCLIDEAN', 'HSL'
 # ============================================================================
 # Feature Engineering
 # ============================================================================
-MOOD_SCORE_WEIGHTS = {'valence': 0.6, 'energy': 0.4}
-DANCE_SCORE_WEIGHTS = {'danceability': 0.5, 'energy': 0.3, 'tempo': 0.2}
-ACOUSTIC_SCORE_WEIGHTS = {'acousticness': 0.7, 'instrumentalness': 0.3}
-COMBINED_POSITIVITY_WEIGHTS = {'valence': 0.6, 'sentiment': 0.4}
 
 # ============================================================================
 # Data Quality Settings
@@ -464,16 +464,6 @@ TEMPO_MAX = 200
 # Loudness normalization range
 LOUDNESS_MIN = -20
 LOUDNESS_MAX = 0
-
-# ============================================================================
-# Visualization Settings
-# ============================================================================
-PLOT_STYLE = 'seaborn-v0_8-darkgrid'
-FIGURE_SIZE = (12, 8)
-DPI = 100
-
-# Color palette for plots
-COLOR_PALETTE = 'husl'
 
 # ============================================================================
 # Pillar A — MERT Audio Embedding (Li et al. 2023, arXiv 2306.00107)
@@ -508,20 +498,7 @@ MUQ_METADATA_FILE     = str(DATA_DIR / "muq_metadata.json")
 # MLP 768→384→128 trained with NT-Xent dropout contrastive (Gao et al. EMNLP 2021).
 # Projected 128-dim embeddings have better cosine geometry (less anisotropic).
 # Trained without any human labels — positive pairs = same embedding, different dropout.
-MERT_PROJ_EMBEDDINGS_FILE            = str(DATA_DIR / "mert_proj_embeddings.npy")
-MERT_PROJ_EMBEDDINGS_MULTILAYER_FILE = str(DATA_DIR / "mert_proj_embeddings_multilayer.npy")
-ENABLE_MERT_PROJ = os.environ.get("ENABLE_MERT_PROJ", "False") == "True"  # off until eval confirms
 
-# ============================================================================
-# Pillar B (alt Vietnamese encoders: SimCSE/ViDeBERTa) — REMOVED 2026-06-01.
-# Experiment FAILED in backtest (PhoBERT + lyrics signal already optimal; dropping
-# lyrics hurt NDCG most, alt encoders gave no gain). The pipeline routing and
-# core/lyrics_router.py were deleted. These two constants are kept ONLY inert
-# (ENABLE_PILLAR_B permanently False) for backward-compat with the backtest A/B
-# toggle in tools/backtest_v2 — they never select a real Pillar B file.
-ENABLE_PILLAR_B = False
-EMBEDDINGS_FILE_PILLAR_B = EMBEDDINGS_FILE  # inert: never used while ENABLE_PILLAR_B=False
-EMBEDDINGS_META_FILE_PILLAR_B = EMBEDDINGS_META_FILE
 HF_CACHE_DIR = os.environ.get("HF_CACHE_DIR", "var/volumes/hf_cache")
 
 # ============================================================================
@@ -534,33 +511,7 @@ ENABLE_RRF = os.environ.get("ENABLE_RRF", "True") == "True"
 RRF_K = 60               # Cormack 2009: RRF dampening constant
 RRF_CANDIDATE_SIZE = 200 # Candidate pool before full-signal scoring
 
-# ENABLE_RERANKER: Cross-encoder second-pass for lyrics keyword queries.
-# Model: multilingual MiniLM-v2 fine-tuned on MS-MARCO (covers Vietnamese).
-# Disabled by default — requires sentence-transformers and extra inference time.
-ENABLE_RERANKER = os.environ.get("ENABLE_RERANKER", "False") == "True"
-RERANKER_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-RERANKER_TOP_K = 20      # Number of candidates to re-rank
-
-# ============================================================================
-# Pillar F — VN Holiday / Time-of-Day Context  (KG removed 2026-06-08)
-# ============================================================================
-# KG removed: E-KG-CLEAN (2026-06-01) showed KG-on vs KG-off NDCG@10
-# statistically indistinguishable (Δ+0.0038, CI95[-0.018,+0.015]).
-# Embedding was 50% MERT + 50% degenerate Essentia tags → MERT-redundant.
 MAX_PER_ARTIST_SIMILAR = int(os.environ.get("MAX_PER_ARTIST_SIMILAR", "0"))
-
-# Context: applies valence/arousal shifts based on VN holidays + time-of-day.
-ENABLE_VN_CONTEXT = os.environ.get("ENABLE_VN_CONTEXT", "False") == "True"  # context feature removed; off → deterministic color demo
-
-# Weather context — requires OpenWeatherMap free-tier key (1000 calls/day).
-# Set OWM_API_KEY env var or leave blank to silently skip weather shifts.
-OWM_API_KEY = os.environ.get("OWM_API_KEY", "")
-# Default location: Hà Nội (override per-deploy via OWM_LAT/OWM_LON env vars).
-# This is a fixed fallback — the user's real location is NOT auto-detected
-# (would need browser geolocation or IP lookup; not implemented yet).
-OWM_LAT = float(os.environ.get("OWM_LAT", "21.0278"))
-OWM_LON = float(os.environ.get("OWM_LON", "105.8342"))
-OWM_TIMEOUT_S = 2  # seconds — never block recommendation path
 
 # ============================================================================
 # Pillar E — CLAP Zero-shot Emotion Detection (Wu et al. 2023, arXiv 2211.06687)
@@ -570,7 +521,6 @@ OWM_TIMEOUT_S = 2  # seconds — never block recommendation path
 ENABLE_CLAP_EMOTION = os.environ.get("ENABLE_CLAP_EMOTION", "True") == "True"
 CLAP_MODEL = "laion/larger_clap_music_and_speech"
 CLAP_EMOTIONS_FILE = str(DATA_DIR / "clap_emotions.json")  # raw CLAP (deprecated; file removed — see RELABELED_EMOTIONS_FILE)
-CLAP_CLIP_DURATION = 15.0  # seconds — matches MERT_CLIP_DURATION
 
 # E-RELABEL (2026-05-31) — CLAP audio zero-shot labels are biased (74% happy/excited,
 # ~0 arousal correlation; see tools/relabel_emotions.py + memory project_clap_label_bias).
@@ -638,7 +588,6 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # GPT 0.71→0.67 / Gemini 0.64→0.56 (small; that agreement is partly circular). Tools:
 # build_grounded_vnlex.py (NRC-VAD-VN) → build_v6h_labels.py.
 RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6i.json")  # v6h grounded valence + MuQ-arousal (wt=0.35) — full MuQ backbone (V41)
-VALENCE_CALIBRATION_FILE = str(DATA_DIR / "valence_calibration.json")  # isotonic fit on VN gold-set (V17)
 
 # ============================================================================
 # System Settings

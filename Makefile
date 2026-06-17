@@ -1,4 +1,4 @@
-.PHONY: init dev dev-detach staging prod migrate seed warmup shell dbshell logs logs-app backup backup-snapshot restore-db clean clean-all reset-db verify
+.PHONY: init dev dev-detach staging prod aws migrate seed warmup audio-manifest shell dbshell logs logs-app backup backup-snapshot restore-db clean clean-all reset-db verify
 
 init: ## Create var/ structure + secrets on first setup
 	@mkdir -p var/runtime/{music_files,album_art,artist_images,checkpoints,processed,essentia_models,annotations,trained_models}
@@ -35,20 +35,30 @@ staging: init ## Start staging stack
 prod: init ## Start production stack
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
+aws: init ## Start AWS stack (ECR image, PhoBERT off, audio via CloudFront)
+	docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d
+
 migrate: ## Apply Alembic migrations inside running stack
 	docker compose run --rm migrate
 
 seed: ## Seed DB from processed CSV
 	docker compose run --rm app python -m db.seed
 
-warmup: ## Pre-download HuggingFace models into hf_cache volume
+warmup: ## Pre-download runtime model (PhoBERT) — skip when SKIP_PHOBERT_LOAD=True
+	@# CLIP removed: not referenced anywhere in the running app (no image route).
+	@# PhoBERT is the only runtime model, and even it is unused when
+	@# SKIP_PHOBERT_LOAD=True (production) — emotion is precomputed. Skip then.
 	docker compose run --rm app python -c "\
-from transformers import AutoTokenizer, AutoModel, CLIPModel, CLIPProcessor; \
+from transformers import AutoTokenizer, AutoModel; \
 AutoTokenizer.from_pretrained('vinai/phobert-base-v2'); \
 AutoModel.from_pretrained('vinai/phobert-base-v2'); \
-CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32'); \
-CLIPModel.from_pretrained('openai/clip-vit-base-patch32'); \
-print('Models cached')"
+print('PhoBERT cached')"
+
+audio-manifest: ## Generate data/audio_manifest.json from music_files/ (run before S3 sync)
+	python3 -c "import json,glob,os; \
+stems=sorted(os.path.splitext(os.path.basename(f))[0] for f in glob.glob('music_files/*.mp3')); \
+json.dump(stems, open('data/audio_manifest.json','w')); \
+print('wrote data/audio_manifest.json:', len(stems), 'track ids')"
 
 shell: ## Open bash shell in app container
 	docker compose exec app /bin/bash

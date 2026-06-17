@@ -14,7 +14,7 @@ export default function Intro() {
           Một phi hành gia đang chờ đưa bạn qua 12 hành tinh cảm xúc.
           <span className="home-hint"> Chạm một hành tinh để khám phá, hoặc chọn hai để du hành giữa chúng.</span>
         </p>
-        <button className="intro-cta" onClick={enterSystem}>Bắt đầu khám phá ✦</button>
+        <button className="intro-cta" onClick={enterSystem}>Bắt đầu khám phá <span aria-hidden="true">✦</span></button>
       </div>
     </div>
   );
