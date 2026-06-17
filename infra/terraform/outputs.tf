@@ -27,3 +27,13 @@ output "github_deploy_role_arn" {
   description = "Role ARN for GitHub Actions (set as AWS_DEPLOY_ROLE_ARN secret)."
   value       = aws_iam_role.github_deploy.arn
 }
+
+output "ssh_key_file" {
+  description = "Path to the generated private key (empty if you supplied key_pair_name)."
+  value       = local.ec2_key_file
+}
+
+output "ssh_command" {
+  description = "Ready-to-use SSH command."
+  value       = local.ec2_key_file != "" ? "ssh -i ${local.ec2_key_file} ubuntu@${aws_eip.app.public_ip}" : "ssh ubuntu@${aws_eip.app.public_ip}"
+}

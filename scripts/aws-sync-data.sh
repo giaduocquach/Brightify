@@ -17,6 +17,12 @@ REL="aws_release"
 cd "$(cd "$(dirname "$0")/.." && pwd)"   # repo root
 [ -f .venv/bin/activate ] && . .venv/bin/activate || true
 
+# Use the Terraform-generated key if present (so SSH/rsync just work).
+PEM="infra/terraform/brightify-ec2.pem"
+SSH_OPTS="-o StrictHostKeyChecking=accept-new"
+[ -f "$PEM" ] && SSH_OPTS="$SSH_OPTS -i $PEM"
+SSH="ssh $SSH_OPTS"
+
 echo "[1/5] Audio manifest"
 make audio-manifest
 
@@ -28,12 +34,12 @@ echo "[3/5] Upload MP3s to S3 (resumable; ~17GB, can take a while)"
 aws s3 sync music_files/ "s3://$BUCKET/" --content-type audio/mpeg
 
 echo "[4/5] rsync serving release -> EC2 (~200MB)"
-ssh "$SSH_USER@$HOST" 'mkdir -p /opt/brightify/var/serving_releases'
-rsync -avz --delete "var/serving_releases/$REL/" \
+$SSH "$SSH_USER@$HOST" 'sudo mkdir -p /opt/brightify/var/serving_releases && sudo chown -R ubuntu:ubuntu /opt/brightify'
+rsync -avz --delete -e "$SSH" "var/serving_releases/$REL/" \
   "$SSH_USER@$HOST:/opt/brightify/var/serving_releases/$REL/"
 
 echo "[5/5] Point 'current' symlink on EC2"
-ssh "$SSH_USER@$HOST" "ln -sfn $REL /opt/brightify/var/serving_releases/current"
+$SSH "$SSH_USER@$HOST" "ln -sfn $REL /opt/brightify/var/serving_releases/current"
 
 echo
 echo "Done. Next: ssh $SSH_USER@$HOST, fill /opt/brightify/.env, then run scripts/aws-bootstrap.sh"

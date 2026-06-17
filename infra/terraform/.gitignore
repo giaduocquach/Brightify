@@ -8,3 +8,5 @@ terraform.tfvars
 crash.log
 override.tf
 override.tf.json
+# Generated EC2 private key — never commit
+*.pem
