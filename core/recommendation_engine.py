@@ -201,12 +201,18 @@ class MusicRecommender:
         # `self.mert_matrix` (the audio-backbone slot — name kept to avoid churn) + rebuilds
         # the centred matrix for colour coherence. MuQ embeddings aligned to catalog order via
         # muq_metadata done_track_ids. Cover index (precomputed on MERT) is unaffected.
+        # Resolve from config (DATA_DIR / serving release), NOT a CWD-relative "data/..."
+        # path: in Docker CWD=/app and the .npy lives in the mounted serving release, so the
+        # old hardcoded path silently failed → MuQ never loaded → the app fell back to the
+        # MERT backbone, giving DIFFERENT recommendations than local. (Same bug class as clean_bpm.)
+        _muq_file = globals().get("MUQ_EMBEDDINGS_FILE", "data/muq_embeddings.npy")
+        _muq_meta = globals().get("MUQ_METADATA_FILE", "data/muq_metadata.json")
         if str(globals().get("AUDIO_BACKBONE", "mert")).lower() == "muq" \
-                and os.path.exists("data/muq_embeddings.npy"):
+                and os.path.exists(_muq_file):
             try:
                 import json as _json
-                muq = np.load("data/muq_embeddings.npy")
-                meta = _json.load(open("data/muq_metadata.json"))
+                muq = np.load(_muq_file)
+                meta = _json.load(open(_muq_meta))
                 order = meta.get("done_track_ids") or meta.get("track_ids")
                 tids = self.df["track_id"].astype(str).tolist()
                 if order and len(order) == len(muq):
