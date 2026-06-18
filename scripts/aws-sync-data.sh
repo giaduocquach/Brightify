@@ -41,18 +41,13 @@ rsync -avz --delete -e "$SSH" "var/serving_releases/$REL/" \
 echo "[5/6] Point 'current' symlink on EC2"
 $SSH "$SSH_USER@$HOST" "ln -sfn $REL /opt/brightify/var/serving_releases/current"
 
-# vocal_regions.csv is a DB-seed input (not a runtime/serving-release file): it
-# feeds `tools.backfill_vocal_regions` which populates Song.vocal_start_s/vocal_end_s
-# (vocal-aware crossfade anchors). Without it the DB columns are NULL and crossfade
-# falls back to fade_out_cue_s. Place it where the app container can read it.
-echo "[6/6] Sync vocal_regions.csv for the vocal-regions backfill"
-$SSH "$SSH_USER@$HOST" 'mkdir -p /opt/brightify/data'
-if [ -f data/vocal_regions.csv ]; then
-  rsync -az -e "$SSH" data/vocal_regions.csv "$SSH_USER@$HOST:/opt/brightify/data/vocal_regions.csv"
-else
-  echo "  (warning) data/vocal_regions.csv not found locally — skip"
-fi
+# Crossfade backfill inputs (vocal_regions.csv + clean_durations.csv) are part of the
+# serving release (build_serving_release.py _RUNTIME_SPEC) → already rsynced in step [4/5]
+# under data/. deploy-remote.sh runs tools.backfill_vocal_regions + tools.backfill_durations
+# after migrate, reading them via config.DATA_DIR (/app/serving/current/data). The app
+# container has no /app/data mount, so the serving release is the only path that reaches it.
 
 echo
-echo "Done. Next: ssh $SSH_USER@$HOST, fill /opt/brightify/.env, run scripts/aws-bootstrap.sh,"
-echo "then once up: docker compose -f docker-compose.yml -f docker-compose.aws.yml run --rm app python -m tools.backfill_vocal_regions"
+echo "Done. Next: ssh $SSH_USER@$HOST, fill /opt/brightify/.env, run scripts/aws-bootstrap.sh."
+echo "Crossfade backfills (vocal regions + reconciled durations) run automatically in deploy-remote.sh,"
+echo "reading the CSVs that ride in the serving release."

@@ -40,11 +40,37 @@ artist_images_path = cfg.ARTIST_IMAGES_DIR
 recommender = None
 
 
+def _verify_alignment(rec):
+    """Guardrail: the engine indexes embeddings POSITIONALLY (df.iloc[i] ↔ matrix[i]).
+    After init + the crossfade hydration merge, check the row counts still match so a future
+    merge/delete that reorders or drops rows is caught at startup — not as silently wrong
+    color/similar recommendations. Non-fatal (log only): never block serving on a false positive."""
+    if rec is None or getattr(rec, "df", None) is None:
+        return
+    try:
+        import numpy as _np
+        n = len(rec.df)
+        issues = []
+        if getattr(rec, "n_songs", n) != n:
+            issues.append(f"n_songs={rec.n_songs}!=len(df)={n}")
+        for attr in ("mert_matrix", "embeddings", "song_va"):
+            m = getattr(rec, attr, None)
+            if isinstance(m, _np.ndarray) and m.shape[0] != n:
+                issues.append(f"{attr}.shape[0]={m.shape[0]}!=len(df)={n}")
+        if issues:
+            logger.error(f"[alignment] EMBEDDING↔DF MISALIGNED — recommendations may be WRONG: {issues}")
+        else:
+            logger.info(f"[alignment] OK — df/embeddings aligned at {n} songs")
+    except Exception as e:
+        logger.warning(f"[alignment] check skipped: {e}")
+
+
 def init_recommender():
     global recommender
     if recommender is None:
         recommender = get_recommender()
         _hydrate_crossfade_columns(recommender)
+        _verify_alignment(recommender)
 
 
 def _hydrate_crossfade_columns(rec):

@@ -615,7 +615,15 @@ async def stream_audio(track_id: str):
     return FileResponse(
         path=str(file_path),
         media_type="audio/mpeg",
-        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
+        # CORS so the Web Audio crossfade (el.crossOrigin='anonymous' + MediaElementSource)
+        # can analyse/visualise this stream when served from disk (dev / non-CDN). In prod the
+        # CDN branch above handles CORS via CloudFront. '*' is valid here (public, no credentials).
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD",
+        },
     )
 
 
