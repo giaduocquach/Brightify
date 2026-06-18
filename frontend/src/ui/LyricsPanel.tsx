@@ -26,7 +26,7 @@ export default function LyricsPanel() {
   if (!show) return null;
 
   return (
-    <div className="lyrics-panel" role="dialog" aria-label="Lời bài hát">
+    <div className="lyrics-panel" aria-label="Lời bài hát">
       <div className="lyrics-head">
         <span className="lyrics-meta">
           <span className="lyrics-title">{current?.track_name ?? 'Lời bài hát'}</span>

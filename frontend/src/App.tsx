@@ -12,7 +12,6 @@ import FlyHUD from './ui/FlyHUD';
 import PlayerBar from './ui/PlayerBar';
 import ModeBadge from './ui/ModeBadge';
 import OnboardingHint from './ui/OnboardingHint';
-import LyricsPanel from './ui/LyricsPanel';
 import { engine } from './audio/engine';
 import { useStore } from './state/store';
 
@@ -66,7 +65,6 @@ export default function App() {
           </div>
         </div>
       )}
-      <LyricsPanel />
       <PlayerBar />
     </>
   );

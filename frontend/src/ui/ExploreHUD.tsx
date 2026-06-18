@@ -2,6 +2,7 @@ import { useStore } from '../state/store';
 import { EMOTION_COLORS } from '../data/colors';
 import { bodyByHex } from '../three/solar/bodies';
 import ResultsList from './ResultsList';
+import LyricsPanel from './LyricsPanel';
 import WhyColorPanel from './WhyColorPanel';
 
 // Shown while exploring a single planet: which body, its emotion, and the songs of
@@ -12,6 +13,7 @@ export default function ExploreHUD() {
   const bridge = useStore((s) => s.bridge);
   const results = useStore((s) => s.results);
   const showPlaylist = useStore((s) => s.showPlaylist);
+  const showLyrics = useStore((s) => s.showLyrics);
 
   if (!hex) return null;
   const color = EMOTION_COLORS.find((c) => c.hex === hex);
@@ -25,7 +27,7 @@ export default function ExploreHUD() {
         <p className="hud-emotion"><span className="hud-dot" /> {color?.label} · {color?.emotion}</p>
         <WhyColorPanel bridge={bridge} songs={results} />
       </div>
-      {showPlaylist && <ResultsList />}
+      {showLyrics ? <LyricsPanel /> : showPlaylist && <ResultsList />}
       <button className="hud-back" onClick={clearColors}><span aria-hidden="true">←</span> Về hệ mặt trời</button>
     </div>
   );

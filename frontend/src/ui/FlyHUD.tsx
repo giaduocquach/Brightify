@@ -1,5 +1,6 @@
 import { useStore } from '../state/store';
 import SongRow from './SongRow';
+import LyricsPanel from './LyricsPanel';
 
 // Free-flight ("Tương tự") panel: the live radio queue seeded by the song that was
 // playing — now-playing first, then what plays next, growing endlessly as it tops up.
@@ -12,6 +13,7 @@ export default function FlyHUD() {
   const playSong = useStore((s) => s.playSong);
   const enterSystem = useStore((s) => s.enterSystem);
   const showPlaylist = useStore((s) => s.showPlaylist);
+  const showLyrics = useStore((s) => s.showLyrics);
 
   const playable = tracks.filter((s) => s.has_audio);
 
@@ -22,7 +24,8 @@ export default function FlyHUD() {
         <h2 className="hud-title">{current ? current.track_name : 'Khám phá'}</h2>
       </div>
 
-      {showPlaylist && (
+      {showLyrics && <LyricsPanel />}
+      {!showLyrics && showPlaylist && (
         <div className="results-panel">
           {loading ? (
             <div className="results-loading"><span className="spinner" /> Đang tìm bài tương tự…</div>
