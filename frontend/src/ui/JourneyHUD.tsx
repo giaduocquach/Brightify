@@ -1,6 +1,7 @@
 import { useStore, JOURNEY_LENGTHS } from '../state/store';
 import { bodyByHex } from '../three/solar/bodies';
 import ResultsList from './ResultsList';
+import LyricsPanel from './LyricsPanel';
 import BridgeChip from './BridgeChip';
 import JourneyArc from './JourneyArc';
 import WhyColorPanel from './WhyColorPanel';
@@ -20,6 +21,7 @@ export default function JourneyHUD() {
   const bridge = useStore((s) => s.bridge);
   const results = useStore((s) => s.results);
   const showPlaylist = useStore((s) => s.showPlaylist);
+  const showLyrics = useStore((s) => s.showLyrics);
 
   const fromBody = bodyByHex(sel[0]);
   const toBody = bodyByHex(sel[1]);
@@ -46,7 +48,7 @@ export default function JourneyHUD() {
           >{PACING_LABELS[n]}</button>
         ))}
       </div>
-      {showPlaylist && <ResultsList />}
+      {showLyrics ? <LyricsPanel /> : showPlaylist && <ResultsList />}
       <button className="hud-back" onClick={clearColors}><span aria-hidden="true">←</span> Về hệ mặt trời</button>
     </div>
   );

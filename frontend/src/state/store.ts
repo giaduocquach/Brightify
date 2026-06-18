@@ -232,8 +232,10 @@ export const useStore = create<State>((set, get) => ({
     try { localStorage.setItem(ONBOARD_KEY, '1'); } catch { /* ignore */ }
     set({ onboardingDone: true });
   },
-  togglePlaylist: () => set({ showPlaylist: !get().showPlaylist }),
-  toggleLyrics: () => set({ showLyrics: !get().showLyrics }),
+  // Playlist + lyrics share one panel slot (in the HUD) → mutually exclusive: opening one closes
+  // the other; closing leaves the other untouched.
+  togglePlaylist: () => set((s) => { const on = !s.showPlaylist; return { showPlaylist: on, showLyrics: on ? false : s.showLyrics }; }),
+  toggleLyrics: () => set((s) => { const on = !s.showLyrics; return { showLyrics: on, showPlaylist: on ? false : s.showPlaylist }; }),
 
   // Drag-to-reorder the visible playlist. Colour list (results) defines play order → mirror
   // into the queue so playback follows the new order; fly list IS the queue. Keep `current`.
