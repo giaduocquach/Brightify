@@ -91,7 +91,11 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
 
 def _serialize(value):
     if isinstance(value, (np.integer, np.floating)):
-        return float(value)
+        f = float(value)
+        # NaN/inf are not JSON-compliant → emit null. Without this, songs missing an audio
+        # feature (timbre_bright/acousticness/…) make the whole endpoint 500 (e.g. /api/song,
+        # which the lyrics panel calls → "no lyrics" for ~that song).
+        return f if np.isfinite(f) else None
     if pd.isna(value):
         return None
     return value
