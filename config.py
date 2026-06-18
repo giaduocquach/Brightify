@@ -179,6 +179,10 @@ TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
 ENABLE_COVER_FILTER = os.environ.get("ENABLE_COVER_FILTER", "True") == "True"
 COVER_INDEX_FILE    = str(DATA_DIR / "cover_index.json")
 CLEAN_BPM_FILE      = str(DATA_DIR / "clean_bpm.json")  # clean librosa BPM per track (tempo signal)
+# Crossfade DB-seed backfill inputs (keyed by track_id; ride in the serving release so they
+# resolve under DATA_DIR both locally and in prod). Applied after db.seed by deploy-remote.sh.
+VOCAL_REGIONS_FILE   = str(DATA_DIR / "vocal_regions.csv")    # → Song.vocal_start_s/vocal_end_s
+CLEAN_DURATIONS_FILE = str(DATA_DIR / "clean_durations.csv")  # → Song.duration_ms (ffprobe-reconciled)
 
 # 8-signal weights (ENABLE_MERT=True — production path).
 # Σ = 1.00. Breakdown: MERT 82% (audio), V-A 12% (mood), lyrics 6% (genre cue).

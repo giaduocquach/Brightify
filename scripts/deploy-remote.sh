@@ -14,6 +14,12 @@ cd /opt/brightify
 # shellcheck disable=SC1091
 [ -f /opt/brightify/deploy.env ] && . /opt/brightify/deploy.env
 
+# Audio in prod is served from the CDN (no MP3s on disk here). An empty AUDIO_CDN_BASE
+# makes /api/audio/stream 302 to an empty URL → audio silently breaks. Warn loudly.
+if [ -z "${AUDIO_CDN_BASE:-}" ]; then
+  echo "WARNING: AUDIO_CDN_BASE is empty — audio playback will break in prod. Set it in /opt/brightify/deploy.env." >&2
+fi
+
 # Sync compose/nginx/scripts to the exact deployed commit (.env + var/ are gitignored, untouched).
 # SSM runs this as root on an ubuntu-owned repo → trust the dir so git won't refuse.
 git config --global --add safe.directory /opt/brightify 2>/dev/null || true
@@ -28,6 +34,15 @@ aws ecr get-login-password --region "${AWS_REGION}" \
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.aws.yml"
 $COMPOSE pull app migrate
 $COMPOSE run --rm migrate          # alembic upgrade head
+
+# Sync crossfade data into the DB after migrate (idempotent — safe every deploy).
+# The seed loads only the catalog CSV, which lacks vocal regions and carries STALE
+# durations; these backfills bring the DB to the same state as local from the shipped
+# data/*.csv artifacts (synced by scripts/aws-sync-data.sh). Non-fatal: if a CSV is
+# missing, crossfade degrades to the fade-cue fallback rather than failing the deploy.
+$COMPOSE run --rm app python -m tools.backfill_vocal_regions || echo "  (warn) vocal-regions backfill skipped" >&2
+$COMPOSE run --rm app python -m tools.backfill_durations     || echo "  (warn) durations backfill skipped" >&2
+
 $COMPOSE up -d
 
 # nginx config is bind-mounted (compose up won't recreate it) — reload so any

@@ -1,13 +1,15 @@
-"""Backfill vocal regions into the DB (Smart Crossfade Tier 3).
+"""Backfill reconciled duration_ms into the DB from data/clean_durations.csv.
 
-Reads data/vocal_regions.csv (produced by tools.extract_vocal_regions, which may
-have been run on a GPU box) and writes Song.vocal_start_s / Song.vocal_end_s.
-Pure-instrumental tracks have empty cells → stored as NULL (graceful fallback).
+Mirrors tools.backfill_vocal_regions: a portable CSV artifact → DB column. Idempotent
+(re-running writes the same values). Run after `db.seed` in the deploy pipeline so the
+production DB's `duration_ms` matches the ffprobe-reconciled local values — the catalog
+CSV's `track_duration_ms` (what the seed loads) is stale, which throws off the crossfade
+outro/regime decision (`tailA = duration − vocal_end`).
 
 Usage:
     source .venv/bin/activate
-    python -m tools.backfill_vocal_regions
-    python -m tools.backfill_vocal_regions --csv data/vocal_regions.csv
+    python -m tools.backfill_durations
+    python -m tools.backfill_durations --csv data/clean_durations.csv
 """
 
 from __future__ import annotations
@@ -25,18 +27,9 @@ if str(ROOT) not in sys.path:
 import config as cfg
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-log = logging.getLogger("backfill_vocal_regions")
+log = logging.getLogger("backfill_durations")
 
-DEFAULT_CSV = Path(cfg.VOCAL_REGIONS_FILE)   # DATA_DIR-resolved → serving release in prod
-
-
-def _to_float(s: str | None) -> float | None:
-    if s is None or s == "":
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
+DEFAULT_CSV = Path(cfg.CLEAN_DURATIONS_FILE)   # DATA_DIR-resolved → serving release in prod
 
 
 def main():
@@ -49,7 +42,7 @@ def main():
 
     csv_path = Path(args.csv)
     if not csv_path.exists():
-        log.error(f"CSV not found: {csv_path} — run tools.extract_vocal_regions first.")
+        log.error(f"CSV not found: {csv_path} — run tools.export_clean_durations first.")
         return
 
     with csv_path.open() as f:
@@ -60,15 +53,19 @@ def main():
     updated = 0
     for rec in records:
         tid = rec.get("track_id")
-        if not tid:
+        raw = rec.get("duration_ms")
+        if not tid or not raw:
+            continue
+        try:
+            dur = int(float(raw))
+        except ValueError:
             continue
         song = session.query(Song).filter(Song.track_id == tid).first()
         if song is None:
             continue
-        song.vocal_start_s = _to_float(rec.get("vocal_start_s"))
-        song.vocal_end_s = _to_float(rec.get("vocal_end_s"))
+        song.duration_ms = dur
         updated += 1
-        if updated % 50 == 0:
+        if updated % 500 == 0:
             session.commit()
             log.info(f"  committed {updated}")
     session.commit()

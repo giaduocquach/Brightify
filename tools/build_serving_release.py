@@ -49,6 +49,8 @@ _RUNTIME_SPEC = [
     (cfg.COVER_INDEX_FILE,           "data",        False),  # cover dedup clusters
     (cfg.CLEAN_BPM_FILE,             "data",        False),  # tempo signal
     (cfg.AUDIO_MANIFEST_FILE,        "data",        False),  # has_audio source in CDN mode
+    (cfg.VOCAL_REGIONS_FILE,         "data",        False),  # crossfade vocal-region backfill input
+    (cfg.CLEAN_DURATIONS_FILE,       "data",        False),  # crossfade reconciled-duration backfill input
 ]
 
 RUNTIME_FILES = [
