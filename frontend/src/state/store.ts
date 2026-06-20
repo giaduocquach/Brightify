@@ -46,6 +46,8 @@ let boardingTimer: ReturnType<typeof setTimeout> | null = null;
 // Bound auto-skip on playback failure so a run of dead streams can't ping-pong forever.
 const MAX_AUDIO_ERRORS = 3;
 let audioErrorCount = 0;
+// Monotonic search token: only the latest query's response is allowed to commit.
+let searchSeq = 0;
 
 // First-run onboarding: persist so returning users skip the coach.
 const ONBOARD_KEY = 'brightify.onboarded';
@@ -256,13 +258,15 @@ export const useStore = create<State>((set, get) => ({
   openSearch: () => set({ searchOpen: true }),
   closeSearch: () => set({ searchOpen: false, searchQuery: '', searchResults: [] }),
   runSearch: async (q: string) => {
-    if (!q.trim()) { set({ searchResults: [], searchLoading: false }); return; }
+    if (!q.trim()) { searchSeq++; set({ searchQuery: '', searchResults: [], searchLoading: false }); return; }
+    const seq = ++searchSeq;   // drop responses that arrive after a newer query
     set({ searchLoading: true, searchQuery: q });
     try {
       const { results, semanticAvailable } = await api.search(q);
+      if (seq !== searchSeq) return;   // a newer query superseded this one
       set({ searchResults: results, searchLoading: false, semanticAvailable });
     } catch {
-      set({ searchLoading: false });
+      if (seq === searchSeq) set({ searchLoading: false });
     }
   },
 

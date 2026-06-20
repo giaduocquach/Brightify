@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { Search } from 'lucide-react';
 import { BODIES } from '../three/solar/bodies';
 import { EMOTION_COLORS } from '../data/colors';
 import { useStore } from '../state/store';
@@ -10,6 +11,7 @@ export default function NavPanel() {
   const sel = useStore((s) => s.selectedColors);
   const toggleColor = useStore((s) => s.toggleColor);
   const setHover = useStore((s) => s.setHover);
+  const openSearch = useStore((s) => s.openSearch);
 
   // When the intro greeting is dismissed this panel mounts; move focus here so keyboard
   // users aren't dropped on <body> (the canvas itself isn't a focus target).
@@ -21,6 +23,12 @@ export default function NavPanel() {
       <div className="navpanel-head">
         <span className="navpanel-led" aria-hidden="true" />
         <span className="navpanel-title">CHỌN HÀNH TINH</span>
+        <button
+          className="navpanel-search"
+          onClick={openSearch}
+          aria-label="Tìm kiếm bài hát"
+          title="Tìm kiếm — / hoặc ⌘K"
+        ><Search size={15} strokeWidth={2.2} /></button>
       </div>
       <div className="navpanel-grid">
         {BODIES.map((b) => {

@@ -65,7 +65,8 @@ class SearchEncoder:
                 tok = self._tokenizer
                 mdl = self._model
 
-            # e5 asymmetric format: queries use "query: " prefix, passages use "passage: "
+            # Match the index geometry built by tools/encode_lyrics.py exactly:
+            # "query: " prefix, attention-masked mean-pool, L2-normalize, max_len=256.
             prefixed = f"query: {text}"
             with torch.no_grad():
                 inputs = tok(
@@ -73,10 +74,11 @@ class SearchEncoder:
                     return_tensors="pt",
                     padding=True,
                     truncation=True,
-                    max_length=512,
+                    max_length=256,
                 )
-                outputs = mdl(**inputs)
-                emb = outputs.last_hidden_state.mean(dim=1)  # mean pool
+                hidden = mdl(**inputs).last_hidden_state            # (1, T, 1024)
+                mask = inputs["attention_mask"].unsqueeze(-1).float()  # (1, T, 1)
+                emb = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)  # masked mean
                 emb = torch.nn.functional.normalize(emb, p=2, dim=1)
             return emb[0].cpu().float().numpy()  # (1024,) float32
         except Exception as exc:
