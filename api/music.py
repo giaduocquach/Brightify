@@ -44,12 +44,27 @@ def _build_search_index(df: pd.DataFrame) -> None:
     global _search_index
     artist_col = next((c for c in ['primary_artist', 'artist_name', 'artist'] if c in df.columns), None)
     lyrics_col = next((c for c in ['lyrics_cleaned', 'plain_lyrics'] if c in df.columns), None)
+    name_norm = df['track_name'].fillna('').astype(str).map(_strip_diacritics)
+    artist_norm = df[artist_col].fillna('').astype(str).map(_strip_diacritics) if artist_col else None
+    # Fuzzy fallback indexes (typo recovery). Unique artist → row positions: matching a
+    # short query against the deduped artist list (a few hundred) is far more precise than
+    # against 5138 long strings.
+    artist_unique: list = []
+    artist_to_rows: dict = {}
+    if artist_norm is not None:
+        for i, a in enumerate(artist_norm.tolist()):
+            if a:
+                artist_to_rows.setdefault(a, []).append(i)
+        artist_unique = list(artist_to_rows.keys())
     idx = {
-        'name': df['track_name'].fillna('').astype(str).map(_strip_diacritics),
-        'artist': df[artist_col].fillna('').astype(str).map(_strip_diacritics) if artist_col else None,
+        'name': name_norm,
+        'artist': artist_norm,
         'album': df['album_name'].fillna('').astype(str).map(_strip_diacritics) if 'album_name' in df.columns else None,
         'lyrics': df[lyrics_col].fillna('').astype(str).map(_strip_diacritics) if lyrics_col else None,
         'lyrics_col': lyrics_col,
+        'name_list': name_norm.tolist(),
+        'artist_unique': artist_unique,
+        'artist_to_rows': artist_to_rows,
     }
     _search_index = idx
     logger.info("Search index built (diacritics-insensitive): name+%s+%s+%s",
@@ -387,6 +402,16 @@ async def smart_search(
     n = len(df)
     sidx = _search_index or {}
 
+    encoder = get_search_encoder()
+    semantic_available = encoder.is_ready
+
+    # Cache: key includes semantic readiness so text-only results computed during
+    # the encoder warmup don't freeze for the whole TTL once e5 finishes loading.
+    cache_key = make_key("search", q=query.lower(), limit=limit, sem=semantic_available)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     # ── Tier 1: metadata substring match (accent-insensitive) ─────────────
     t1_score = np.zeros(n, dtype=np.float32)
     if sidx.get('name') is not None:
@@ -409,13 +434,41 @@ async def smart_search(
                 snippets[int(raw_idx)] = snip
 
     # ── Tier 3: semantic embedding cosine ─────────────────────────────────
-    encoder = get_search_encoder()
-    semantic_available = encoder.is_ready
     t3_list: list[int] = []
     if semantic_available:
         query_vec = encoder.encode_query(query)
         if query_vec is not None:
             t3_list = [idx for idx, _ in _recommender.semantic_search(query_vec, top_k=50)]
+
+    # ── Tier 4 (fallback): fuzzy typo recovery ────────────────────────────
+    # Conservative — fires ONLY when literal matching found nothing, so a good
+    # query is never polluted. partial_ratio + high cutoffs recover misspelled
+    # artist names ("son tunh" → Sơn Tùng) and titles ("lac troii" → Lạc Trôi);
+    # semantics can't fix proper-noun typos.
+    fuzzy_set: set[int] = set()
+    fuzzy_list: list[int] = []
+    exact_hits = int((t1_score > 0).sum() + (t2_score > 0).sum())
+    if exact_hits == 0 and len(qnorm) >= 4:
+        try:
+            from rapidfuzz import fuzz, process
+            # Artist typo → return the single closest artist's songs.
+            au = sidx.get('artist_unique')
+            if au:
+                hit = process.extractOne(qnorm, au, scorer=fuzz.partial_ratio, score_cutoff=88)
+                if hit:
+                    fuzzy_list = sidx['artist_to_rows'].get(hit[0], [])[:limit]
+            # Title typo → closest song titles. token_sort_ratio is symmetric and
+            # length-normalized, so a 1-char title ("O") can't false-match a long query
+            # the way partial_ratio does.
+            nl = sidx.get('name_list')
+            if nl:
+                for _, _, i in process.extract(qnorm, nl, scorer=fuzz.token_sort_ratio,
+                                               limit=limit, score_cutoff=82):
+                    if i not in fuzzy_list:
+                        fuzzy_list.append(i)
+            fuzzy_set = set(fuzzy_list)
+        except ImportError:
+            pass  # rapidfuzz absent → degrade to exact + semantic only
 
     # ── Build rank lists (only non-empty matches) ─────────────────────────
     rank_lists: list[list[int]] = []
@@ -435,9 +488,15 @@ async def smart_search(
         rank_lists.append(t3_list)
         weights.append(0.7)
 
+    if fuzzy_list:
+        rank_lists.append(fuzzy_list)
+        weights.append(0.5)  # lowest: approximate name match, a fallback only
+
     if not rank_lists:
-        return {"success": True, "results": [], "query": q, "total": 0,
-                "semantic_available": semantic_available}
+        response = {"success": True, "results": [], "query": q, "total": 0,
+                    "semantic_available": semantic_available}
+        await cache_set(cache_key, response, ttl=180)
+        return response
 
     fused = reciprocal_rank_fusion(rank_lists, k=60, weights=weights, top_n=limit)
 
@@ -450,13 +509,17 @@ async def smart_search(
             song['match_type'] = 'name'
         elif t2_score[idx] > 0:
             song['match_type'] = 'lyrics'
+        elif idx in fuzzy_set:
+            song['match_type'] = 'name'  # approximate name/artist match
         else:
             song['match_type'] = 'vibe'
         song['lyric_snippet'] = snippets.get(idx)
         results.append(song)
 
-    return {"success": True, "results": results, "query": q, "total": len(results),
-            "semantic_available": semantic_available}
+    response = {"success": True, "results": results, "query": q, "total": len(results),
+                "semantic_available": semantic_available}
+    await cache_set(cache_key, response, ttl=180)
+    return response
 
 
 # ============================================================================
