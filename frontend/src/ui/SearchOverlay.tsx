@@ -63,6 +63,7 @@ export default function SearchOverlay() {
   if (!searchOpen) return null;
 
   const BADGE_LABEL: Record<string, string> = {
+    artist: 'Nghệ sĩ',
     name: 'Tên bài',
     lyrics: 'Lời nhạc',
     vibe: 'Theo nghĩa',

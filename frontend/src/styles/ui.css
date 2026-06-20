@@ -764,6 +764,7 @@ body[data-flight="1"] .hud:focus-within {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.badge-artist { background: rgba( 52, 211, 153, 0.18); color: #34d399; }
 .badge-name   { background: rgba(167, 139, 250, 0.18); color: #c4b5fd; }
 .badge-lyrics { background: rgba(103, 232, 249, 0.18); color: #67e8f9; }
 .badge-vibe   { background: rgba(251, 191,  36, 0.18); color: #fbbf24; }
