@@ -512,20 +512,10 @@ body[data-flight="1"] .hud:focus-within {
   background-clip: text;
   color: transparent;
 }
-.hud-emotion {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-  font-size: 0.86rem;
-  color: var(--text-dim);
-}
-.hud-dot {
-  width: 11px; height: 11px; border-radius: 50%;
-  background: var(--accent-hex);
-  box-shadow: 0 0 12px var(--accent-hex);
-}
-.hud .results-panel {
+/* Playlist + lyrics both fill the panel from just under the header (pushed up,
+   not bottom-anchored) so the right side reads like a normal playlist. */
+.hud .results-panel,
+.hud .lyrics-panel {
   margin-top: 0;
   max-width: none;
   max-height: none;
@@ -543,52 +533,6 @@ body[data-flight="1"] .hud:focus-within {
   transition: color 0.16s, transform 0.16s var(--ease-spring);
 }
 .hud-back:hover { color: var(--text); transform: translateX(-2px); }
-
-/* ── Legibility: bridge chip · V-A circumplex · journey arc · badges (Phase 2) ─ */
-.bridge-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.bridge-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 9px; border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--panel-border);
-  font-size: 0.72rem; color: var(--text-dim);
-}
-.bridge-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.bridge-emotion { color: var(--text); font-weight: 600; }
-.bridge-va { font-variant-numeric: tabular-nums; color: var(--text-faint); letter-spacing: 0.02em; }
-
-.whycolor { margin-top: 8px; }
-.whycolor-toggle {
-  font-size: 0.74rem; color: var(--accent-2); padding: 2px 0;
-  border-bottom: 1px dashed rgba(103, 232, 249, 0.4);
-}
-.whycolor-toggle:hover { color: var(--text); }
-.whycolor-body {
-  margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 8px;
-  animation: npoIn 0.25s var(--ease-out);
-}
-.whycolor-note { font-size: 0.74rem; color: var(--text-dim); line-height: 1.5; text-align: center; }
-.whycolor-note strong { color: var(--text); }
-.whycolor-cite { font-size: 0.66rem; color: var(--text-faint); font-style: italic; }
-
-.va-map { width: 152px; height: 152px; }
-.va-frame { fill: rgba(255, 255, 255, 0.02); stroke: var(--panel-border); }
-.va-axis { stroke: rgba(255, 255, 255, 0.12); stroke-dasharray: 3 3; }
-.va-quad { fill: var(--text-faint); font-size: 8px; font-family: var(--font-body); }
-.va-song { opacity: 0.55; }
-.va-color { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5)); }
-
-.journey-arc { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 0.72rem; }
-.ja-end {
-  font-weight: 700; white-space: nowrap; max-width: 6em;
-  overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.65);
-}
-.ja-track { position: relative; flex: 1; height: 6px; border-radius: 3px; }
-.ja-grad { position: absolute; inset: 0; border-radius: 3px; background: linear-gradient(90deg, var(--c-from), var(--c-to)); opacity: 0.55; }
-.ja-marker {
-  position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
-  transform: translate(-50%, -50%); border: 2px solid #fff;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6); transition: left 0.6s var(--ease-out);
-}
 
 /* ── Immersive elevation: mode badge · onboarding (Phase 3) ──────────────────── */
 .mode-badge {

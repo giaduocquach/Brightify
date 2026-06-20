@@ -2,24 +2,19 @@ import { useStore, JOURNEY_LENGTHS } from '../state/store';
 import { bodyByHex } from '../three/solar/bodies';
 import ResultsList from './ResultsList';
 import LyricsPanel from './LyricsPanel';
-import BridgeChip from './BridgeChip';
-import JourneyArc from './JourneyArc';
-import WhyColorPanel from './WhyColorPanel';
 
 // Pacing presets: more waypoints across the A→B arc = a longer, gentler journey
 // (smaller mood shift per step). Maps 1:1 onto JOURNEY_LENGTHS in the store.
 const PACING_LABELS: Record<number, string> = { 10: 'Nhanh', 20: 'Vừa', 36: 'Dài & chậm' };
 
-// Shown during a two-planet journey: the A → B route (planet names) above the
-// ordered, V-A-sequenced queue. ResultsList renders the mood gradient banner.
+// Shown during a two-planet journey: the A → B route (planet names) and a length
+// control above a plain V-A-sequenced playlist (or the lyrics view).
 export default function JourneyHUD() {
   const sel = useStore((s) => s.selectedColors);
   const clearColors = useStore((s) => s.clearColors);
   const journeyLength = useStore((s) => s.journeyLength);
   const setJourneyLength = useStore((s) => s.setJourneyLength);
   const loading = useStore((s) => s.loading);
-  const bridge = useStore((s) => s.bridge);
-  const results = useStore((s) => s.results);
   const showPlaylist = useStore((s) => s.showPlaylist);
   const showLyrics = useStore((s) => s.showLyrics);
 
@@ -29,11 +24,8 @@ export default function JourneyHUD() {
   return (
     <div className="hud hud--journey" style={{ ['--c-from' as string]: sel[0], ['--c-to' as string]: sel[1] }}>
       <div className="hud-head">
-        <span className="hud-eyebrow">Hành trình du hành <span aria-hidden="true">🚀</span></span>
+        <span className="hud-eyebrow">Hành trình du hành</span>
         <h2 className="hud-title hud-title--grad">{fromBody?.name} → {toBody?.name}</h2>
-        <BridgeChip bridge={bridge} />
-        <JourneyArc />
-        <WhyColorPanel bridge={bridge} songs={results} />
       </div>
       <div className="journey-pacing" role="group" aria-label="Độ dài hành trình">
         <span className="journey-pacing-label">Hành trình</span>
