@@ -17,7 +17,7 @@ export interface GiantParams {
 }
 
 const URANUS = '#3AB09E';
-const NEPTUNE = '#9C4F96';
+const NEPTUNE = '#0067A5'; // Neptune now wears the blue (Xanh dương) slot after the re-map
 
 // Tints are light (near-neutral) so the existing photoreal textures show through; they only
 // nudge hue. 'familiar' keeps Uranus pale-cyan + Neptune deep-blue; 'accurate' makes both a

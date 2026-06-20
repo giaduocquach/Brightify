@@ -4,7 +4,7 @@
 // Venus/Uranus/Neptune/Moon/Pluto stay 2K (featureless and/or no worthwhile 8K source).
 export const HI_RES_MAP: Readonly<Record<string, string>> = {
   '#848482': '/textures4k/4k_mercury.jpg',     // Mercury
-  '#0067A5': '/textures4k/4k_earth_daymap.jpg', // Earth
+  '#008856': '/textures4k/4k_earth_daymap.jpg', // Earth (now the green slot)
   '#BE0032': '/textures4k/4k_mars.jpg',         // Mars
   '#F38400': '/textures4k/4k_jupiter.jpg',      // Jupiter
   '#F3C300': '/textures4k/4k_saturn.jpg',       // Saturn

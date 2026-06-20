@@ -2,15 +2,14 @@ import { Suspense, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerformanceMonitor, Stars, useTexture, usePerformanceMonitor } from '@react-three/drei';
 import { EffectComposer, Bloom, GodRays, SMAA, Vignette } from '@react-three/postprocessing';
-import { ACESFilmicToneMapping, AdditiveBlending, BackSide, Color, type Mesh, type PerspectiveCamera, SRGBColorSpace, type Group, type Points, type ShaderMaterial, Vector3 } from 'three';
+import { ACESFilmicToneMapping, AdditiveBlending, BackSide, Color, type Mesh, SRGBColorSpace, type Group, type Points, type ShaderMaterial } from 'three';
 import { useStore } from '../../state/store';
-import { BODIES, CAMERA_START, MILKYWAY_TEXTURE, OUTER_RADIUS, bodyByHex } from './bodies';
+import { BODIES, CAMERA_START, MILKYWAY_TEXTURE, OUTER_RADIUS } from './bodies';
 import { textureUrl } from './textureUrls';
 import { glowTexture, nebulaTexture } from './glow';
 import { solarRefs } from './refs';
 import { useDeviceTier } from './deviceTier';
 import { STAR_VERT, STAR_FRAG } from '../shaders';
-import { LensingEffectImpl } from './LensingEffect';
 import CelestialBody from './CelestialBody';
 import Sun from './Sun';
 import OrbitRings from './OrbitRings';
@@ -177,37 +176,6 @@ function Dust() {
   );
 }
 
-// Smoothstep on [a,b] → [0,1].
-function smoothstep01(a: number, b: number, x: number): number {
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
-// Gravitational-lensing pass: owns the effect instance directly (via useMemo) and renders it
-// as a <primitive> so the EffectComposer collects it — same pattern GodRays uses, avoiding the
-// wrapEffect JSON.stringify(props) crash. Each frame it projects the black hole (#222222) to
-// screen space and feeds the effect position / apparent radius / strength (→0 off-screen/far).
-function LensingPass() {
-  const camera = useThree((s) => s.camera) as PerspectiveCamera;
-  const effect = useMemo(() => new LensingEffectImpl(), []);
-  const v = useMemo(() => new Vector3(), []);
-  const hole = useMemo(() => bodyByHex('#222222'), []);
-  useFrame(() => {
-    const pos = solarRefs.bodyPos['#222222'];
-    if (!pos || !hole) { effect.set(0.5, 0.5, 0.12, 0); return; }
-    v.copy(pos).project(camera);
-    const ux = v.x * 0.5 + 0.5;
-    const uy = v.y * 0.5 + 0.5;
-    const onScreen = v.z < 1 && ux > -0.3 && ux < 1.3 && uy > -0.3 && uy < 1.3;
-    const dist = camera.position.distanceTo(pos);
-    const worldR = hole.size * 3.2;                       // covers the accretion disk extent (matches uOuter)
-    const fov = (camera.fov * Math.PI) / 180;
-    const screenR = worldR / dist / (2 * Math.tan(fov / 2)); // apparent radius in UV-Y units
-    const strength = onScreen ? 1 - smoothstep01(60, 170, dist) : 0;
-    effect.set(ux, uy, Math.min(screenR, 0.45), strength);
-  });
-  return <primitive object={effect} dispose={null} />;
-}
 
 function Scene() {
   const mode = useStore((s) => s.mode);
@@ -218,7 +186,6 @@ function Scene() {
   const [sunMesh, setSunMesh] = useState<Mesh | null>(null);
   usePerformanceMonitor({ onDecline: () => setDegraded(true) });
   const heavy = tier === 'high' && !IS_MOBILE && !degraded;
-  const lensOn = heavy;
   const godRaysOn = heavy && !flight && !!sunMesh; // rays only when the Sun is framed in space
 
   return (
@@ -280,11 +247,9 @@ function Scene() {
       {/* Flicker-free postprocessing on macOS (Metal/ANGLE): the MSAA HDR framebuffer —
           both the composer's own (multisampling) and the canvas hardware one (gl.antialias)
           — flickers black. So we disable BOTH and anti-alias inside the composer with a
-          cheap SMAA pass instead (the documented r3f postprocessing pattern).
-          Lensing runs FIRST so the bent disk + Einstein ring feed into Bloom. */}
+          cheap SMAA pass instead (the documented r3f postprocessing pattern). */}
       <EffectComposer enableNormalPass={false} multisampling={0}>
         {[
-          lensOn ? <LensingPass key="lens" /> : null,
           godRaysOn && sunMesh
             ? <GodRays key="godrays" sun={sunMesh} samples={60} density={0.92} decay={0.9}
                 weight={0.3} exposure={0.4} clampMax={0.85} blur />

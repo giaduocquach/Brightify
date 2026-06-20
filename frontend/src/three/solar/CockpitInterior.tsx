@@ -1,17 +1,20 @@
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import { Outlines } from '@react-three/drei';
 import { AdditiveBlending, BackSide, Color, Group, type Mesh, ShaderMaterial } from 'three';
 import { engine } from '../../audio/engine';
 import { solarRefs } from './refs';
+import { toonRamp, OUTLINE } from './toon';
 import { ATMO_VERT, ATMO_FRAG } from '../shaders';
 
 const METAL_D = '#1e2640';
 
 // First-person cockpit — kept deliberately OPEN: you look out through an (almost invisible)
-// canopy and see space across ~80% of the view. Only a slim PBR dashboard sits along the very
+// canopy and see space across ~80% of the view. Only a slim toon dashboard sits along the very
 // bottom and the EQ gauges pulse with the music. Attached to the camera so it frames the view.
 export default function CockpitInterior() {
   const camera = useThree((s) => s.camera);
+  const ramp = toonRamp();
   const root = useRef<Group>(null);
   const bars = useRef<(Mesh | null)[]>([]);
   const barX = useMemo(() => [-0.16, -0.08, 0, 0.08, 0.16], []);
@@ -52,14 +55,15 @@ export default function CockpitInterior() {
         <sphereGeometry args={[0.85, 24, 16]} />
       </mesh>
 
-      {/* ── slim PBR dashboard strip across the very bottom (tilted up to the pilot) ── */}
+      {/* ── slim dashboard strip across the very bottom (tilted up to the pilot) ── */}
       <mesh position={[0, -0.46, -0.62]} rotation={[-0.62, 0, 0]}>
         <boxGeometry args={[1.0, 0.2, 0.06]} />
-        <meshStandardMaterial color={METAL_D} roughness={0.5} metalness={0.45} envMapIntensity={0.4} />
+        <meshToonMaterial color={METAL_D} gradientMap={ramp} />
+        <Outlines {...OUTLINE} />
       </mesh>
       <mesh position={[0, -0.38, -0.56]} rotation={[-0.62, 0, 0]}>
         <boxGeometry args={[1.0, 0.03, 0.1]} />
-        <meshStandardMaterial color="#da251d" emissive="#da251d" emissiveIntensity={0.3} roughness={0.5} />
+        <meshToonMaterial color="#da251d" gradientMap={ramp} emissive="#da251d" emissiveIntensity={0.3} />
       </mesh>
       {/* EQ gauge bars (music-reactive) */}
       {barX.map((x, i) => (
@@ -68,7 +72,7 @@ export default function CockpitInterior() {
           <meshStandardMaterial color="#7cf0ff" emissive="#7cf0ff" emissiveIntensity={1.6} toneMapped={false} />
         </mesh>
       ))}
-      {/* a couple of glowing buttons + trống đồng motif (subtle bronze) */}
+      {/* a couple of glowing buttons + trống đồng motif */}
       {[-0.34, 0.34].map((x, i) => (
         <mesh key={i} position={[x, -0.47, -0.56]} rotation={[-0.62, 0, 0]}>
           <cylinderGeometry args={[0.022, 0.022, 0.018, 12]} />
@@ -77,7 +81,7 @@ export default function CockpitInterior() {
       ))}
       <mesh position={[0, -0.48, -0.6]} rotation={[-0.62, 0, 0]}>
         <cylinderGeometry args={[0.05, 0.05, 0.012, 20]} />
-        <meshStandardMaterial color="#c98a3a" emissive="#3a230a" emissiveIntensity={0.4} metalness={0.7} roughness={0.35} />
+        <meshToonMaterial color="#c98a3a" gradientMap={ramp} emissive="#3a230a" emissiveIntensity={0.4} />
       </mesh>
     </group>
   );
