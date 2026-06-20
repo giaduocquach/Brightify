@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, BufferAttribute, DoubleSide, Group, Mesh, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
-import { Outlines } from '@react-three/drei';
 import { useStore } from '../../state/store';
 import { solarRefs } from './refs';
 import { bodyByHex } from './bodies';
 import { glowTexture } from './glow';
-import { toonRamp, OUTLINE } from './toon';
+import { useDeviceTier } from './deviceTier';
+import ShipModel from './ShipModel';
 
 const N_PARTICLES = 64;
 const UP = new Vector3(0, 1, 0);
@@ -21,7 +21,7 @@ const Q = new Quaternion();
 // astronaut, so the craft reads as a believable vehicle rather than dwarfing the planet.
 export default function BoardingSequence() {
   const sel = useStore((s) => s.selectedColors);
-  const ramp = toonRamp();
+  const tier = useDeviceTier();
   const tex = glowTexture();
 
   const saucerRef = useRef<Group>(null);
@@ -31,7 +31,6 @@ export default function BoardingSequence() {
   const posAttr = useRef<BufferAttribute>(null);
   const elapsed = useRef(0);
   const rimLights = useRef<(Mesh | null)[]>([]);
-  const rimAngles = useMemo(() => Array.from({ length: 8 }, (_, i) => i * Math.PI * 2 / 8), []);
 
   const size = bodyByHex(sel[0])?.size ?? 0.5;
   // Astronaut world height ≈ size*0.18; a UFO ~5-6× that reads as a craft (with a floor so
@@ -106,29 +105,10 @@ export default function BoardingSequence() {
 
   return (
     <>
-      {/* UFO saucer — oriented to the radial, spins about its own axis */}
+      {/* the same exploration craft (ShipModel) — oriented to the radial, spins about its own axis */}
       <group ref={saucerRef} scale={saucerScale}>
         <group ref={saucerSpin}>
-          <mesh>
-            <cylinderGeometry args={[0.85, 0.75, 0.18, 48]} />
-            <meshToonMaterial color="#dde3ef" gradientMap={ramp} />
-            <Outlines {...OUTLINE} />
-          </mesh>
-          <mesh position={[0, 0.09, 0]}>
-            <sphereGeometry args={[0.52, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
-            <meshStandardMaterial color="#bfe3ff" transparent opacity={0.65} metalness={0.1} roughness={0.05} depthWrite={false} />
-          </mesh>
-          {rimAngles.map((a, i) => (
-            <mesh key={i} ref={(el) => { rimLights.current[i] = el; }}
-              position={[Math.cos(a) * 0.80, 0, Math.sin(a) * 0.80]}>
-              <sphereGeometry args={[0.045, 10, 10]} />
-              <meshStandardMaterial color="#ffcd00" emissive="#ffcd00" emissiveIntensity={1.8} />
-            </mesh>
-          ))}
-          <mesh position={[0, -0.13, 0]} rotation={[Math.PI, 0, 0]}>
-            <coneGeometry args={[0.22, 0.12, 24]} />
-            <meshToonMaterial color="#c3ccde" gradientMap={ramp} />
-          </mesh>
+          <ShipModel tier={tier} rimLights={rimLights} />
         </group>
         <pointLight position={[0, -0.4, 0]} intensity={1.6} distance={beamH + 3} color="#00eeff" />
       </group>

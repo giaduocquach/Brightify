@@ -57,6 +57,11 @@ export const BODIES: BodyDef[] = [
   { hex: '#222222', name: 'Hố đen',           kind: 'planet',    orbitRadius: 70.0, size: 0.40, spinSpeed: 0.16, orbitSpeed: 0.0020, phase: 0.2, inclination: 0.10, axialTilt: 0.30, eccentricity: 0.05, special: 'blackhole' },
 ];
 
+// Global multiplier on every body's orbital speed. Inner bodies otherwise visibly race around
+// while the camera dwells; 0.6 calms the whole scene while preserving the Kepler-feel ratios
+// (it's a single factor, so per-body relationships are mathematically untouched).
+export const ORBIT_SCALE = 0.6;
+
 export const SUN_SIZE = 2.4;
 export const SUN_TEXTURE = '2k_sun.jpg';
 export const MILKYWAY_TEXTURE = '4k_milkyway_panorama.jpg';
@@ -72,7 +77,7 @@ export function bodyByHex(hex: string): BodyDef | undefined {
 // Position of a body on its (elliptical) orbit at time t — shared by CelestialBody (render)
 // and SurfaceRun's surf handler (comet velocity = finite difference of this). Writes `out`.
 export function orbitPosAt(def: BodyDef, t: number, out: Vector3, parent?: Vector3 | null): Vector3 {
-  const ang = def.phase + t * def.orbitSpeed;
+  const ang = def.phase + t * def.orbitSpeed * ORBIT_SCALE;
   const e = def.eccentricity ?? 0;
   const r = e ? def.orbitRadius * (1 - e * e) / (1 + e * Math.cos(ang)) : def.orbitRadius;
   const cx = parent ? parent.x : 0;

@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useStore } from '../../state/store';
 import { solarRefs } from './refs';
-import { bodyByHex, OUTER_RADIUS, type LocomotionType } from './bodies';
+import { bodyByHex, locomotionFor, OUTER_RADIUS, type LocomotionType } from './bodies';
 
 // Camera Director.
 //   • system / intro / explore → follow-orbit: one OrbitControls owns rotate + zoom; we
@@ -14,14 +14,14 @@ import { bodyByHex, OUTER_RADIUS, type LocomotionType } from './bodies';
 //     third-person behind the ship (showing it off), then dives to the pilot's eye for a
 //     FIRST-PERSON view out of the glass canopy. Drag to look around (clamped, eases back).
 
-const CRUISE_S = 1.5;            // fixed-duration smooth "fly-in" to a planet (cruise feel)
-const FRAMED_EPS = 0.05;
+const CRUISE_S = 1.5;            // base "fly-in" duration to a planet (scaled by travel distance)
 const WORLDUP = new Vector3(0, 1, 0);
 const REVEAL_S = 2.0;            // ship-reveal duration before entering the cockpit
 const LOOK_SENS = 0.0016;        // rad per pixel dragged
 const LOOK_CLAMP = 0.7;          // ±40° head turn inside the canopy
 
 const smooth = (x: number) => x * x * (3 - 2 * x);
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 const isFlight = (m: string) => m === 'journey' || m === 'fly';
 
 // Third-person framing distance per locomotion stance, so each body reads well: surf pulls
@@ -51,8 +51,10 @@ export default function FocusController() {
   const inited = useRef(false);
   const prevMode = useRef<string>('');
   const framing = useRef(false);
-  // cruise fly-in: lerp from a captured start pose to the moving target over CRUISE_S
+  // cruise fly-in: lerp from a captured start pose to the moving target over a distance-scaled
+  // duration (far swoops take longer, near reframes are snappier — both end at zero velocity).
   const frameT = useRef(0);
+  const frameDur = useRef(CRUISE_S);
   const startPos = useRef(new Vector3());
   const startTarget = useRef(new Vector3());
   // idle "breathing" drift — a tiny camera offset, applied AFTER controls.update() and undone
@@ -74,7 +76,15 @@ export default function FocusController() {
   const lookDir = useRef(new Vector3());
   const lookAt = useRef(new Vector3());
   const tp = useRef(new Vector3());
+  const revealPose = useRef(new Vector3());
+  const flightStart = useRef(new Vector3()); // camera pose when flight begins → blend into the reveal
   const prevShip = useRef(new Vector3());
+
+  // Keep the runner stance in sync the instant a body is picked, so the very first explore
+  // framing frame reads the correct per-stance distance (no one-frame distance pop).
+  useEffect(() => {
+    if (sel[0]) { const b = bodyByHex(sel[0]); if (b) solarRefs.runnerStance = locomotionFor(b); }
+  }, [sel]);
 
   // Look-around drag handlers (active only during the cockpit phase; OrbitControls is off).
   useEffect(() => {
@@ -105,6 +115,10 @@ export default function FocusController() {
     const flight = isFlight(mode) && solarRefs.shipActive;
     flightRef.current = flight;
 
+    // Ship mounts one frame after mode flips to journey/fly. Hold the current pose for that frame
+    // instead of kicking off an orbit cruise that would immediately be overridden → avoids a snap.
+    if (isFlight(mode) && !solarRefs.shipActive) return;
+
     // ship speed for warp/flame effects
     solarRefs.shipSpeed = dt > 0 ? prevShip.current.distanceTo(solarRefs.shipPos) / dt : 0;
     prevShip.current.copy(solarRefs.shipPos);
@@ -112,7 +126,10 @@ export default function FocusController() {
     // ── FLIGHT: reveal → first-person cockpit (OrbitControls off) ──
     if (flight) {
       if (controls) controls.enabled = false;
-      if (mode !== prevMode.current) { prevMode.current = mode; flightT.current = 0; yaw.current = 0; pitch.current = 0; }
+      if (mode !== prevMode.current) {
+        prevMode.current = mode; flightT.current = 0; yaw.current = 0; pitch.current = 0;
+        flightStart.current.copy(camera.position); // where we were (orbit/boarding) → ease into the reveal
+      }
       flightT.current += dt;
 
       fwd.current.copy(solarRefs.shipForward).normalize();
@@ -124,7 +141,11 @@ export default function FocusController() {
         // the swooping dive is the strongest vestibular trigger → jump straight to the cockpit)
         const t = smooth(flightT.current / REVEAL_S);
         tp.current.copy(solarRefs.shipPos).addScaledVector(fwd.current, -3.0).addScaledVector(WORLDUP, 1.3);
-        camera.position.lerpVectors(tp.current, eye.current, t);
+        // intended reveal path (third-person → eye); then pull in from the prior camera pose over
+        // the first ~0.5s so entering flight doesn't teleport to the behind-the-ship pose.
+        revealPose.current.lerpVectors(tp.current, eye.current, t);
+        const entry = smooth(Math.min(1, flightT.current / 0.5));
+        camera.position.lerpVectors(flightStart.current, revealPose.current, entry);
         lookAt.current.copy(solarRefs.shipPos).addScaledVector(fwd.current, t * 8);
         camera.up.lerp(WORLDUP, 0.1);
         camera.lookAt(lookAt.current);
@@ -146,7 +167,9 @@ export default function FocusController() {
         lookDir.current.copy(fwd.current)
           .applyAxisAngle(WORLDUP, yaw.current + bYaw)
           .applyAxisAngle(right.current, pitch.current + bPitch);
-        camera.position.lerp(eye.current, Math.min(1, dt * 8));
+        // ease the first-person follow in over ~0.5s after the reveal so it doesn't snap-grab
+        const fpEase = rm ? 1 : smooth(clamp((flightT.current - REVEAL_S) / 0.5, 0, 1));
+        camera.position.lerp(eye.current, Math.min(1, dt * 8 * fpEase));
         camera.up.lerp(WORLDUP, Math.min(1, dt * 8));
         lookAt.current.copy(camera.position).addScaledVector(lookDir.current, 10);
         camera.lookAt(lookAt.current);
@@ -177,13 +200,23 @@ export default function FocusController() {
     if (mode !== prevMode.current) {
       prevMode.current = mode;
       framing.current = true;
-      // Capture the start pose: cruise lerps from here to the (moving) target over CRUISE_S.
+      // Coming back from flight the camera.up may be tilted — level it so the reframe is upright.
+      camera.up.set(0, 1, 0);
+      // Capture the start pose: cruise lerps from here to the (moving) target.
       frameT.current = 0;
       startPos.current.copy(camera.position);
       startTarget.current.copy(controls.target);
       camDir.current.copy(camera.position).sub(focus.current);
       if (camDir.current.lengthSq() < 1e-4) camDir.current.set(0.2, 0.5, 1);
       camDir.current.normalize();
+      // Scale the cruise duration by how far we have to travel (far swoops longer, near snappier).
+      const isExplore0 = mode === 'explore' || mode === 'boarding';
+      const size0 = isExplore0 && sel[0] ? bodyByHex(sel[0])?.size ?? 0.5 : 1;
+      const dist0 = mode === 'boarding' ? size0 * 3 + 2
+        : mode === 'explore' ? framingDistFor(solarRefs.runnerStance, size0)
+        : 40;
+      desired.current.copy(focus.current).addScaledVector(camDir.current, dist0);
+      frameDur.current = CRUISE_S * clamp(startPos.current.distanceTo(desired.current) / 30, 0.6, 2.2);
       if (mode === 'explore' || mode === 'boarding') {
         // Keep wide constraints during the fly-in so controls.update() doesn't clamp the
         // camera to maxDistance from the (still-near-Sun) target before it reaches the planet.
@@ -203,13 +236,14 @@ export default function FocusController() {
         : mode === 'explore' ? framingDistFor(solarRefs.runnerStance, size)
         : 40;
       desired.current.copy(focus.current).addScaledVector(camDir.current, dist);
-      // Time-normalized smoothstep cruise → consistent ~1.5s glide regardless of distance.
+      // Distance-scaled smoothstep cruise (frameDur set at capture). Completes only when the
+      // timer elapses → the handoff to delta-follow happens at the zero-velocity end of the curve.
       // Reduced-motion: e=1 snaps the reframe in one step (no gliding fly-in).
       frameT.current += dt;
-      const e = rm ? 1 : smooth(Math.min(1, frameT.current / CRUISE_S));
+      const e = rm ? 1 : smooth(Math.min(1, frameT.current / frameDur.current));
       camera.position.lerpVectors(startPos.current, desired.current, e);
       controls.target.lerpVectors(startTarget.current, focus.current, e);
-      if (frameT.current >= CRUISE_S || camera.position.distanceTo(desired.current) < FRAMED_EPS) {
+      if (frameT.current >= frameDur.current) {
         framing.current = false;
         if (mode === 'explore' && sel[0]) {
           const s = bodyByHex(sel[0])?.size ?? 0.5;
