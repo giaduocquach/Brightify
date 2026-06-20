@@ -692,7 +692,7 @@ body[data-flight="1"] .hud:focus-within {
   animation: spin 0.7s linear infinite;
   flex-shrink: 0;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* @keyframes spin defined once near the top (Results panel) */
 
 .search-empty {
   padding: 22px 20px;
