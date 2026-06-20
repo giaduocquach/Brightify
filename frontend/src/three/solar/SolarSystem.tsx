@@ -21,6 +21,7 @@ import CockpitInterior from './CockpitInterior';
 import SurfaceRun from './SurfaceRun';
 import BoardingSequence from './BoardingSequence';
 import FreeFlight from './FreeFlight';
+import EnvMap from './EnvMap';
 
 const IS_MOBILE = typeof window !== 'undefined' && window.innerWidth < 768;
 const DPR_MAX = IS_MOBILE ? 1.5 : 2;
@@ -66,9 +67,14 @@ function Nebula() {
       return { puffs, speed: 0.004 * (1 - shell * 0.25) }; // outer shells drift slower → parallax
     });
   }, []);
-  useFrame((_, dt) => {
+  useFrame((state, dt) => {
     if (solarRefs.reducedMotion) return;
-    layers.current.forEach((g, i) => { if (g) g.rotation.y += dt * shells[i].speed; });
+    const tt = state.clock.elapsedTime;
+    layers.current.forEach((g, i) => {
+      if (!g) return;
+      g.rotation.y += dt * shells[i].speed;
+      g.position.y = Math.sin(tt * 0.02 + i) * 2; // slow vertical parallax breathing
+    });
   });
   return (
     <>
@@ -194,7 +200,7 @@ function LensingPass() {
     const uy = v.y * 0.5 + 0.5;
     const onScreen = v.z < 1 && ux > -0.3 && ux < 1.3 && uy > -0.3 && uy < 1.3;
     const dist = camera.position.distanceTo(pos);
-    const worldR = hole.size * 3.0;                       // covers the accretion disk extent
+    const worldR = hole.size * 3.2;                       // covers the accretion disk extent (matches uOuter)
     const fov = (camera.fov * Math.PI) / 180;
     const screenR = worldR / dist / (2 * Math.tan(fov / 2)); // apparent radius in UV-Y units
     const strength = onScreen ? 1 - smoothstep01(60, 170, dist) : 0;
@@ -220,6 +226,7 @@ function Scene() {
       <color attach="background" args={['#05050B']} />
       <Suspense fallback={null}>
         <MilkyWay />
+        <EnvMap />
       </Suspense>
       <Nebula />
       {!flight && <Stars radius={180} depth={80} count={STAR_COUNT} factor={4} saturation={0} fade speed={reducedMotion ? 0 : 0.5} />}

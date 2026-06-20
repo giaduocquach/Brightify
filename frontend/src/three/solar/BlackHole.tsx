@@ -32,9 +32,10 @@ function InfallParticles({ size }: { size: number }) {
     const t = state.clock.elapsedTime;
     const horizon = size * 0.9;
     for (let i = 0; i < N; i++) {
-      const p = (t * 0.12 * (0.5 + seed[i]) + seed[i]) % 1; // 0=outer → 1=horizon
-      const radius = horizon + (radius0[i] - horizon) * (1 - p);
-      const ang = angle0[i] + p * Math.PI * 2 * 3;          // 3 turns as it falls in
+      const p = (t * 0.08 * (0.5 + seed[i]) + seed[i]) % 1; // 0=outer → 1=horizon
+      const pAcc = p * p;                                    // accelerate inward (gravity): linger far, whip in near the horizon
+      const radius = horizon + (radius0[i] - horizon) * (1 - pAcc);
+      const ang = angle0[i] + pAcc * Math.PI * 2 * 4;        // 4 turns, faster near the horizon
       positions[i * 3] = Math.cos(ang) * radius;
       positions[i * 3 + 1] = Math.sin(ang) * radius;
       positions[i * 3 + 2] = (seed[i] - 0.5) * size * 0.25; // thin disk jitter
@@ -67,12 +68,12 @@ export default function BlackHole({ def, selected }: { def: BodyDef; selected: b
     uTime: { value: 0 },
     uInner: { value: def.size * 1.25 },
     uOuter: { value: def.size * 3.2 },
-    uInnerSpeed: { value: 0.9 },
-    uOuterSpeed: { value: 0.22 },
-    uDoppler: { value: 0.55 },
+    uInnerSpeed: { value: 0.6 },
+    uOuterSpeed: { value: 0.14 },
+    uDoppler: { value: 0.8 },
     uDopplerDir: { value: 0.6 },
     uSelected: { value: 0 },
-    uColHot: { value: new Color('#cfe0ff') },
+    uColHot: { value: new Color('#dfeaff') },
     uColMid: { value: new Color('#ff9a3c') },
     uColOuter: { value: new Color('#b3260f') },
   }), [def.size]);
@@ -84,7 +85,7 @@ export default function BlackHole({ def, selected }: { def: BodyDef; selected: b
     fragmentShader: ATMO_FRAG,
     uniforms: {
       uColor: { value: new Color('#fff0d0') },
-      uIntensity: { value: 0.6 },
+      uIntensity: { value: 0.4 }, // softer — the screen-space lensing now owns the bright photon ring
       uPower: { value: 5.0 },
     },
     transparent: true,

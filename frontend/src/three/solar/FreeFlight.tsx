@@ -16,9 +16,9 @@ export default function FreeFlight() {
   useFrame((state) => {
     if (!solarRefs.reducedMotion) frozenT.current = state.clock.elapsedTime;
     const t = solarRefs.reducedMotion ? frozenT.current : state.clock.elapsedTime;
-    a.current.set(Math.sin(t * 0.13) * R, Math.sin(t * 0.19) * R * 0.4, Math.cos(t * 0.11) * R);
+    a.current.set(Math.sin(t * 0.09) * R, Math.sin(t * 0.13) * R * 0.4, Math.cos(t * 0.075) * R);
     const t2 = t + 0.06;
-    b.current.set(Math.sin(t2 * 0.13) * R, Math.sin(t2 * 0.19) * R * 0.4, Math.cos(t2 * 0.11) * R);
+    b.current.set(Math.sin(t2 * 0.09) * R, Math.sin(t2 * 0.13) * R * 0.4, Math.cos(t2 * 0.075) * R);
     solarRefs.shipPos.copy(a.current);
     solarRefs.shipForward.copy(b.current).sub(a.current).normalize();
     if (solarRefs.shipForward.lengthSq() < 1e-4) solarRefs.shipForward.set(0, 0, 1);

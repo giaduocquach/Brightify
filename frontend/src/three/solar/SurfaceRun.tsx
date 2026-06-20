@@ -77,19 +77,19 @@ export default function SurfaceRun() {
 
     switch (stance) {
       case 'hop': {
-        wanderTangent(t, 0.6); // slower wander
-        const air = Math.pow(Math.abs(Math.sin(t * 3.0)), 0.6); // low-gravity hang-time
+        wanderTangent(t, 0.45); // slower wander
+        const air = Math.pow(Math.abs(Math.sin(t * 2.0)), 0.6); // low-gravity hang-time (longer)
         solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * (1.03 + air * 0.6));
         break;
       }
       case 'float': {
-        wanderTangent(t, 0.3); // drift slowly above the cloud tops
+        wanderTangent(t, 0.22); // drift slowly above the cloud tops
         const bob = Math.sin(t * 0.8) * 0.03;
         solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * (1.18 + bob));
         break;
       }
       case 'ringwalk': {
-        const ang = t * 0.25;
+        const ang = t * 0.16;
         const radius = size * (1.45 + 0.35 * (0.5 + 0.5 * Math.sin(t * 0.2))); // drift within the ring band
         a.current.copy(ring.u).multiplyScalar(Math.cos(ang) * radius);
         b.current.copy(ring.v).multiplyScalar(Math.sin(ang) * radius);
@@ -111,7 +111,7 @@ export default function SurfaceRun() {
         break;
       }
       case 'sink': {
-        const LOOP = 9, TURNS = 3;
+        const LOOP = 14, TURNS = 4; // a longer, inexorable spiral-in (also hides the respawn)
         const u = (t % LOOP) / LOOP; // 0=outer → 1=horizon, then respawns
         solarRefs.runnerSink = u;
         const radius = size * 4 * (1 - u);

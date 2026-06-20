@@ -116,10 +116,12 @@ void main(){
   float fil = clamp(0.5 + 0.6 * n, 0.0, 1.0);
   vec3 col = rn < 0.5 ? mix(uColHot, uColMid, rn * 2.0)
                       : mix(uColMid, uColOuter, (rn - 0.5) * 2.0);
-  float dop = 1.0 + uDoppler * cos(theta - uDopplerDir);         // one limb brighter
-  float hot = mix(1.9, 0.6, rn);                                 // inner edge blooms
+  // relativistic beaming: stronger on the faster (inner) approaching limb, non-linear boost
+  float dopBase = max(0.0, 1.0 + uDoppler * (0.4 + 0.9 * (1.0 - rn)) * cos(theta - uDopplerDir));
+  float dop = pow(dopBase, 1.6);
+  float hot = mix(3.0, 0.5, smoothstep(0.0, 0.35, rn));          // thin white-hot inner edge
   float bright = fil * dop * hot * (1.0 + uSelected * 0.4);
-  float edge = smoothstep(0.0, 0.07, rn) * (1.0 - smoothstep(0.8, 1.0, rn));
+  float edge = smoothstep(0.0, 0.03, rn) * (1.0 - smoothstep(0.8, 1.0, rn)); // crisp inner rim
   float a = edge * (0.35 + 0.65 * fil);
   gl_FragColor = vec4(col * bright, a);
 }`;
@@ -141,8 +143,8 @@ void mainUv(inout vec2 uv){
   float dist = length(d);
   float R = uLensRadius;
   float bend = uStrength * R / max(dist, R * 0.35);  // ∝ 1/dist deflection
-  bend *= 1.0 - smoothstep(R * 3.0, R * 5.0, dist);  // taper to 0 far out
-  uv -= (d / max(dist, 1e-4) / asp) * bend * 0.06;   // pull background inward around the hole
+  bend *= 1.0 - smoothstep(R * 3.5, R * 6.0, dist);  // taper to 0 far out (reaches a bit further)
+  uv -= (d / max(dist, 1e-4) / asp) * bend * 0.075;  // pull background inward around the hole
 }
 void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor){
   if (uStrength < 0.001) { outputColor = inputColor; return; }
@@ -151,8 +153,9 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
   float dist = length(d);
   float R = uLensRadius;
   float shadow = smoothstep(R * 0.62, R * 0.42, dist);          // dark void at the core
-  float ring = exp(-pow((dist - R * 0.85) / (R * 0.10), 2.0));  // thin Einstein ring
-  vec3 ringCol = vec3(1.0, 0.92, 0.78) * ring * uStrength * 1.4;
+  float ring = exp(-pow((dist - R * 0.85) / (R * 0.06), 2.0));  // thin bright Einstein ring
+  float ring2 = exp(-pow((dist - R * 0.78) / (R * 0.05), 2.0)); // faint 2nd-order photon ring
+  vec3 ringCol = vec3(1.0, 0.92, 0.78) * (ring * 1.8 + ring2 * 0.5) * uStrength;
   vec3 col = mix(inputColor.rgb, vec3(0.0), shadow) + ringCol;
   outputColor = vec4(col, inputColor.a);
 }`;
@@ -164,15 +167,17 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
 export const COMET_TAIL_VERT = /* glsl */ `
 attribute float aSeed;
 attribute float aLength01;
-uniform float uTime, uLen, uSpeed, uWidth, uCurve, uSize, uPixelRatio;
+uniform float uTime, uLen, uSpeed, uWidth, uCurve, uSize, uPixelRatio, uFan;
 varying float vAge;
 void main(){
   float t = fract(aLength01 + uTime * uSpeed * (0.6 + aSeed * 0.8)); // 0=head → 1=tip
   float ang = aSeed * 6.2831853;
   float wob = sin(aSeed * 12.0 + t * 9.0 + uTime * 1.5) * uWidth * 0.4 * t;
+  // dust fans out with age (uFan>0); ion stays tight (uFan=0)
+  float spread = uWidth * (0.15 + t) * (1.0 + aSeed * uFan * t);
   vec3 pos;
-  pos.x = cos(ang) * uWidth * (0.15 + t) + wob + uCurve * t * t * uLen;
-  pos.z = sin(ang) * uWidth * (0.15 + t);
+  pos.x = cos(ang) * spread + wob + uCurve * t * t * uLen;
+  pos.z = sin(ang) * spread;
   pos.y = t * uLen;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -183,12 +188,14 @@ void main(){
 export const COMET_TAIL_FRAG = /* glsl */ `
 uniform sampler2D uTex;
 uniform vec3 uColNear, uColFar;
-uniform float uOpacity;
+uniform float uOpacity, uKnots, uTime;
 varying float vAge;
 void main(){
   float a = texture2D(uTex, gl_PointCoord).a;
   vec3 col = mix(uColNear, uColFar, vAge);
-  gl_FragColor = vec4(col, a * (1.0 - vAge) * uOpacity);
+  // ion plasma "knots"/streaming brightness along the tail (uKnots=0 for dust)
+  float knot = 1.0 + uKnots * sin(vAge * 30.0 - uTime * 4.0);
+  gl_FragColor = vec4(col * knot, a * (1.0 - vAge) * uOpacity);
 }`;
 
 // Subtle gas-giant detail shell for Uranus/Neptune — a thin additive sphere over the textured

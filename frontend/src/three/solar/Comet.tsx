@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
-  AdditiveBlending, BufferAttribute, BufferGeometry, Color, Group, IcosahedronGeometry,
+  AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, Group, IcosahedronGeometry,
   Quaternion, type ShaderMaterial, type Sprite, Vector3,
 } from 'three';
 import type { BodyDef } from './bodies';
@@ -12,16 +12,18 @@ import { COMET_TAIL_VERT, COMET_TAIL_FRAG } from '../shaders';
 
 const UP = new Vector3(0, 1, 0);
 const RAD = new Vector3();
+const SUNWARD = new Vector3();
 const Q = new Quaternion();
 
 interface TailProps {
   count: number; len: number; speed: number; width: number; curve: number;
   size: number; colNear: string; colFar: string; opacity: number;
+  fan?: number; knots?: number;
 }
 
 // One particle tail (THREE.Points), animated entirely in the vertex shader from per-particle
 // seeds + uTime. Lives inside the parent `tail` group whose quaternion aims +Y anti-sunward.
-function TailCloud({ count, len, speed, width, curve, size, colNear, colFar, opacity }: TailProps) {
+function TailCloud({ count, len, speed, width, curve, size, colNear, colFar, opacity, fan = 0, knots = 0 }: TailProps) {
   const tex = glowTexture();
   const gl = useThree((s) => s.gl);
   const matRef = useRef<ShaderMaterial>(null);
@@ -44,10 +46,10 @@ function TailCloud({ count, len, speed, width, curve, size, colNear, colFar, opa
   const uniforms = useMemo(() => ({
     uTime: { value: 0 }, uLen: { value: len }, uSpeed: { value: speed },
     uWidth: { value: width }, uCurve: { value: curve }, uSize: { value: size },
-    uPixelRatio: { value: gl.getPixelRatio() },
+    uPixelRatio: { value: gl.getPixelRatio() }, uFan: { value: fan }, uKnots: { value: knots },
     uTex: { value: tex }, uColNear: { value: new Color(colNear) },
     uColFar: { value: new Color(colFar) }, uOpacity: { value: opacity },
-  }), [len, speed, width, curve, size, gl, tex, colNear, colFar, opacity]);
+  }), [len, speed, width, curve, size, gl, tex, colNear, colFar, opacity, fan, knots]);
 
   useFrame((state) => { if (matRef.current && !solarRefs.reducedMotion) matRef.current.uniforms.uTime.value = state.clock.elapsedTime; });
 
@@ -69,8 +71,12 @@ export default function Comet({ def, selected }: { def: BodyDef; selected: boole
   const tier = useDeviceTier();
   const tail = useRef<Group>(null);
   const coma = useRef<Sprite>(null);
-  const dustLen = def.size * 9;
-  const ionLen = def.size * 13;
+  const coma2 = useRef<Sprite>(null);
+  const nucleusSpin = useRef<Group>(null);
+  const jets = useRef<Group>(null);
+  const frozenT = useRef(0);
+  const dustLen = def.size * 8;   // shorter, broader, curved
+  const ionLen = def.size * 16;   // longer, straighter — clearly out-runs the dust
   const dustN = tier === 'high' ? 900 : 360;
   const ionN = tier === 'high' ? 600 : 240;
 
@@ -97,40 +103,71 @@ export default function Comet({ def, selected }: { def: BodyDef; selected: boole
   useFrame((state) => {
     const pos = solarRefs.bodyPos[def.hex];
     if (!pos) return;
+    const rm = solarRefs.reducedMotion;
+    if (!rm) frozenT.current = state.clock.elapsedTime;
+    const t = rm ? frozenT.current : state.clock.elapsedTime;
     RAD.copy(pos);
     if (RAD.lengthSq() < 1e-6) RAD.set(0, 0, 1);
     RAD.normalize();
+    SUNWARD.copy(RAD).negate(); // toward the Sun at the origin
     if (tail.current) {
-      Q.setFromUnitVectors(UP, RAD); // tails built along +Y → rotate +Y onto the radial
+      Q.setFromUnitVectors(UP, RAD); // tails built along +Y → rotate +Y onto the radial (anti-sunward)
       tail.current.quaternion.copy(Q);
     }
+    if (jets.current) {
+      Q.setFromUnitVectors(UP, SUNWARD); // outgassing jets face the Sun
+      jets.current.quaternion.copy(Q);
+    }
+    if (nucleusSpin.current) nucleusSpin.current.rotation.y = t * 0.4; // slow tumble (rm-frozen)
+    const sel0 = selected ? 0.35 : 0;
+    // two-component coma: tight green inner + diffuse white halo, breathing OUT OF PHASE so it
+    // billows rather than scaling uniformly; both nudged slightly sunward (denser sunward side).
     if (coma.current) {
-      const breathe = solarRefs.reducedMotion ? 0 : Math.sin(state.clock.elapsedTime * 2) * 0.08;
-      const pulse = 1 + breathe + (selected ? 0.35 : 0);
-      coma.current.scale.setScalar(def.size * 3.2 * pulse);
+      coma.current.scale.setScalar(def.size * 2.0 * (1 + (rm ? 0 : Math.sin(t * 1.0) * 0.08) + sel0));
+      coma.current.position.copy(SUNWARD).multiplyScalar(def.size * 0.3);
+    }
+    if (coma2.current) {
+      coma2.current.scale.setScalar(def.size * 4.5 * (1 + (rm ? 0 : Math.sin(t * 1.0 + 1.6) * 0.06) + sel0 * 0.6));
+      coma2.current.position.copy(SUNWARD).multiplyScalar(def.size * 0.2);
     }
   });
 
   return (
     <group>
-      {/* dark cratered rock-ice nucleus — lit by the Sun, no self-glow (was "plastic") */}
-      <mesh geometry={nucleusGeo}>
-        <meshStandardMaterial color="#2b2622" roughness={1} metalness={0} bumpMap={bump} bumpScale={0.02} flatShading />
-      </mesh>
+      {/* dark cratered rock-ice nucleus — lit by the Sun, slow tumble on a tilted axis */}
+      <group rotation={[0.35, 0, 0.18]}>
+        <group ref={nucleusSpin}>
+          <mesh geometry={nucleusGeo}>
+            <meshStandardMaterial color="#2b2622" roughness={1} metalness={0} bumpMap={bump} bumpScale={0.02} flatShading />
+          </mesh>
+        </group>
+      </group>
 
-      {/* green coma (C₂ fluorescence) — soft, gaseous, head-only */}
+      {/* green coma (C₂ fluorescence): tight inner + diffuse outer halo */}
       <sprite ref={coma}>
         <spriteMaterial map={tex} color="#27e8a0" transparent opacity={0.55} blending={AdditiveBlending} depthWrite={false} />
       </sprite>
-      <sprite scale={def.size * 1.8}>
-        <spriteMaterial map={tex} color="#d8fff0" transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
+      <sprite ref={coma2}>
+        <spriteMaterial map={tex} color="#d8fff0" transparent opacity={0.22} blending={AdditiveBlending} depthWrite={false} />
       </sprite>
 
-      {/* particle tails — anti-sunward (group +Y → radial); NEVER green */}
+      {/* sunward outgassing jets (high tier) — narrow additive plumes from active regions */}
+      {tier === 'high' && (
+        <group ref={jets}>
+          {[[-0.13, 0.09], [0.11, -0.07], [0.02, 0.14]].map(([x, z], i) => (
+            <mesh key={i} position={[x * def.size, def.size * 0.5, z * def.size]} rotation={[Math.PI, 0, 0]}>
+              <coneGeometry args={[def.size * 0.16, def.size * 1.1, 12, 1, true]} />
+              <meshBasicMaterial color="#9affd0" transparent opacity={0.16} blending={AdditiveBlending} depthWrite={false} side={DoubleSide} />
+            </mesh>
+          ))}
+        </group>
+      )}
+
+      {/* particle tails — anti-sunward (group +Y → radial); dust fans + curves, ion streams straight */}
       <group ref={tail}>
-        <TailCloud count={dustN} len={dustLen} speed={0.16} width={def.size * 1.6} curve={0.18}
+        <TailCloud count={dustN} len={dustLen} speed={0.10} width={def.size * 1.6} curve={0.18} fan={1.5}
           size={def.size * 70} colNear="#fff2d8" colFar="#ffcf7a" opacity={0.5} />
-        <TailCloud count={ionN} len={ionLen} speed={0.26} width={def.size * 0.35} curve={0}
+        <TailCloud count={ionN} len={ionLen} speed={0.20} width={def.size * 0.35} curve={0} knots={0.35}
           size={def.size * 42} colNear="#cfe6ff" colFar="#5f96ff" opacity={0.45} />
       </group>
     </group>
