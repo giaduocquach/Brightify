@@ -387,13 +387,16 @@ async def smart_search(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=50),
 ):
-    """Multi-tier smart search: (1) name/artist/album, (2) lyrics substring, (3) semantic e5.
+    """Intent-aware smart search ordered in priority blocks (not blended).
 
-    Tiers 1 & 2 are diacritics-insensitive (toneless Vietnamese matches). Tier 3 (e5)
-    handles paraphrase/meaning and is naturally accent-robust.
+    Detects what the query is and orders the blocks accordingly:
+      • artist name   → artist · title · lyrics · gần nghĩa
+      • title/lyrics  → title · lyrics · artist · gần nghĩa
+      • nothing literal → typo-recovery (if any) · gần nghĩa first
+    Literal tiers are diacritics-insensitive; semantics (e5) is accent/paraphrase
+    robust and only leads when nothing matched literally.
     """
     import numpy as np
-    from core.retrieval import reciprocal_rank_fusion
     from core.search_encoder import get_search_encoder
 
     df = _recommender.df
@@ -412,109 +415,100 @@ async def smart_search(
     if cached is not None:
         return cached
 
-    # ── Tier 1: metadata substring match (accent-insensitive) ─────────────
-    t1_score = np.zeros(n, dtype=np.float32)
-    if sidx.get('name') is not None:
-        t1_score[sidx['name'].str.contains(qnorm, na=False, regex=False).values] += 1.0
-    if sidx.get('artist') is not None:
-        t1_score[sidx['artist'].str.contains(qnorm, na=False, regex=False).values] += 0.8
-    if sidx.get('album') is not None:
-        t1_score[sidx['album'].str.contains(qnorm, na=False, regex=False).values] += 0.5
+    def _mask(series):
+        return series.str.contains(qnorm, na=False, regex=False).values \
+            if series is not None else np.zeros(n, dtype=bool)
 
-    # ── Tier 2: lyrics substring match (accent-insensitive) ───────────────
-    t2_score = np.zeros(n, dtype=np.float32)
-    snippets: dict[int, str] = {}
+    # ── Literal matches, by field (accent-insensitive) ────────────────────
+    name_s, artist_s, album_s = sidx.get('name'), sidx.get('artist'), sidx.get('album')
+    m_artist = _mask(artist_s)
+    m_title = _mask(name_s) | _mask(album_s)   # album folded into title (mostly singles)
+    m_lyrics = _mask(sidx.get('lyrics'))
     lyrics_col = sidx.get('lyrics_col')
-    if sidx.get('lyrics') is not None:
-        mask_lyr = sidx['lyrics'].str.contains(qnorm, na=False, regex=False)
-        for raw_idx in np.where(mask_lyr.values)[0]:
-            t2_score[raw_idx] = 1.0
-            snip = _extract_lyric_snippet(str(df.iloc[raw_idx][lyrics_col]), qnorm)
-            if snip:
-                snippets[int(raw_idx)] = snip
+    literal_any = bool(m_artist.any() or m_title.any() or m_lyrics.any())
 
-    # ── Tier 3: semantic embedding cosine ─────────────────────────────────
+    # Exact-equality boost + popularity → relevant, well-known songs lead each block.
+    eq_name = (name_s.values == qnorm) if name_s is not None else np.zeros(n, dtype=bool)
+    eq_artist = (artist_s.values == qnorm) if artist_s is not None else np.zeros(n, dtype=bool)
+    pop = (pd.to_numeric(df['view_count'], errors='coerce').fillna(0).values
+           if 'view_count' in df.columns else np.zeros(n))
+
+    def _ordered(positions, eq=None):
+        return sorted(positions, key=lambda i: (0 if (eq is not None and eq[i]) else 1, -float(pop[i])))
+
+    # ── Intent: is the query (essentially) an artist name? ────────────────
+    artist_intent = False
+    for a in (sidx.get('artist_unique') or []):
+        if not a:
+            continue
+        if qnorm == a or (qnorm in a and len(qnorm) >= 0.6 * len(a)) or (a in qnorm and len(a) >= 4):
+            artist_intent = True
+            break
+
+    # ── Semantic (gần nghĩa) — cosine over e5 embeddings ──────────────────
     t3_list: list[int] = []
     if semantic_available:
         query_vec = encoder.encode_query(query)
         if query_vec is not None:
             t3_list = [idx for idx, _ in _recommender.semantic_search(query_vec, top_k=50)]
 
-    # ── Tier 4 (fallback): fuzzy typo recovery ────────────────────────────
-    # Conservative — fires ONLY when literal matching found nothing, so a good
-    # query is never polluted. partial_ratio + high cutoffs recover misspelled
-    # artist names ("son tunh" → Sơn Tùng) and titles ("lac troii" → Lạc Trôi);
-    # semantics can't fix proper-noun typos.
-    fuzzy_set: set[int] = set()
-    fuzzy_list: list[int] = []
-    exact_hits = int((t1_score > 0).sum() + (t2_score > 0).sum())
-    if exact_hits == 0 and len(qnorm) >= 4:
+    # ── Typo recovery — only when nothing matched literally ───────────────
+    fuzzy_artist_rows: list[int] = []
+    fuzzy_title_rows: list[int] = []
+    if not literal_any and len(qnorm) >= 4:
         try:
             from rapidfuzz import fuzz, process
-            # Artist typo → return the single closest artist's songs.
             au = sidx.get('artist_unique')
             if au:
                 hit = process.extractOne(qnorm, au, scorer=fuzz.partial_ratio, score_cutoff=88)
                 if hit:
-                    fuzzy_list = sidx['artist_to_rows'].get(hit[0], [])[:limit]
-            # Title typo → closest song titles. token_sort_ratio is symmetric and
-            # length-normalized, so a 1-char title ("O") can't false-match a long query
-            # the way partial_ratio does.
+                    fuzzy_artist_rows = _ordered(sidx['artist_to_rows'].get(hit[0], []))[:limit]
             nl = sidx.get('name_list')
             if nl:
+                seen_f = set(fuzzy_artist_rows)
                 for _, _, i in process.extract(qnorm, nl, scorer=fuzz.token_sort_ratio,
                                                limit=limit, score_cutoff=82):
-                    if i not in fuzzy_list:
-                        fuzzy_list.append(i)
-            fuzzy_set = set(fuzzy_list)
+                    if i not in seen_f:
+                        fuzzy_title_rows.append(i)
         except ImportError:
-            pass  # rapidfuzz absent → degrade to exact + semantic only
+            pass  # rapidfuzz absent → exact + semantic only
 
-    # ── Build rank lists (only non-empty matches) ─────────────────────────
-    rank_lists: list[list[int]] = []
-    weights: list[float] = []
+    # ── Assemble in priority blocks ───────────────────────────────────────
+    blocks = {
+        'artist': _ordered(np.where(m_artist)[0].tolist(), eq_artist),
+        'title': _ordered(np.where(m_title)[0].tolist(), eq_name),
+        'lyrics': _ordered(np.where(m_lyrics)[0].tolist()),
+        'semantic': t3_list,                 # cosine order
+        'fuzzy_artist': fuzzy_artist_rows,
+        'fuzzy_title': fuzzy_title_rows,
+    }
+    if literal_any:
+        order = (['artist', 'title', 'lyrics', 'semantic'] if artist_intent
+                 else ['title', 'lyrics', 'artist', 'semantic'])
+    else:
+        # Typo recovery is misspelled artist/title intent → it leads; else pure gần nghĩa.
+        order = ['fuzzy_artist', 'fuzzy_title', 'semantic']
 
-    t1_idx = np.where(t1_score > 0)[0]
-    if len(t1_idx):
-        rank_lists.append(t1_idx[np.argsort(-t1_score[t1_idx])].tolist())
-        weights.append(1.0)
+    MATCH_TYPE = {'artist': 'artist', 'title': 'name', 'lyrics': 'lyrics',
+                  'semantic': 'vibe', 'fuzzy_artist': 'artist', 'fuzzy_title': 'name'}
 
-    t2_idx = np.where(t2_score > 0)[0]
-    if len(t2_idx):
-        rank_lists.append(t2_idx[np.argsort(-t2_score[t2_idx])].tolist())
-        weights.append(1.0)
-
-    if t3_list:
-        rank_lists.append(t3_list)
-        weights.append(0.7)
-
-    if fuzzy_list:
-        rank_lists.append(fuzzy_list)
-        weights.append(0.5)  # lowest: approximate name match, a fallback only
-
-    if not rank_lists:
-        response = {"success": True, "results": [], "query": q, "total": 0,
-                    "semantic_available": semantic_available}
-        await cache_set(cache_key, response, ttl=180)
-        return response
-
-    fused = reciprocal_rank_fusion(rank_lists, k=60, weights=weights, top_n=limit)
-
-    # ── Build response ────────────────────────────────────────────────────
-    results = []
-    for idx in fused:
-        row = df.iloc[idx]
-        song = _song_to_dict(row, idx)
-        if t1_score[idx] > 0:
-            song['match_type'] = 'name'
-        elif t2_score[idx] > 0:
-            song['match_type'] = 'lyrics'
-        elif idx in fuzzy_set:
-            song['match_type'] = 'name'  # approximate name/artist match
-        else:
-            song['match_type'] = 'vibe'
-        song['lyric_snippet'] = snippets.get(idx)
-        results.append(song)
+    results, seen = [], set()
+    for cat in order:
+        for idx in blocks[cat]:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            song = _song_to_dict(df.iloc[idx], idx)
+            song['match_type'] = MATCH_TYPE[cat]
+            song['lyric_snippet'] = (
+                _extract_lyric_snippet(str(df.iloc[idx][lyrics_col]), qnorm)
+                if cat == 'lyrics' and lyrics_col else None
+            )
+            results.append(song)
+            if len(results) >= limit:
+                break
+        if len(results) >= limit:
+            break
 
     response = {"success": True, "results": results, "query": q, "total": len(results),
                 "semantic_available": semantic_available}

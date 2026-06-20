@@ -75,7 +75,7 @@ interface RawSong {
 }
 
 export interface SearchResult extends Song {
-  match_type: 'name' | 'lyrics' | 'vibe';
+  match_type: 'artist' | 'name' | 'lyrics' | 'vibe';
   lyric_snippet: string | null;
 }
 
