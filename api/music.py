@@ -1,6 +1,7 @@
 """Music browse, search, and audio streaming API routes."""
 
 import logging
+import unicodedata
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -26,6 +27,35 @@ _artist_data = {}  # artist_id → {name, image_url, genres, ...}
 _mp3_cache = set()       # cached set of existing mp3 filenames
 _albumart_cache = set()  # cached set of existing album art filenames
 _artistimg_cache = set() # cached set of existing artist image filenames
+# Diacritics-stripped, lowercased search columns (positional to _recommender.df),
+# so toneless Vietnamese queries ("son tung", "anh nho em") still match. Built in init().
+_search_index = None  # {'name','artist','album','lyrics','lyrics_col'} or None
+
+
+def _strip_diacritics(text: str) -> str:
+    """Lowercase + remove Vietnamese tone/diacritic marks (đ→d) for accent-insensitive match."""
+    text = text.replace('đ', 'd').replace('Đ', 'D')
+    decomposed = unicodedata.normalize('NFD', text)
+    return ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn').lower()
+
+
+def _build_search_index(df: pd.DataFrame) -> None:
+    """Precompute normalized name/artist/album/lyrics columns once at startup."""
+    global _search_index
+    artist_col = next((c for c in ['primary_artist', 'artist_name', 'artist'] if c in df.columns), None)
+    lyrics_col = next((c for c in ['lyrics_cleaned', 'plain_lyrics'] if c in df.columns), None)
+    idx = {
+        'name': df['track_name'].fillna('').astype(str).map(_strip_diacritics),
+        'artist': df[artist_col].fillna('').astype(str).map(_strip_diacritics) if artist_col else None,
+        'album': df['album_name'].fillna('').astype(str).map(_strip_diacritics) if 'album_name' in df.columns else None,
+        'lyrics': df[lyrics_col].fillna('').astype(str).map(_strip_diacritics) if lyrics_col else None,
+        'lyrics_col': lyrics_col,
+    }
+    _search_index = idx
+    logger.info("Search index built (diacritics-insensitive): name+%s+%s+%s",
+                'artist' if idx['artist'] is not None else '-',
+                'album' if idx['album'] is not None else '-',
+                lyrics_col or 'no-lyrics')
 
 
 def init(recommender, music_path: Path, artist_images_path: Path = None):
@@ -34,6 +64,7 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
     _recommender = recommender
     _music_path = music_path
     _artist_images_path = artist_images_path
+    _build_search_index(recommender.df)
 
     # Build the set of track_ids that have audio. This drives has_audio (and the
     # status endpoints), which the frontend uses to enable play buttons.
@@ -311,15 +342,28 @@ async def search_songs(q: str = Query(..., min_length=1), limit: int = Query(def
     return {"success": True, "songs": songs, "query": q, "total": len(songs)}
 
 
-def _extract_lyric_snippet(lyrics: str, query: str, max_len: int = 100) -> Optional[str]:
-    """Return the first lyric line containing the query string (≤ max_len chars)."""
-    ql = query.lower()
+def _extract_lyric_snippet(lyrics: str, qnorm: str, window: int = 90) -> Optional[str]:
+    """Snippet of lyrics centered on the (accent-insensitive) match.
+
+    lyrics_cleaned is often a single line (no \\n), so a line-split snippet would
+    just return the song's opening. Instead, locate the match in the normalized
+    text and slice the same span from the original — _strip_diacritics is
+    length-preserving for Latin/Vietnamese, so indices align (guarded + fallback).
+    """
+    norm = _strip_diacritics(lyrics)
+    pos = norm.find(qnorm)
+    if pos < 0:
+        return None
+    if len(norm) == len(lyrics):
+        start = max(0, pos - 25)
+        end = min(len(lyrics), pos + len(qnorm) + window)
+        snippet = lyrics[start:end].strip()
+        return f"{'…' if start > 0 else ''}{snippet}{'…' if end < len(lyrics) else ''}"
+    # Rare non-1:1 normalization → fall back to first matching line.
     for line in lyrics.split('\n'):
         stripped = line.strip()
-        if len(stripped) < 5:
-            continue
-        if ql in stripped.lower():
-            return stripped[:max_len]
+        if len(stripped) >= 5 and qnorm in _strip_diacritics(stripped):
+            return stripped[:window + 30]
     return None
 
 
@@ -328,35 +372,39 @@ async def smart_search(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=50),
 ):
-    """Multi-tier smart search: (1) name/artist/album, (2) lyrics substring, (3) semantic e5."""
+    """Multi-tier smart search: (1) name/artist/album, (2) lyrics substring, (3) semantic e5.
+
+    Tiers 1 & 2 are diacritics-insensitive (toneless Vietnamese matches). Tier 3 (e5)
+    handles paraphrase/meaning and is naturally accent-robust.
+    """
     import numpy as np
     from core.retrieval import reciprocal_rank_fusion
     from core.search_encoder import get_search_encoder
 
     df = _recommender.df
     query = q.strip()
-    ql = query.lower()
+    qnorm = _strip_diacritics(query)
     n = len(df)
+    sidx = _search_index or {}
 
-    # ── Tier 1: metadata substring match ──────────────────────────────────
+    # ── Tier 1: metadata substring match (accent-insensitive) ─────────────
     t1_score = np.zeros(n, dtype=np.float32)
-    mask_name = df['track_name'].str.lower().str.contains(ql, na=False, regex=False)
-    t1_score[mask_name.values] += 1.0
-    artist_col = next((c for c in ['primary_artist', 'artist_name', 'artist'] if c in df.columns), None)
-    if artist_col:
-        t1_score[df[artist_col].str.lower().str.contains(ql, na=False, regex=False).values] += 0.8
-    if 'album_name' in df.columns:
-        t1_score[df['album_name'].str.lower().str.contains(ql, na=False, regex=False).values] += 0.5
+    if sidx.get('name') is not None:
+        t1_score[sidx['name'].str.contains(qnorm, na=False, regex=False).values] += 1.0
+    if sidx.get('artist') is not None:
+        t1_score[sidx['artist'].str.contains(qnorm, na=False, regex=False).values] += 0.8
+    if sidx.get('album') is not None:
+        t1_score[sidx['album'].str.contains(qnorm, na=False, regex=False).values] += 0.5
 
-    # ── Tier 2: lyrics substring match ────────────────────────────────────
+    # ── Tier 2: lyrics substring match (accent-insensitive) ───────────────
     t2_score = np.zeros(n, dtype=np.float32)
     snippets: dict[int, str] = {}
-    lyrics_col = next((c for c in ['lyrics_cleaned', 'plain_lyrics'] if c in df.columns), None)
-    if lyrics_col:
-        mask_lyr = df[lyrics_col].str.lower().str.contains(ql, na=False, regex=False)
+    lyrics_col = sidx.get('lyrics_col')
+    if sidx.get('lyrics') is not None:
+        mask_lyr = sidx['lyrics'].str.contains(qnorm, na=False, regex=False)
         for raw_idx in np.where(mask_lyr.values)[0]:
             t2_score[raw_idx] = 1.0
-            snip = _extract_lyric_snippet(str(df.iloc[raw_idx][lyrics_col]), query)
+            snip = _extract_lyric_snippet(str(df.iloc[raw_idx][lyrics_col]), qnorm)
             if snip:
                 snippets[int(raw_idx)] = snip
 

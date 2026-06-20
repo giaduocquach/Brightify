@@ -15,6 +15,7 @@ function useDebounce(fn: (q: string) => void, delay: number) {
 
 export default function SearchOverlay() {
   const searchOpen = useStore((s) => s.searchOpen);
+  const searchQuery = useStore((s) => s.searchQuery);
   const searchResults = useStore((s) => s.searchResults);
   const searchLoading = useStore((s) => s.searchLoading);
   const semanticAvailable = useStore((s) => s.semanticAvailable);
@@ -92,6 +93,17 @@ export default function SearchOverlay() {
           />
           {searchLoading && <div className="search-spinner" aria-hidden="true" />}
         </div>
+
+        {/* Empty / no-results states */}
+        {!searchQuery.trim() && (
+          <div className="search-empty">
+            Tìm theo <strong>tên bài</strong>, <strong>nghệ sĩ</strong>,{' '}
+            <strong>lời nhạc</strong> hoặc <strong>cảm xúc</strong> — có dấu hay không dấu đều được.
+          </div>
+        )}
+        {searchQuery.trim() && !searchLoading && searchResults.length === 0 && (
+          <div className="search-empty">Không tìm thấy bài nào cho “{searchQuery.trim()}”.</div>
+        )}
 
         {/* Results */}
         <ul
