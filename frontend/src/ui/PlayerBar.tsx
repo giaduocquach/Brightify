@@ -2,7 +2,7 @@ import { useStore } from '../state/store';
 import { vaToHex } from '../three/va';
 import {
   SkipBack, SkipForward, Play, Pause,
-  Mic2, Blend, Sparkles, Volume2, VolumeX, ListMusic, Search,
+  ScrollText, Blend, Radio, Volume2, Volume1, VolumeX, ListMusic, Search,
 } from 'lucide-react';
 import BeatStrip from './BeatStrip';
 
@@ -27,8 +27,10 @@ export default function PlayerBar() {
 
   if (!current) return null;
   const pct = duration > 0 ? (time / duration) * 100 : 0;
-  // Per-song mood colour drives the dynamic accents (seek fill, beat strip, active toggles).
+  // Per-song mood colour drives the dynamic accents (art halo, seek fill, beat strip, toggles).
   const mood = vaToHex(current.valence, current.arousal);
+  // Volume icon graduates with the actual level so it reads at a glance.
+  const VolIcon = volume <= 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   const onSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -63,6 +65,7 @@ export default function PlayerBar() {
           <span className="player-title">{current.track_name}</span>
           <span className="player-artist">{current.artist}</span>
         </span>
+        <BeatStrip color={mood} playing={isPlaying} />
       </div>
 
       <div className="player-center">
@@ -85,46 +88,58 @@ export default function PlayerBar() {
         </div>
       </div>
 
-      {/* Order (left→right): beat strip · search · lyrics · harmony · similar · volume · queue. */}
+      {/* Three function groups, separated by dividers:
+          listen-experience (crossfade · radio) · view (lyrics · queue) · utility (volume · search). */}
       <div className="player-right">
-        <BeatStrip color={mood} playing={isPlaying} />
-        <button
-          className="pbtn pbtn-toggle"
-          onClick={openSearch}
-          aria-label="Tìm kiếm bài hát"
-          title="Tìm kiếm — / hoặc ⌘K"
-        ><Search size={18} strokeWidth={2} /></button>
-        <button
-          className={`pbtn pbtn-toggle${showLyrics ? ' is-on' : ''}`}
-          onClick={toggleLyrics} aria-pressed={showLyrics}
-          aria-label="Lời bài hát" title="Lời bài hát"
-        ><Mic2 size={18} strokeWidth={2} /></button>
-        <button
-          className={`pbtn pbtn-toggle${crossfadeEnabled ? ' is-on' : ''}`}
-          onClick={toggleCrossfade} aria-pressed={crossfadeEnabled}
-          aria-label="Hoà âm chuyển bài (crossfade)" title="Hoà âm chuyển bài — làm mượt lúc sang bài mới"
-        ><Blend size={18} strokeWidth={2} /></button>
-        <button
-          className="pbtn pbtn-toggle"
-          onClick={() => playSimilar(current)}
-          aria-label="Phát bài tương tự" title="Bài tương tự — bay lượn trong vũ trụ"
-        ><Sparkles size={18} strokeWidth={2} /></button>
-        <div className="vol-wrap" title="Âm lượng">
-          <span className="pbtn pbtn-toggle vol-ico" aria-hidden="true">
-            {volume <= 0 ? <VolumeX size={18} strokeWidth={2} /> : <Volume2 size={18} strokeWidth={2} />}
-          </span>
-          <input
-            className="vol"
-            type="range" min={0} max={1} step={0.01} value={volume}
-            onChange={(e) => setVolume(parseFloat(e.target.value))}
-            aria-label="Âm lượng"
-          />
+        <div className="player-group">
+          <button
+            className={`pbtn pbtn-toggle${crossfadeEnabled ? ' is-on' : ''}`}
+            onClick={toggleCrossfade} aria-pressed={crossfadeEnabled}
+            aria-label="Hoà âm chuyển bài (crossfade)" title="Hoà âm chuyển bài — làm mượt lúc sang bài mới"
+          ><Blend size={18} strokeWidth={2} /></button>
+          <button
+            className="pbtn pbtn-toggle"
+            onClick={() => playSimilar(current)}
+            aria-label="Phát đài bài tương tự" title="Đài tương tự — nối dài những bài cùng cảm xúc"
+          ><Radio size={18} strokeWidth={2} /></button>
         </div>
-        <button
-          className={`pbtn pbtn-toggle${showPlaylist ? ' is-on' : ''}`}
-          onClick={togglePlaylist} aria-pressed={showPlaylist}
-          aria-label="Ẩn/hiện danh sách phát" title="Danh sách phát"
-        ><ListMusic size={18} strokeWidth={2} /></button>
+
+        <span className="player-divider" aria-hidden="true" />
+
+        <div className="player-group">
+          <button
+            className={`pbtn pbtn-toggle${showLyrics ? ' is-on' : ''}`}
+            onClick={toggleLyrics} aria-pressed={showLyrics}
+            aria-label="Lời bài hát" title="Lời bài hát"
+          ><ScrollText size={18} strokeWidth={2} /></button>
+          <button
+            className={`pbtn pbtn-toggle${showPlaylist ? ' is-on' : ''}`}
+            onClick={togglePlaylist} aria-pressed={showPlaylist}
+            aria-label="Ẩn/hiện danh sách phát" title="Danh sách phát"
+          ><ListMusic size={18} strokeWidth={2} /></button>
+        </div>
+
+        <span className="player-divider" aria-hidden="true" />
+
+        <div className="player-group">
+          <div className="vol-wrap" title="Âm lượng">
+            <span className="pbtn pbtn-toggle vol-ico" aria-hidden="true">
+              <VolIcon size={18} strokeWidth={2} />
+            </span>
+            <input
+              className="vol"
+              type="range" min={0} max={1} step={0.01} value={volume}
+              onChange={(e) => setVolume(parseFloat(e.target.value))}
+              aria-label="Âm lượng"
+            />
+          </div>
+          <button
+            className="pbtn pbtn-toggle"
+            onClick={openSearch}
+            aria-label="Tìm kiếm bài hát"
+            title="Tìm kiếm — / hoặc ⌘K"
+          ><Search size={18} strokeWidth={2} /></button>
+        </div>
       </div>
     </div>
   );
