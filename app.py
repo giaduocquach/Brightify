@@ -149,6 +149,12 @@ async def lifespan(app: FastAPI):
     music_routes.init(recommender, music_path, artist_images_path)
     recommend_routes.init(recommender)
     system_routes.init(recommender)
+
+    if cfg.SEARCH_SEMANTIC_ENABLED:
+        from core.search_encoder import get_search_encoder
+        get_search_encoder().preload_background()
+        logger.info("SearchEncoder: background load started (e5-large FP16)")
+
     logger.info("All systems ready")
 
     yield

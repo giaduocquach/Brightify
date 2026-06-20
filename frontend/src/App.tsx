@@ -10,6 +10,7 @@ import CockpitHUD from './ui/CockpitHUD';
 import NavPanel from './ui/NavPanel';
 import FlyHUD from './ui/FlyHUD';
 import PlayerBar from './ui/PlayerBar';
+import SearchOverlay from './ui/SearchOverlay';
 import ModeBadge from './ui/ModeBadge';
 import OnboardingHint from './ui/OnboardingHint';
 import { engine } from './audio/engine';
@@ -31,6 +32,20 @@ export default function App() {
     solarRefs.reducedMotion = osReduce;
     useStore.getState()._setReducedMotion(osReduce);
   }, [osReduce]);
+
+  // Global keyboard shortcut: "/" or Cmd/Ctrl+K opens the search overlay
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+      if ((e.key === '/' && !inInput) || ((e.metaKey || e.ctrlKey) && e.key === 'k')) {
+        e.preventDefault();
+        useStore.getState().openSearch();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     const store = useStore.getState();
@@ -66,6 +81,7 @@ export default function App() {
         </div>
       )}
       <PlayerBar />
+      <SearchOverlay />
     </>
   );
 }

@@ -19,13 +19,15 @@ services:
     environment:
       SKIP_PHOBERT_LOAD: "True"
       AUDIO_CDN_BASE: ${AUDIO_CDN_BASE}
-      HF_HUB_OFFLINE: "1"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Semantic search downloads e5-large (~560 MB FP16) to hf_cache on first run.
+      # Set SEARCH_SEMANTIC_ENABLED=false to disable and stay text+lyrics only.
+      SEARCH_SEMANTIC_ENABLED: ${SEARCH_SEMANTIC_ENABLED:-true}
     deploy:
       replicas: 1
       resources:
         limits:
-          memory: 1536M
+          memory: 2048M
           cpus: "1.5"
         reservations:
           memory: 512M

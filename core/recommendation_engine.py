@@ -1578,6 +1578,18 @@ class MusicRecommender:
             return self.df.iloc[song_id].to_dict()
         return None
 
+    def semantic_search(self, query_vec: np.ndarray, top_k: int = 50) -> list:
+        """Cosine similarity of query_vec vs lyrics embeddings.
+
+        Returns list of (df_integer_index, score) pairs sorted by descending score.
+        Returns [] when lyrics embeddings are unavailable.
+        """
+        if self.embeddings_normalized is None:
+            return []
+        sims = self.embeddings_normalized.dot(query_vec)  # (n_songs,)
+        top_idx = np.argsort(sims)[::-1][:top_k]
+        return [(int(i), float(sims[i])) for i in top_idx]
+
     def get_statistics(self):
         """Get system stats"""
         return {

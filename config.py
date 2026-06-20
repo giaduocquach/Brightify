@@ -90,6 +90,11 @@ BATCH_SIZE = 32  # Batch size for embedding generation
 # to save ~850 MB RAM and the model download. Default False keeps dev unchanged.
 SKIP_PHOBERT_LOAD = os.environ.get("SKIP_PHOBERT_LOAD", "False") == "True"
 
+# Load multilingual-e5-large at runtime to encode user search queries (FP16, ~560 MB).
+# Downloads to the hf_cache Docker volume on first run; cached on restarts.
+# Set False to disable semantic tier and keep text+lyrics search only.
+SEARCH_SEMANTIC_ENABLED = os.environ.get("SEARCH_SEMANTIC_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # ============================================================================
 # Audio Features
 # ============================================================================

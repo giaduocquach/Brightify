@@ -294,27 +294,121 @@ async def random_songs(count: int = Query(default=10, ge=1, le=50)):
 
 @router.get("/songs/search")
 async def search_songs(q: str = Query(..., min_length=1), limit: int = Query(default=20, ge=1, le=50)):
-    """Search songs by name, artist, or lyrics keywords"""
+    """Legacy substring search — use GET /api/search for the smart multi-tier version."""
     df = _recommender.df
     query = q.strip().lower()
 
-    # Search in track_name
     mask = df['track_name'].str.lower().str.contains(query, na=False)
-
-    # Search in artist
     for col in ['primary_artist', 'artist_name', 'artist']:
         if col in df.columns:
             mask = mask | df[col].str.lower().str.contains(query, na=False)
             break
-
-    # Search in album
     if 'album_name' in df.columns:
         mask = mask | df['album_name'].str.lower().str.contains(query, na=False)
 
     results = df[mask].head(limit)
     songs = [_song_to_dict(row, idx) for idx, row in results.iterrows()]
-
     return {"success": True, "songs": songs, "query": q, "total": len(songs)}
+
+
+def _extract_lyric_snippet(lyrics: str, query: str, max_len: int = 100) -> Optional[str]:
+    """Return the first lyric line containing the query string (≤ max_len chars)."""
+    ql = query.lower()
+    for line in lyrics.split('\n'):
+        stripped = line.strip()
+        if len(stripped) < 5:
+            continue
+        if ql in stripped.lower():
+            return stripped[:max_len]
+    return None
+
+
+@router.get("/search")
+async def smart_search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    """Multi-tier smart search: (1) name/artist/album, (2) lyrics substring, (3) semantic e5."""
+    import numpy as np
+    from core.retrieval import reciprocal_rank_fusion
+    from core.search_encoder import get_search_encoder
+
+    df = _recommender.df
+    query = q.strip()
+    ql = query.lower()
+    n = len(df)
+
+    # ── Tier 1: metadata substring match ──────────────────────────────────
+    t1_score = np.zeros(n, dtype=np.float32)
+    mask_name = df['track_name'].str.lower().str.contains(ql, na=False, regex=False)
+    t1_score[mask_name.values] += 1.0
+    artist_col = next((c for c in ['primary_artist', 'artist_name', 'artist'] if c in df.columns), None)
+    if artist_col:
+        t1_score[df[artist_col].str.lower().str.contains(ql, na=False, regex=False).values] += 0.8
+    if 'album_name' in df.columns:
+        t1_score[df['album_name'].str.lower().str.contains(ql, na=False, regex=False).values] += 0.5
+
+    # ── Tier 2: lyrics substring match ────────────────────────────────────
+    t2_score = np.zeros(n, dtype=np.float32)
+    snippets: dict[int, str] = {}
+    lyrics_col = next((c for c in ['lyrics_cleaned', 'plain_lyrics'] if c in df.columns), None)
+    if lyrics_col:
+        mask_lyr = df[lyrics_col].str.lower().str.contains(ql, na=False, regex=False)
+        for raw_idx in np.where(mask_lyr.values)[0]:
+            t2_score[raw_idx] = 1.0
+            snip = _extract_lyric_snippet(str(df.iloc[raw_idx][lyrics_col]), query)
+            if snip:
+                snippets[int(raw_idx)] = snip
+
+    # ── Tier 3: semantic embedding cosine ─────────────────────────────────
+    encoder = get_search_encoder()
+    semantic_available = encoder.is_ready
+    t3_list: list[int] = []
+    if semantic_available:
+        query_vec = encoder.encode_query(query)
+        if query_vec is not None:
+            t3_list = [idx for idx, _ in _recommender.semantic_search(query_vec, top_k=50)]
+
+    # ── Build rank lists (only non-empty matches) ─────────────────────────
+    rank_lists: list[list[int]] = []
+    weights: list[float] = []
+
+    t1_idx = np.where(t1_score > 0)[0]
+    if len(t1_idx):
+        rank_lists.append(t1_idx[np.argsort(-t1_score[t1_idx])].tolist())
+        weights.append(1.0)
+
+    t2_idx = np.where(t2_score > 0)[0]
+    if len(t2_idx):
+        rank_lists.append(t2_idx[np.argsort(-t2_score[t2_idx])].tolist())
+        weights.append(1.0)
+
+    if t3_list:
+        rank_lists.append(t3_list)
+        weights.append(0.7)
+
+    if not rank_lists:
+        return {"success": True, "results": [], "query": q, "total": 0,
+                "semantic_available": semantic_available}
+
+    fused = reciprocal_rank_fusion(rank_lists, k=60, weights=weights, top_n=limit)
+
+    # ── Build response ────────────────────────────────────────────────────
+    results = []
+    for idx in fused:
+        row = df.iloc[idx]
+        song = _song_to_dict(row, idx)
+        if t1_score[idx] > 0:
+            song['match_type'] = 'name'
+        elif t2_score[idx] > 0:
+            song['match_type'] = 'lyrics'
+        else:
+            song['match_type'] = 'vibe'
+        song['lyric_snippet'] = snippets.get(idx)
+        results.append(song)
+
+    return {"success": True, "results": results, "query": q, "total": len(results),
+            "semantic_available": semantic_available}
 
 
 # ============================================================================

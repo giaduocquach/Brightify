@@ -74,6 +74,11 @@ interface RawSong {
   vocal_end_s?: number;
 }
 
+export interface SearchResult extends Song {
+  match_type: 'name' | 'lyrics' | 'vibe';
+  lyric_snippet: string | null;
+}
+
 export interface ColorMood {
   hex: string;
   mood: string;
@@ -185,6 +190,21 @@ export const api = {
   async getSongLyrics(trackId: string): Promise<string | null> {
     const data = await getJSON<{ song?: { lyrics?: string } }>(`/api/song/${encodeURIComponent(trackId)}`);
     return data.song?.lyrics ?? null;
+  },
+
+  async search(q: string, limit = 20): Promise<{ results: SearchResult[]; semanticAvailable: boolean }> {
+    const data = await getJSON<{
+      results: (RawSong & { match_type: string; lyric_snippet: string | null })[];
+      semantic_available: boolean;
+    }>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    return {
+      results: (data.results || []).map((r) => ({
+        ...normalizeSong(r),
+        match_type: (r.match_type ?? 'name') as SearchResult['match_type'],
+        lyric_snippet: r.lyric_snippet ?? null,
+      })),
+      semanticAvailable: data.semantic_available ?? false,
+    };
   },
 
   streamUrl: (trackId: string) => `/api/audio/stream/${trackId}`,
