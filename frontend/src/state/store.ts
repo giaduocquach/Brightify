@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api, type Song, type ColorResult } from '../api/client';
+import { api, type Song, type SearchResult, type ColorResult } from '../api/client';
 import { engine } from '../audio/engine';
 import { planCrossfade, type CrossfadeTrack } from '../audio/crossfade';
 import { hexToVA } from '../three/va';
@@ -112,6 +112,13 @@ interface State {
   showPlaylist: boolean;
   showLyrics: boolean;
 
+  // search overlay
+  searchOpen: boolean;
+  searchQuery: string;
+  searchResults: SearchResult[];
+  searchLoading: boolean;
+  semanticAvailable: boolean;
+
   // actions — selection
   enterSystem: () => void;
   toggleColor: (hex: string) => void;
@@ -122,6 +129,9 @@ interface State {
   togglePlaylist: () => void;
   toggleLyrics: () => void;
   reorderPlaylist: (from: number, to: number) => void;
+  openSearch: () => void;
+  closeSearch: () => void;
+  runSearch: (q: string) => Promise<void>;
 
   // actions — playback
   playSong: (song: Song, queue?: Song[]) => void;
@@ -177,6 +187,12 @@ export const useStore = create<State>((set, get) => ({
   onboardingDone: readOnboarded(),
   showPlaylist: true,
   showLyrics: false,
+
+  searchOpen: false,
+  searchQuery: '',
+  searchResults: [],
+  searchLoading: false,
+  semanticAvailable: false,
 
   enterSystem: () => set({ mode: 'system' }),
 
@@ -236,6 +252,19 @@ export const useStore = create<State>((set, get) => ({
   // the other; closing leaves the other untouched.
   togglePlaylist: () => set((s) => { const on = !s.showPlaylist; return { showPlaylist: on, showLyrics: on ? false : s.showLyrics }; }),
   toggleLyrics: () => set((s) => { const on = !s.showLyrics; return { showLyrics: on, showPlaylist: on ? false : s.showPlaylist }; }),
+
+  openSearch: () => set({ searchOpen: true }),
+  closeSearch: () => set({ searchOpen: false, searchQuery: '', searchResults: [] }),
+  runSearch: async (q: string) => {
+    if (!q.trim()) { set({ searchResults: [], searchLoading: false }); return; }
+    set({ searchLoading: true, searchQuery: q });
+    try {
+      const { results, semanticAvailable } = await api.search(q);
+      set({ searchResults: results, searchLoading: false, semanticAvailable });
+    } catch {
+      set({ searchLoading: false });
+    }
+  },
 
   // Drag-to-reorder the visible playlist. Colour list (results) defines play order → mirror
   // into the queue so playback follows the new order; fly list IS the queue. Keep `current`.

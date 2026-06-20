@@ -2,7 +2,7 @@ import { useStore } from '../state/store';
 import { vaToHex } from '../three/va';
 import {
   SkipBack, SkipForward, Play, Pause,
-  Mic2, Blend, Sparkles, Volume2, VolumeX, ListMusic,
+  Mic2, Blend, Sparkles, Volume2, VolumeX, ListMusic, Search,
 } from 'lucide-react';
 import BeatStrip from './BeatStrip';
 
@@ -23,7 +23,7 @@ export default function PlayerBar() {
   const playbackError = useStore((s) => s.playbackError);
   const showPlaylist = useStore((s) => s.showPlaylist);
   const showLyrics = useStore((s) => s.showLyrics);
-  const { togglePlay, next, prev, seek, setVolume, toggleCrossfade, playSimilar, togglePlaylist, toggleLyrics } = useStore.getState();
+  const { togglePlay, next, prev, seek, setVolume, toggleCrossfade, playSimilar, togglePlaylist, toggleLyrics, openSearch } = useStore.getState();
 
   if (!current) return null;
   const pct = duration > 0 ? (time / duration) * 100 : 0;
@@ -85,9 +85,15 @@ export default function PlayerBar() {
         </div>
       </div>
 
-      {/* Order (left→right): beat strip · lyrics · harmony · similar · volume · queue → queue outermost-right. */}
+      {/* Order (left→right): beat strip · search · lyrics · harmony · similar · volume · queue. */}
       <div className="player-right">
         <BeatStrip color={mood} playing={isPlaying} />
+        <button
+          className="pbtn pbtn-toggle"
+          onClick={openSearch}
+          aria-label="Tìm kiếm bài hát"
+          title="Tìm kiếm — / hoặc ⌘K"
+        ><Search size={18} strokeWidth={2} /></button>
         <button
           className={`pbtn pbtn-toggle${showLyrics ? ' is-on' : ''}`}
           onClick={toggleLyrics} aria-pressed={showLyrics}
