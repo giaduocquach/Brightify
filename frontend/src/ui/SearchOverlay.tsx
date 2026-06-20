@@ -24,11 +24,15 @@ export default function SearchOverlay() {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Remember what had focus when we opened so we can hand it back on close (WCAG 2.4.3).
+  const restoreFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (searchOpen) {
+      restoreFocus.current = document.activeElement as HTMLElement | null;
       setActive(0);
       setTimeout(() => inputRef.current?.focus(), 0);
+      return () => restoreFocus.current?.focus();
     }
   }, [searchOpen]);
 
@@ -88,6 +92,11 @@ export default function SearchOverlay() {
             type="search"
             placeholder="Tên bài, nghệ sĩ, lời nhạc hoặc cảm xúc…"
             aria-label="Từ khoá tìm kiếm"
+            role="combobox"
+            aria-expanded={searchResults.length > 0}
+            aria-controls="search-listbox"
+            aria-autocomplete="list"
+            aria-activedescendant={searchResults[active] ? `search-opt-${active}` : undefined}
             onChange={handleInput}
             autoComplete="off"
             spellCheck={false}
@@ -109,6 +118,7 @@ export default function SearchOverlay() {
         {/* Results */}
         <ul
           ref={listRef}
+          id="search-listbox"
           className="search-results"
           role="listbox"
           aria-label="Kết quả tìm kiếm"
@@ -116,6 +126,7 @@ export default function SearchOverlay() {
           {searchResults.map((song, i) => (
             <li
               key={song.track_id}
+              id={`search-opt-${i}`}
               className={`search-result-item${i === active ? ' is-active' : ''}`}
               role="option"
               aria-selected={i === active}
