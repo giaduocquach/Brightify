@@ -1,0 +1,22 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+\begin{center}
+    \Large{\textbf{TÓM TẮT NỘI DUNG ĐỒ ÁN}}\\
+\end{center}
+\vspace{1cm}
+
+Việc khám phá âm nhạc trên các nền tảng hiện nay chủ yếu dựa vào siêu dữ liệu như nghệ sĩ, thể loại hoặc lịch sử nghe của người dùng. Tuy nhiên, người nghe thường tìm nhạc theo cảm xúc hoặc không khí mà một bài hát gợi lên, và nhu cầu này càng ít được hỗ trợ đối với kho nhạc tiếng Việt do thiếu các tập dữ liệu cảm xúc âm nhạc chuyên biệt. Các hướng tiếp cận sẵn có hoặc phụ thuộc vào hành vi người dùng, hoặc dùng đặc trưng âm thanh thủ công vốn yếu trong việc nắm bắt cảm xúc, nên khó tạo ra gợi ý ``đúng cảm giác''.
+
+Đồ án xây dựng Brightify, hệ thống gợi ý nhạc Việt với hai chức năng cốt lõi: gợi ý bài hát tương tự một bài cho trước và gợi ý danh sách bài hát theo một màu sắc người dùng chọn. Hướng tiếp cận được lựa chọn là quy cả bài hát lẫn màu sắc về cùng một không gian cảm xúc hai chiều Valence--Arousal theo mô hình vòng tròn của Russell, vì đây là khung lý thuyết cho phép màu và nhạc gặp nhau trên cùng hệ tọa độ. Mỗi bài hát được gán tọa độ cảm xúc tính toán ngoại tuyến: Valence (mức tích cực--tiêu cực) suy ra chủ yếu từ lời bài hát qua tổ hợp ba tín hiệu văn bản có cơ sở (từ điển NRC-VAD tiếng Việt kết hợp VnEmoLex, mô hình ViSoBERT, và mô hình XLM-R trên EmoBank), còn Arousal (mức năng lượng) suy ra từ đặc trưng âm thanh của mô hình tự giám sát MuQ kết hợp nhịp độ và độ to. Màu sắc được ánh xạ về cùng không gian dựa trên chuẩn liên kết màu--cảm xúc ICEAS và quan hệ màu--âm nhạc của Whiteford. Hệ thống truy hồi và sắp xếp các bài gần nhau về cảm xúc, đồng thời bảo đảm tính nhất quán âm thanh giữa các kết quả.
+
+Đóng góp chính của đồ án gồm: một quy trình gán cảm xúc cho nhạc Việt hoàn toàn có cơ sở khoa học, không tinh chỉnh mô hình và không dùng mô hình ngôn ngữ lớn khi phục vụ; một cơ chế gợi ý theo màu dựa trên cảm xúc kèm tinh chỉnh nhất quán âm thanh; và một quy trình đánh giá nghiêm ngặt nhiều tầng cùng một khảo sát so sánh các mô hình tiên tiến. Trên kho nhạc gồm $5.138$ bài hát, hệ thống vượt các đường cơ sở thực trên các độ đo ngoại tuyến, có kiểm định thống kê (hiệu chỉnh FDR, khoảng tin cậy bootstrap) và được củng cố bằng các kiểm chứng độc lập (nhịp độ thật, chuyển miền PMEmo). Do chưa có đánh giá người dùng thật, các kết quả này là độ đo ngoại tuyến.
+
+\begin{flushright}
+Sinh viên thực hiện\\
+\begin{tabular}{@{}c@{}}
+\textit{(Ký và ghi rõ họ tên)}
+\end{tabular}
+\end{flushright}
+
+\end{document}

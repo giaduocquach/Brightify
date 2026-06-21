@@ -1,0 +1,227 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Chương~\ref{chapter:Introduction} đã giới thiệu bài toán gợi ý nhạc Việt theo cảm xúc và theo màu sắc. Chương này khảo sát hiện trạng các hệ thống và nghiên cứu liên quan, rút ra khoảng trống mà đồ án nhắm tới, sau đó phân tích yêu cầu của hệ thống Brightify dưới dạng các tác nhân, các use case chính kèm đặc tả chi tiết, và các yêu cầu phi chức năng.
+
+\section{Khảo sát hiện trạng}
+\label{section:2.1}
+Khảo sát được tiến hành trên hai nguồn chính: các hệ thống gợi ý nhạc đang vận hành và các nghiên cứu khoa học liên quan đến cảm xúc trong âm nhạc và màu sắc.
+
+Về các hệ thống đang vận hành, các nền tảng như Spotify hay các dịch vụ nhạc số trong nước chủ yếu dựa trên lọc cộng tác và siêu dữ liệu. Ưu điểm của hướng này là cá nhân hóa tốt khi có nhiều dữ liệu tương tác, nhưng nhược điểm là phụ thuộc dữ liệu người dùng, gặp vấn đề cold-start với bài hát hoặc người dùng mới, và không cho phép truy vấn trực tiếp theo cảm xúc hay theo màu sắc.
+
+Về các nghiên cứu khoa học, bài toán nhận dạng cảm xúc trong âm nhạc đã được nghiên cứu nhiều trên các tập dữ liệu tiếng Anh được con người gán nhãn như DEAM \cite{aljanaki2017deam} và PMEmo \cite{zhang2018pmemo}, thường biểu diễn cảm xúc trên không gian Valence--Arousal \cite{russell1980circumplex}. Khảo sát xuyên văn hóa gần đây cho thấy cấu trúc Valence--Arousal khá ổn định giữa các nền văn hóa, dù các nhãn cảm xúc cụ thể vẫn phân kỳ theo ngôn ngữ \cite{lee2025globalmood} --- điều này vừa ủng hộ việc dùng V-A làm trục chung, vừa cho thấy cần một xử lý riêng cho tiếng Việt.
+
+Riêng hướng liên kết màu--âm nhạc, đây không phải ý tưởng hoàn toàn mới. Quan hệ màu--nhạc ở con người đã được chứng minh là trung gian hóa bởi cảm xúc với mức tương quan rất cao \cite{palmer2013music, whiteford2018color}, dựa trên các chuẩn liên kết màu--cảm xúc xuyên văn hóa \cite{jonauskaite2020universal}; đã có tập dữ liệu gắn màu, cảm xúc và nhạc trên cùng mô hình V-A phục vụ truy hồi theo cảm xúc \cite{pesek2017moodo}; và đã có hệ thống gợi ý nhạc từ màu \cite{kittimathaveenan2020color}. Tuy nhiên, các công trình này gắn với dữ liệu phương Tây và thường ánh xạ màu sang thuộc tính nhạc bằng quy tắc thủ công, chưa dùng một không gian cảm xúc \textit{học được} dùng chung cho cả hai chức năng, và chưa nhắm tới nhạc Việt. Bên cạnh đó, theo hiểu biết của chúng tôi, chưa có tập dữ liệu cảm xúc âm nhạc tiếng Việt được con người gán nhãn, công bố công khai, để huấn luyện trực tiếp; các tài nguyên cảm xúc tiếng Việt hiện có chủ yếu là văn bản mạng xã hội.
+
+Bảng~\ref{table:khaosat} so sánh các hướng tiếp cận hiện có với hệ thống đề xuất. Khoảng trống mà đồ án nhắm tới không phải là ``ý tưởng gợi ý theo màu'' (vốn đã có tiền lệ), mà là một hệ thống gợi ý nhạc \textit{Việt} dựa trên cảm xúc, không phụ thuộc dữ liệu người dùng, hợp nhất truy vấn theo bài hát và theo màu trên một không gian cảm xúc \textit{học được} dùng chung, và có cơ sở khoa học rõ ràng cho từng thành phần.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{3.2cm} p{2.6cm} p{2.4cm} p{3.2cm}}
+\hline
+\textbf{Tiêu chí} & \textbf{Lọc cộng tác (Spotify, v.v.)} & \textbf{Nghiên cứu MER} & \textbf{Brightify (đề xuất)} \\ \hline
+Cần dữ liệu người dùng & Có & Không & Không \\ \hline
+Gợi ý theo cảm xúc & Gián tiếp & Có (phân tích) & Có \\ \hline
+Gợi ý theo màu & Không & Không & Có \\ \hline
+Hỗ trợ nhạc Việt & Một phần & Hạn chế & Trọng tâm \\ \hline
+\end{tabular}
+\caption{So sánh các hướng tiếp cận hiện có và hệ thống đề xuất}
+\label{table:khaosat}
+\end{table}
+
+\section{Tác nhân và tổng quan chức năng}
+\label{section:2.2}
+
+\subsection{Các tác nhân của hệ thống}
+\label{subsection:2.2.1}
+Khác với một ứng dụng nghe nhạc thương mại thông thường, Brightify gồm hai pha rõ rệt: pha \textit{phục vụ} (serving) tương tác với người nghe theo thời gian thực, và pha \textit{ngoại tuyến} (offline) chuẩn bị toàn bộ đặc trưng cho kho nhạc. Vì vậy mô hình tác nhân của hệ thống gồm bốn tác nhân, trong đó có cả tác nhân chính (con người) và tác nhân phụ (hệ thống/dữ liệu):
+
+\begin{itemize}[leftmargin=1.4cm]
+    \item \textbf{Người nghe / người dùng} (tác nhân chính): người sử dụng giao diện để chọn màu hoặc chọn bài hát, xem và phát danh sách bài hát được gợi ý, và xem thông tin cảm xúc của bài hát. Đây là tác nhân chính của pha phục vụ và không cần đăng nhập.
+    \item \textbf{Quản trị dữ liệu / người vận hành hệ thống} (tác nhân chính): người chịu trách nhiệm cập nhật kho nhạc (thêm bài mới, lọc trùng/cover) và kích hoạt việc chạy lại quy trình trích đặc trưng ngoại tuyến. Tác nhân này làm việc với pha ngoại tuyến.
+    \item \textbf{Kho nhạc / dataset} (tác nhân phụ): tập dữ liệu nhạc Việt gồm tệp âm thanh, siêu dữ liệu và lời bài hát. Nó cung cấp dữ liệu đầu vào cho các use case phục vụ và là đối tượng được cập nhật bởi người vận hành.
+    \item \textbf{Hệ thống xử lý đặc trưng offline} (tác nhân phụ): thành phần tự động trích nhúng âm thanh (MuQ), tính tín hiệu cảm xúc từ lời, nhịp độ, độ to và sinh các ma trận biểu diễn. Nó được người vận hành kích hoạt và ghi kết quả trở lại kho đặc trưng để pha phục vụ nạp lên.
+\end{itemize}
+
+\subsection{Biểu đồ use case tổng quát}
+\label{subsection:2.2.2}
+Hình~\ref{fig:usecase} trình bày biểu đồ use case tổng quát của hệ thống. Người nghe thao tác với bốn use case của pha phục vụ; người vận hành thao tác với hai use case của pha ngoại tuyến; hai tác nhân phụ (kho nhạc và hệ thống xử lý đặc trưng offline) tham gia cung cấp/nhận dữ liệu cho các use case tương ứng.
+
+\begin{figure}[h!]
+\centering
+\tikzset{
+  human/.pic={
+    \draw[thick] (0,0.55) circle (0.16);
+    \draw[thick] (0,0.39) -- (0,-0.12);
+    \draw[thick] (-0.22,0.18) -- (0.22,0.18);
+    \draw[thick] (0,-0.12) -- (-0.17,-0.48);
+    \draw[thick] (0,-0.12) -- (0.17,-0.48);
+  }
+}
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+   uc/.style={draw, ellipse, align=center, minimum width=3.7cm, minimum height=0.95cm},
+   sys/.style={draw, rounded corners, align=center, fill=black!4, minimum width=2.7cm, minimum height=0.9cm},
+   every node/.style={font=\small}]
+
+  % System boundary
+  \draw[thick, rounded corners] (3.0,-0.4) rectangle (10.0,9.6);
+  \node[anchor=north] at (6.5,9.5) {\textbf{Hệ thống Brightify}};
+
+  % Use cases — serving
+  \node[uc] (uc1) at (6.5,8.5) {UC01. Chọn bài hát\\để gợi ý bài tương tự};
+  \node[uc] (uc2) at (6.5,7.1) {UC02. Chọn màu\\để gợi ý playlist};
+  \node[uc] (uc3) at (6.5,5.7) {UC03. Xem danh sách\\bài gợi ý};
+  \node[uc] (uc4) at (6.5,4.3) {UC04. Xem thông tin\\cảm xúc của bài hát};
+  % Use cases — offline
+  \node[uc] (uc5) at (6.5,2.0) {UC05. Cập nhật\\kho nhạc};
+  \node[uc] (uc6) at (6.5,0.5) {UC06. Chạy lại pipeline\\trích đặc trưng};
+
+  % Actors
+  \pic at (0.3,6.4) {human}; \node[align=center] at (0.3,5.6) {\textbf{Người nghe}\\(người dùng)};
+  \pic at (12.7,1.4) {human}; \node[align=center] at (12.7,0.6) {\textbf{Người vận hành}\\/ quản trị dữ liệu};
+  \node[sys] (store) at (12.7,4.7) {Kho nhạc /\\Dataset};
+  \node[sys] (offline) at (12.7,2.9) {Hệ thống xử lý\\đặc trưng offline};
+
+  % Associations — listener
+  \draw (1.0,6.2) -- (uc1.west);
+  \draw (1.0,6.1) -- (uc2.west);
+  \draw (1.0,6.0) -- (uc3.west);
+  \draw (1.0,5.9) -- (uc4.west);
+  % Associations — operator
+  \draw (12.0,1.4) -- (uc5.east);
+  \draw (12.2,1.2) .. controls (9.5,0.5) .. (uc6.east);
+  % Secondary actors
+  \draw[dashed] (store.west) -- (uc2.east);
+  \draw[dashed] (store.south west) -- (uc5.east);
+  \draw[dashed] (offline.west) -- (uc6.east);
+\end{tikzpicture}}
+\caption{Biểu đồ use case tổng quát của hệ thống Brightify}
+\label{fig:usecase}
+\end{figure}
+
+Bảng~\ref{table:uclist} liệt kê các use case và tác nhân liên quan. Sáu use case chia thành hai nhóm: nhóm phục vụ người nghe (UC01--UC04) và nhóm vận hành dữ liệu (UC05--UC06). Một số use case phụ trợ (tìm kiếm bài hát, phát nhạc và quản lý hàng đợi) được đặc tả trong Phụ lục~\ref{appendix:usecase}.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.2cm} p{6.0cm} p{6.0cm}}
+\hline
+\textbf{Mã} & \textbf{Use case} & \textbf{Tác nhân} \\ \hline
+UC01 & Chọn bài hát để gợi ý bài tương tự & Người nghe (chính); kho nhạc (phụ) \\ \hline
+UC02 & Chọn màu để gợi ý playlist & Người nghe (chính); kho nhạc (phụ) \\ \hline
+UC03 & Xem danh sách bài gợi ý & Người nghe \\ \hline
+UC04 & Xem thông tin cảm xúc của bài hát & Người nghe \\ \hline
+UC05 & Cập nhật kho nhạc & Người vận hành (chính); kho nhạc (phụ) \\ \hline
+UC06 & Chạy lại pipeline trích đặc trưng & Người vận hành (chính); hệ thống xử lý đặc trưng offline (phụ) \\ \hline
+\end{tabular}
+\caption{Danh sách use case của hệ thống}
+\label{table:uclist}
+\end{table}
+
+\section{Đặc tả chi tiết use case}
+\label{section:2.3}
+Phần này đặc tả các use case quan trọng theo bốn yếu tố: tiền điều kiện, luồng sự kiện chính, luồng thay thế/ngoại lệ và hậu điều kiện. Các con số kỹ thuật (cấu trúc dữ liệu trả về, mã lỗi, thời gian phản hồi) được trình bày chi tiết trong Chương~\ref{chapter:Experiment}.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC01 --- Chọn bài hát để gợi ý bài tương tự \\ \hline
+\textbf{Tác nhân} & Người nghe (chính); kho nhạc và đặc trưng đã tính sẵn (phụ) \\ \hline
+\textbf{Mô tả} & Từ một bài hát đang nghe hoặc được chọn, hệ thống trả về danh sách các bài ``nghe giống'' về âm thanh và gần về cảm xúc. \\ \hline
+\textbf{Tiền điều kiện} & Kho nhạc và các đặc trưng (nhúng âm thanh MuQ, tọa độ cảm xúc, nhúng lời) đã được nạp; bài hát nguồn tồn tại trong kho. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người nghe chọn một bài hát (từ thư viện, kết quả tìm kiếm hoặc bài đang phát). \newline 2. Hệ thống tính điểm tương đồng giữa bài nguồn và mọi bài khác bằng tổ hợp ba tín hiệu (âm thanh, cảm xúc, lời). \newline 3. Hệ thống loại các bản trùng/cover của bài nguồn và đa dạng hóa theo nghệ sĩ. \newline 4. Hệ thống trả về danh sách $top\text{-}k$ bài tương tự kèm điểm tương đồng. \newline 5. Người nghe xem danh sách (chuyển sang UC03) và có thể phát. \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 2a. Bài nguồn không có đặc trưng âm thanh: hệ thống lùi về dùng tín hiệu cảm xúc/lời còn lại. \newline 3a. Người nghe yêu cầu thêm kết quả (chế độ ``đài'' vô tận): hệ thống nối tiếp danh sách và loại các bài đã phát qua tham số loại trừ. \newline 1a. Không xác định được bài nguồn: hệ thống báo lỗi ``không tìm thấy bài hát''. \\ \hline
+\textbf{Hậu điều kiện} & Một danh sách bài tương tự (không trùng bài nguồn, đã đa dạng nghệ sĩ) được hiển thị; trạng thái hàng đợi phát được cập nhật nếu người nghe chọn phát. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC01 --- Gợi ý bài tương tự}
+\label{table:uc01}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC02 --- Chọn màu để gợi ý playlist \\ \hline
+\textbf{Tác nhân} & Người nghe (chính); kho nhạc và đặc trưng đã tính sẵn (phụ) \\ \hline
+\textbf{Mô tả} & Người nghe chọn một màu (hoặc hai màu để tạo ``hành trình cảm xúc''); hệ thống trả về danh sách bài hát có cảm xúc tương ứng và nghe đồng nhất. \\ \hline
+\textbf{Tiền điều kiện} & Các tọa độ cảm xúc của kho nhạc và bảng ánh xạ màu sang Valence--Arousal đã sẵn sàng. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người nghe chọn một màu trong bảng 12 màu cơ bản. \newline 2. Hệ thống ánh xạ màu sang tọa độ cảm xúc (Valence--Arousal). \newline 3. Hệ thống chấm điểm độ gần cảm xúc trong không gian phân vị của kho nhạc, ưu tiên cụm có độ nhất quán âm thanh cao. \newline 4. Hệ thống đa dạng hóa và sắp xếp kết quả thành chuỗi chuyển cảm xúc mượt. \newline 5. Hệ thống trả về danh sách playlist kèm thông tin ánh xạ màu$\rightarrow$cảm xúc. \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 1a. Người nghe chọn \textit{hai} màu: hệ thống tạo hành trình từ tâm trạng màu A sang màu B theo nguyên lý đồng cảm (iso-principle). \newline 1b. Chọn từ ba màu trở lên: hệ thống chỉ giữ hai màu đầu để tránh ``nhiễu tâm trạng''. \newline 2a. Mã màu không hợp lệ (không phải dạng \texttt{\#RRGGBB}): hệ thống từ chối yêu cầu và báo lỗi đầu vào. \\ \hline
+\textbf{Hậu điều kiện} & Một playlist khớp cảm xúc với màu đã chọn, có độ nhất quán âm thanh, được hiển thị cho người nghe. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC02 --- Gợi ý theo màu}
+\label{table:uc02}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC03 --- Xem danh sách bài gợi ý \\ \hline
+\textbf{Tác nhân} & Người nghe \\ \hline
+\textbf{Mô tả} & Hiển thị danh sách kết quả của UC01 hoặc UC02 để người nghe xem, phát và sắp xếp lại. \\ \hline
+\textbf{Tiền điều kiện} & Một use case gợi ý (UC01/UC02) đã trả về kết quả. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Hệ thống hiển thị từng bài kèm ảnh bìa (nhuộm màu theo tâm trạng), tên bài, nghệ sĩ. \newline 2. Người nghe có thể phát một bài, phát toàn bộ danh sách, hoặc kéo--thả để sắp xếp lại. \newline 3. Khi gần hết danh sách ở chế độ đài, hệ thống tự nối thêm bài (gọi lại UC01/UC02 với danh sách loại trừ). \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 1a. Danh sách rỗng: hệ thống hiển thị thông báo không có kết quả phù hợp. \newline 2a. Tệp âm thanh của bài không tồn tại: nút phát bị vô hiệu và hiển thị trạng thái không phát được. \\ \hline
+\textbf{Hậu điều kiện} & Người nghe thấy được danh sách gợi ý và có thể tương tác phát nhạc; hàng đợi phát phản ánh thao tác của người nghe. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC03 --- Xem danh sách bài gợi ý}
+\label{table:uc03}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC04 --- Xem thông tin cảm xúc của bài hát \\ \hline
+\textbf{Tác nhân} & Người nghe \\ \hline
+\textbf{Mô tả} & Người nghe xem thông tin cảm xúc của một bài hát: tọa độ Valence--Arousal, nhãn tâm trạng và lời bài hát. \\ \hline
+\textbf{Tiền điều kiện} & Bài hát đã được gán tọa độ cảm xúc ở pha ngoại tuyến. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người nghe mở một bài hát. \newline 2. Hệ thống thể hiện tâm trạng của bài qua màu nền (suy ra từ Valence--Arousal) và một nhãn tâm trạng ngắn. \newline 3. Hệ thống cung cấp tọa độ Valence--Arousal, nhãn tâm trạng và lời bài hát qua giao diện lập trình ứng dụng (mục~\ref{section:api}). \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 3a. Bài không có lời: trường lời trả về rỗng và giao diện hiển thị ``chưa có lời''. \newline 3b. Bài thiếu một số đặc trưng âm thanh: các trường tương ứng trả về rỗng thay vì gây lỗi. \\ \hline
+\textbf{Hậu điều kiện} & Thông tin cảm xúc và lời của bài hát được hiển thị/được cung cấp cho người nghe. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC04 --- Xem thông tin cảm xúc bài hát}
+\label{table:uc04}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC05 --- Cập nhật kho nhạc \\ \hline
+\textbf{Tác nhân} & Người vận hành / quản trị dữ liệu (chính); kho nhạc (phụ) \\ \hline
+\textbf{Mô tả} & Người vận hành thu thập bài hát mới, lọc theo ngôn ngữ, tải tệp âm thanh và lời, lọc trùng/cover, rồi cập nhật vào kho nhạc. \\ \hline
+\textbf{Tiền điều kiện} & Có quyền vận hành; có danh sách nghệ sĩ hạt giống và khóa truy cập các nguồn dữ liệu. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người vận hành chạy quy trình thu thập (khám phá nghệ sĩ, lấy danh sách bài). \newline 2. Hệ thống lọc bài tiếng Việt, tải tệp âm thanh và lời bài hát. \newline 3. Hệ thống phát hiện và lập danh sách bản trùng/cover. \newline 4. Kho nhạc được cập nhật với các bài hợp lệ và bảng loại trừ cover. \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 2a. Không tải được tệp âm thanh sau các mức dự phòng: bài bị bỏ qua và ghi nhật ký. \newline 2b. Không tìm được lời: bài vẫn được giữ, đánh dấu thiếu lời để pha ngoại tuyến xử lý dự phòng. \\ \hline
+\textbf{Hậu điều kiện} & Kho nhạc có thêm bài mới đã lọc trùng/cover; trạng thái này là đầu vào cho UC06. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC05 --- Cập nhật kho nhạc}
+\label{table:uc05}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Mã / Tên} & UC06 --- Chạy lại pipeline trích đặc trưng \\ \hline
+\textbf{Tác nhân} & Người vận hành (chính); hệ thống xử lý đặc trưng offline (phụ) \\ \hline
+\textbf{Mô tả} & Người vận hành kích hoạt pha ngoại tuyến để trích nhúng âm thanh, tính tọa độ cảm xúc và sinh các ma trận biểu diễn cho kho nhạc. \\ \hline
+\textbf{Tiền điều kiện} & Kho nhạc đã cập nhật (UC05); các mô hình đóng băng và đầu dò tuyến tính đã sẵn sàng. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người vận hành chạy lần lượt các bước: trích nhúng âm thanh MuQ, mã hóa lời, trích nhịp độ sạch, phát hiện cover. \newline 2. Hệ thống tính tọa độ Valence--Arousal cho từng bài và lưu ra tệp đặc trưng. \newline 3. Hệ thống đóng gói một bản phát hành phục vụ và kiểm tra đồng bộ kích thước các tệp đặc trưng. \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 1a. Quá trình trích bị gián đoạn: hệ thống hỗ trợ chạy tiếp từ điểm dừng (checkpoint). \newline 3a. Số dòng đặc trưng không khớp số bài: bước đóng gói báo lỗi và dừng để tránh phục vụ dữ liệu lệch. \\ \hline
+\textbf{Hậu điều kiện} & Bộ đặc trưng mới (nhúng âm thanh, tọa độ cảm xúc, nhúng lời, chỉ mục cover) sẵn sàng để pha phục vụ nạp lên. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case UC06 --- Chạy lại pipeline trích đặc trưng}
+\label{table:uc06}
+\end{table}
+
+\section{Yêu cầu phi chức năng}
+\label{section:2.4}
+Hệ thống cần đáp ứng các yêu cầu phi chức năng sau. Về tính đúng đắn khoa học, mọi tín hiệu và trọng số phải có nguồn gốc từ tài liệu đã công bố hoặc được tối ưu trên dữ liệu công khai, không được tự đặt tùy ý. Về ràng buộc dữ liệu và mô hình, hệ thống không sử dụng dữ liệu người dùng để huấn luyện và chỉ dùng mô hình đóng băng kèm đầu dò tuyến tính. Về hiệu năng, các đặc trưng được tính trước ở chế độ ngoại tuyến để truy vấn lúc phục vụ chỉ gồm các phép nhân ma trận, bảo đảm thời gian phản hồi thấp (đo đạc cụ thể ở mục~\ref{subsec:latency}). Về tính ổn định, kết quả gợi ý mang tính tất định (chọn tham lam, tie-break ổn định trên các nền tảng). Về khả năng kiểm chứng và bảo trì, mọi thành phần phải có quy trình đánh giá tái lập được, và việc thay thế một thành phần phải vượt qua một cổng kiểm định không thụt lùi trên độ đo cuối trước khi được áp dụng.
+
+Chương này đã khảo sát hiện trạng, xác lập mô hình tác nhân, các use case chính kèm đặc tả chi tiết và các yêu cầu phi chức năng. Các nền tảng lý thuyết và công nghệ cần thiết để đáp ứng những yêu cầu này được trình bày trong chương tiếp theo.
+
+\end{document}

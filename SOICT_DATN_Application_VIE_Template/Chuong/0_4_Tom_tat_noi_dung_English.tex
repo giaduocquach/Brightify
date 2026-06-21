@@ -1,0 +1,15 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+\begin{center}
+    \Large{\textbf{ABSTRACT}}\\
+\end{center}
+\vspace{1cm}
+
+Music discovery on current platforms relies mostly on metadata such as artist and genre, or on user listening history. Listeners, however, often look for music by the emotion or mood it evokes, and this need is poorly supported for the Vietnamese catalogue because no dedicated Vietnamese music-emotion dataset exists. Existing approaches either depend on user behaviour or use hand-crafted audio features that capture emotion weakly, making it hard to produce recommendations that ``feel right''.
+
+This thesis presents Brightify, a Vietnamese music recommendation system built around two core features: recommending songs similar to a given song, and recommending a list of songs from a colour chosen by the user. The chosen approach maps both songs and colours into a single two-dimensional Valence--Arousal emotional space following Russell's circumplex model, because this is the theoretical bridge that lets colour and music meet in one coordinate system. Each song is assigned an emotion coordinate computed offline: valence is derived mainly from lyrics through an ensemble of three grounded textual signals (the Vietnamese NRC-VAD lexicon combined with VnEmoLex, the ViSoBERT model, and an XLM-R model trained on EmoBank), while arousal is derived from the audio features of the self-supervised MuQ model combined with tempo and loudness. Colours are mapped into the same space using the ICEAS colour-emotion norms and Whiteford's colour--music relationship. The system then retrieves and ranks the songs nearest in emotion while enforcing acoustic coherence among the results.
+
+The main contributions are a fully grounded, fine-tuning-free and LLM-free emotion-labelling pipeline for Vietnamese music; an emotion-based colour-to-music mechanism with an acoustic-coherence refinement; and a rigorous multi-layer evaluation protocol together with a bake-off across several state-of-the-art models. On a catalogue of $5{,}138$ songs, the system outperforms strong baselines on offline metrics with statistical testing (FDR correction, bootstrap confidence intervals) and independent checks (true tempo, PMEmo cross-domain transfer). As no real user study has been conducted yet, these results are offline metrics.
+
+\end{document}

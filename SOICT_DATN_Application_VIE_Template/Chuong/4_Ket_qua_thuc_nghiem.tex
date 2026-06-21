@@ -1,0 +1,288 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Chương~\ref{chapter:Methodology} đã trình bày các nền tảng lý thuyết và công nghệ. Chương này mô tả cách các nền tảng đó được tổ chức thành kiến trúc hệ thống, thiết kế chi tiết cho hai chức năng cốt lõi, dữ liệu và kho nhạc thực tế, giao diện lập trình ứng dụng và giao diện người dùng, quá trình đánh giá thực nghiệm có thể kiểm chứng, thời gian phản hồi đo được và phần kiểm thử chức năng hệ thống.
+
+\section{Thiết kế kiến trúc}
+\label{section:4.1}
+Hệ thống được tổ chức theo hai pha tách biệt nhằm đáp ứng yêu cầu phản hồi nhanh: pha ngoại tuyến (offline) và pha phục vụ (serving). Pha ngoại tuyến chịu trách nhiệm trích xuất mọi đặc trưng nặng: nhúng âm thanh từ mô hình MuQ, các tín hiệu Valence từ lời, nhịp độ và độ to, rồi tính sẵn tọa độ cảm xúc và các ma trận biểu diễn cho toàn bộ kho nhạc. Pha phục vụ chỉ thực hiện các phép nhân ma trận và xếp hạng trên các đặc trưng đã tính sẵn, nên truy vấn của người dùng được trả về nhanh. Kiến trúc gồm ba tầng theo thứ tự phụ thuộc một chiều: tầng dữ liệu và đặc trưng ở dưới cùng, tầng động cơ gợi ý ở giữa, và tầng giao diện ứng dụng trang đơn ở trên cùng. Tầng trên chỉ gọi xuống tầng dưới qua một giao diện lập trình ứng dụng, không có phụ thuộc ngược.
+
+\section{Thiết kế chi tiết hai chức năng cốt lõi}
+\label{section:4.2}
+
+\subsection{Gán tọa độ cảm xúc cho bài hát}
+\label{subsection:4.2.1}
+Mỗi bài hát được gán một cặp Valence và Arousal, dùng chung cho cả hai chức năng. Valence được tính bằng tổ hợp EWE \cite{grimm2005ewe} của bốn tín hiệu, trong đó trọng số bằng độ tin cậy đo được của từng tín hiệu (Bảng~\ref{table:ewe}). Có thể thấy ba tín hiệu lời chiếm phần lớn trọng số, còn tín hiệu âm thanh chỉ đóng vai trò bổ trợ, phản ánh đúng việc Valence nằm chủ yếu ở nội dung lời.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{l l l}
+\hline
+\textbf{Tín hiệu Valence} & \textbf{Vai trò trong tổ hợp EWE} & \textbf{Nguồn} \\ \hline
+vn\_lex (từ điển) & Lời --- trọng số lớn & NRC-VAD-VN \cite{mohammad2018nrcvad} + VnEmoLex \cite{doan2022vnemolex} \\ \hline
+emobank & Lời (liên ngữ) --- trọng số lớn & XLM-R \cite{conneau2020xlmr} + EmoBank \cite{buechel2017emobank} \\ \hline
+vn\_sent & Lời (ngữ cảnh VN) --- trọng số vừa & ViSoBERT \cite{nguyen2023visobert} + UIT-VSMEC \cite{ho2020vsmec} \\ \hline
+muq (âm thanh) & Bổ trợ --- trọng số nhỏ nhất & MuQ \cite{zhu2025muq} \\ \hline
+\end{tabular}
+\caption{Các tín hiệu Valence và vai trò trong tổ hợp EWE (trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu)}
+\label{table:ewe}
+\end{table}
+
+Arousal được tính từ một tổ hợp ba đặc trưng âm thanh, với trọng số được hồi quy trên tập DEAM do con người gán nhãn \cite{aljanaki2017deam}: đặc trưng MuQ chiếm 0.574, nhịp độ (số nhịp trên phút) chiếm 0.35 và độ to chiếm 0.076. Trọng số nhịp độ được tăng có chủ đích vì biểu diễn MuQ nắm bắt độ to tốt nhưng nắm bắt nhịp độ yếu. Khi kiểm chứng chéo trên DEAM, tổ hợp này đạt hệ số tương quan 0.69, cao hơn mức 0.647 của biểu diễn MERT trước đó, và tương quan giữa Arousal với nhịp độ đo được đạt 0.47.
+
+\subsection{Ánh xạ màu sắc sang tọa độ cảm xúc}
+\label{subsection:4.2.2}
+Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này. Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền.
+\begin{equation}\label{eq:whiteford}
+    A = 0.373 \cdot \text{redness} + 0.356 \cdot \text{saturation} + 0.271 \cdot \text{lightness} - 0.10
+\end{equation}
+Tính đúng đắn của công thức Arousal được kiểm chứng độc lập bằng nhịp độ thật của các bài được truy hồi: tương quan giữa độ sáng của màu với nhịp độ đạt 0.41 và giữa độ bão hòa với nhịp độ đạt 0.66, đúng theo hướng màu sáng và bão hòa hơn ứng với nhạc nhanh hơn.
+
+\subsection{Truy hồi, chấm điểm và sắp xếp}
+\label{subsection:4.2.3}
+Với chức năng gợi ý theo màu, hệ thống chấm điểm độ gần cảm xúc bằng một hàm Gaussian RBF dị hướng với độ rộng trên trục Valence là 0.20 và trên trục Arousal là 0.14, do phân bố Arousal của kho nhạc nén hơn. Việc so khớp được thực hiện trong không gian phân vị (CDF) của kho nhạc để các màu khác nhau thực sự kéo về các vùng cảm xúc khác nhau. Để các bài trong cùng một màu nghe đồng nhất, hệ thống lấy dư một tập ứng viên rồi chọn cụm có độ nhất quán âm thanh cao nhất, đo bằng cosine trên biểu diễn MuQ đã được trừ trung bình để khử dị hướng \cite{ethayarajh2019anisotropy, mu2018allbutthetop}. Trọng số giữa độ khớp cảm xúc và độ nhất quán âm thanh được đặt ở mức 0.55. Cuối cùng, danh sách được đa dạng hóa bằng MMR \cite{carbonell1998mmr} và sắp xếp thành chuỗi chuyển cảm xúc mượt theo nguyên lý đồng cảm \cite{starcke2021iso}.
+
+Với chức năng gợi ý bài tương tự, điểm tương đồng giữa hai bài là tổ hợp tuyến tính của ba thành phần như trong Phương trình~\eqref{eq:fusion}: tương đồng âm thanh trên biểu diễn MuQ chiếm trọng số 0.76, độ gần cảm xúc chiếm 0.16 và tương đồng nội dung lời chiếm 0.08. Các bản cover và trùng được loại bằng một danh sách dựng sẵn, và kết quả được đa dạng hóa theo nghệ sĩ bằng MMR.
+\begin{equation}\label{eq:fusion}
+    \text{score} = 0.76 \cdot \cos(\text{MuQ}) + 0.16 \cdot \text{sim}(\text{V-A}) + 0.08 \cdot \cos(\text{lyrics})
+\end{equation}
+
+\section{Công cụ và mô hình sử dụng}
+\label{section:4.3}
+Bảng~\ref{table:tools} liệt kê các công cụ và mô hình chính được sử dụng. Toàn bộ mô hình học máy được dùng ở dạng đóng băng; phần huấn luyện duy nhất là các đầu dò tuyến tính (hồi quy ridge) trên các tập dữ liệu công khai. Phần phục vụ được hiện thực bằng FastAPI; giao diện là một ứng dụng trang đơn React.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{4.2cm} p{4.0cm} p{3.2cm}}
+\hline
+\textbf{Mục đích} & \textbf{Công cụ / mô hình} & \textbf{Nguồn} \\ \hline
+Ngôn ngữ và xử lý dữ liệu & Python, NumPy, scikit-learn & --- \\ \hline
+Biểu diễn âm nhạc & MuQ & \cite{zhu2025muq} \\ \hline
+Cảm xúc lời (ngữ cảnh VN) & ViSoBERT & \cite{nguyen2023visobert} \\ \hline
+Cảm xúc lời (liên ngữ) & XLM-R & \cite{conneau2020xlmr} \\ \hline
+Tương đồng lời & multilingual-e5-large & \cite{wang2024e5} \\ \hline
+Từ điển Valence & NRC-VAD, VnEmoLex & \cite{mohammad2018nrcvad, doan2022vnemolex} \\ \hline
+Phục vụ (API) & FastAPI (Python) & --- \\ \hline
+Giao diện & Ứng dụng trang đơn React & --- \\ \hline
+\end{tabular}
+\caption{Danh sách công cụ và mô hình chính}
+\label{table:tools}
+\end{table}
+
+\section{Dữ liệu và kho nhạc}
+\label{section:data}
+Kho nhạc phục vụ gồm \textbf{5.138 bài hát nhạc Việt}, mỗi bài có tệp âm thanh, siêu dữ liệu (tên bài, nghệ sĩ, album) và lời bài hát. Đây là số bài thực tế mà động cơ gợi ý nạp lên và là cỡ tập đánh giá trong các thực nghiệm ở mục~\ref{section:eval}.
+
+\textbf{Nguồn dữ liệu.} Dữ liệu được thu thập tự động qua một quy trình nhiều bước, không sử dụng dữ liệu người dùng: (i) khám phá nghệ sĩ Việt từ siêu dữ liệu Spotify, khởi đầu từ 353 nghệ sĩ hạt giống; (ii) lấy danh sách bài hát, siêu dữ liệu và lời từ YouTube Music; (iii) tải tệp âm thanh bằng \texttt{yt-dlp} theo bốn mức dự phòng (ưu tiên bản nhạc khớp thời lượng) kèm cắt khoảng lặng đầu/cuối; (iv) bổ sung lời bài hát từ dịch vụ LRCLIB. Như vậy Spotify chỉ phục vụ khám phá/định danh nghệ sĩ, còn âm thanh và lời lấy từ YouTube Music và LRCLIB.
+
+\textbf{Lời bài hát và xử lý bài thiếu lời.} Trên kho hiện tại, \textbf{toàn bộ 5.138/5.138 bài (100\%) đều có lời} (cờ \texttt{has\_lyrics}). Hệ thống vẫn có cơ chế dự phòng cho trường hợp thiếu lời: khi một bài không có lời, tín hiệu Valence từ lời không khả dụng nên tọa độ cảm xúc được suy từ các đặc trưng âm thanh (valence/arousal/energy) thay thế. Vì kho hiện tại phủ lời 100\%, cơ chế này không phải kích hoạt trong thực tế nhưng vẫn bảo đảm hệ thống không gãy khi mở rộng kho.
+
+\textbf{Xử lý bài trùng và cover.} Các phiên bản trùng/cover được phát hiện ở pha ngoại tuyến và lưu thành một chỉ mục dựng sẵn (\texttt{cover\_index.json}). Việc phát hiện lấy \textit{lời làm tín hiệu chính} (độ tương đồng cosine của lời rất cao tương ứng cùng nội dung) kết hợp khớp tiêu đề đã chuẩn hóa (bắt được cả phiên bản song ngữ cùng bài). Kết quả hiện tại: \textbf{1.124 bài} có quan hệ cover, gom thành \textbf{979 cặp}. Khi gợi ý bài tương tự, các cover của bài nguồn bị loại để không lãng phí vị trí và tránh trả về ``cùng một bài''.
+
+\textbf{Lưu trữ đặc trưng.} Các đặc trưng nặng được tính sẵn và lưu ra tệp để pha phục vụ nạp vào bộ nhớ (Bảng~\ref{table:features}). Đặc trưng MuQ được lưu ở \texttt{muq\_embeddings.npy} dưới dạng ma trận $5138 \times 1024$ (số thực 32-bit, đã chuẩn hóa L2) kèm tệp siêu dữ liệu căn theo thứ tự kho nhạc.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{4.2cm} p{5.4cm} p{2.8cm}}
+\hline
+\textbf{Đặc trưng} & \textbf{Tệp lưu trữ} & \textbf{Kích thước} \\ \hline
+Nhúng âm thanh MuQ & \texttt{muq\_embeddings.npy} & $5138 \times 1024$ \\ \hline
+Nhúng nội dung lời & \texttt{lyrics\_e5large.npy} & $5138 \times 1024$ \\ \hline
+Tọa độ cảm xúc (V-A) & \texttt{emotion\_labels\_v6i.json} & 5138 mục \\ \hline
+Nhịp độ sạch (BPM) & \texttt{clean\_bpm.json} & theo bài \\ \hline
+Chỉ mục cover/trùng & \texttt{cover\_index.json} & 1124 bài \\ \hline
+\end{tabular}
+\caption{Các tệp đặc trưng tính sẵn được pha phục vụ nạp lên}
+\label{table:features}
+\end{table}
+
+\section{Giao diện lập trình ứng dụng}
+\label{section:api}
+Tầng phục vụ được hiện thực bằng FastAPI và cung cấp một tập endpoint cho ứng dụng trang đơn (Bảng~\ref{table:api}). Các phản hồi dùng một phong bì JSON nhất quán với trường \texttt{success} và phần dữ liệu (\texttt{results}/\texttt{songs}/\texttt{song}), kèm \texttt{message} khi cần.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.8cm} p{5.8cm} p{6.0cm}}
+\hline
+\textbf{Phương thức} & \textbf{Đường dẫn} & \textbf{Chức năng} \\ \hline
+POST & \texttt{/api/recommend/color} & Gợi ý playlist theo 1--2 màu (UC02) \\ \hline
+GET & \texttt{/api/song/\{id\}/similar} & Gợi ý bài tương tự (UC01) \\ \hline
+GET & \texttt{/api/song/\{id\}} & Chi tiết + thông tin cảm xúc của bài (UC04) \\ \hline
+GET & \texttt{/api/songs} & Duyệt/lọc/sắp xếp kho nhạc (UC03) \\ \hline
+GET & \texttt{/api/search} & Tìm kiếm theo tên/nghệ sĩ/lời/cảm giác \\ \hline
+GET & \texttt{/api/audio/stream/\{id\}} & Phát tệp âm thanh (hoặc chuyển hướng CDN) \\ \hline
+\end{tabular}
+\caption{Các endpoint chính của giao diện lập trình ứng dụng}
+\label{table:api}
+\end{table}
+
+Mỗi bài hát trong kết quả gồm: chỉ số/định danh, tên bài, nghệ sĩ, mã màu tâm trạng, các giá trị Valence/Arousal/Energy, nhãn tâm trạng (góc phần tư cảm xúc), cờ và đường dẫn phát âm thanh, và (với gợi ý theo màu) một đối tượng giải thích ngắn \texttt{why}. Đối tượng \texttt{why} chứa câu giải thích tiếng Việt (ví dụ ``Tâm trạng bài khớp vùng V-A của màu''), tín hiệu mạnh nhất (âm thanh/tâm trạng/lời), các điểm khớp tương ứng và tọa độ V-A của bài và của màu; với gợi ý theo màu còn có một ``cầu nối'' (\texttt{bridge}) mô tả màu$\rightarrow$cảm xúc.
+
+\textbf{Xử lý lỗi ở biên.} Hệ thống xác thực đầu vào và xử lý các trường hợp biên một cách tường minh: mã màu không hợp lệ (không đúng dạng \texttt{\#RRGGBB}) bị từ chối bằng lỗi xác thực đầu vào; bài hát không tồn tại trả về mã 404; bài thiếu lời thì trường lời trả về rỗng (không phải lỗi); bài thiếu một đặc trưng âm thanh thì trường tương ứng trả về rỗng thay vì gây lỗi; định danh sai định dạng khi phát trả về mã 400 và tệp âm thanh không có trả về 404. Các endpoint gợi ý có giới hạn tần suất để tránh quá tải.
+
+\section{Giao diện người dùng}
+\label{section:ui}
+Giao diện là một ứng dụng trang đơn React, cung cấp \textbf{hai giao diện (skin) dùng chung một logic gợi ý}: (i) giao diện ``đắm chìm'' 3D mô phỏng hệ mặt trời, trong đó mỗi màu là một hành tinh và hành trình hai màu là một chuyến bay; và (ii) giao diện ``classic'' 2D theo phong cách trình phát nhạc quen thuộc. Người dùng đổi qua lại giữa hai giao diện và lựa chọn được lưu cục bộ.
+
+Các màn hình chính gồm: màn chọn màu (bảng 12 màu/hành tinh), màn kết quả playlist theo màu, màn duyệt và chọn bài hát, màn kết quả bài tương tự (chế độ ``đài''), bảng lời bài hát, thanh phát nhạc, ô tìm kiếm và lớp hướng dẫn sử dụng. Tâm trạng (Valence--Arousal) của mỗi bài được thể hiện trực quan qua màu nền ảnh bìa và một nhãn tâm trạng ngắn hiện khi đổi bài. Ngoài ra, trình phát hỗ trợ chuyển bài mượt (crossfade) dựa trên các điểm cue và độ to (LUFS) đã tính sẵn; đây là tính năng phát nhạc bổ trợ, không nằm trong hai chức năng cốt lõi của đồ án.
+
+Cần nêu rõ một điểm trung thực về mức hoàn thiện: dữ liệu cảm xúc đã được tính và \textit{cung cấp đầy đủ qua API} (tọa độ V-A, nhãn tâm trạng, đối tượng \texttt{why}, cầu nối màu$\rightarrow$cảm xúc), nhưng một \textit{màn chi tiết hiển thị tọa độ Valence--Arousal dạng số} và một \textit{bảng giải thích ``vì sao bài được gợi ý''} chưa được dựng thành màn riêng trong giao diện hiện tại; chúng được xem là hướng hoàn thiện trình bày ở Chương~\ref{chapter:conclusion}. Các hình dưới đây minh họa các màn hình; do hệ thống chạy tương tác (đặc biệt là giao diện 3D), ảnh chụp màn hình thực tế được chèn ở các vị trí tương ứng.
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Màn chọn màu (bảng 12 màu / hành tinh)}
+\caption{Màn chọn màu để gợi ý playlist (UC02)}
+\label{fig:ui-color}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Kết quả playlist theo màu --- danh sách bài kèm ảnh bìa nhuộm theo tâm trạng}
+\caption{Màn kết quả playlist theo màu (UC02, UC03)}
+\label{fig:ui-color-results}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Màn duyệt/chọn bài hát (thư viện, bài nổi bật, mới phát hành)}
+\caption{Màn chọn bài hát để tìm bài tương tự (UC01)}
+\label{fig:ui-browse}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Kết quả bài tương tự --- hàng đợi ``đài'' nối tiếp}
+\caption{Màn kết quả bài tương tự (UC01, UC03)}
+\label{fig:ui-similar}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Thông tin cảm xúc của bài hát --- màu nền theo V-A, nhãn tâm trạng, lời bài hát (màn V-A dạng số là hướng hoàn thiện)}
+\caption{Màn thông tin cảm xúc của bài hát (UC04)}
+\label{fig:ui-detail}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\uiscreenshot{Giải thích ngắn vì sao bài được gợi ý (đối tượng \texttt{why} từ API --- hiển thị trong giao diện là hướng hoàn thiện)}
+\caption{Giải thích lý do gợi ý dựa trên cảm xúc}
+\label{fig:ui-why}
+\end{figure}
+
+\section{Đánh giá thực nghiệm}
+\label{section:eval}
+Do không có dữ liệu người dùng, hệ thống được đánh giá bằng nhiều tầng độ đo ngoại tuyến không vòng tròn, bổ sung bằng các kiểm chứng độc lập (nhịp độ thật, chuyển miền sang tập khác). Nguyên tắc xuyên suốt là độ đo cuối quyết định việc chấp nhận một thành phần, và mọi thay đổi phải vượt một cổng kiểm định không thụt lùi.
+
+\subsection{Phương pháp và dữ liệu đánh giá}
+\label{subsection:eval-method}
+Tập đánh giá là toàn bộ \textbf{5.138 bài hát} của kho nhạc. Chức năng gợi ý theo màu được đánh giá trên \textbf{12 màu cơ bản} (theo Berlin \& Kay \cite{berlin1969basic}, cũng là 12 màu mà ICEAS \cite{jonauskaite2020universal} khảo sát) với mỗi truy vấn lấy $top\text{-}k=10$.
+
+Vì không có tập nhạc Việt được con người gán nhãn màu--cảm xúc, \textbf{ground truth cho gợi ý theo màu không phải nhãn người} mà được tạo theo phương pháp hiệu chỉnh phân bố kho nhạc \cite{steck2018calibrated}: mỗi màu được ánh xạ thành một tọa độ Valence--Arousal, rồi quy về \textit{đích phân vị} tương ứng trong phân bố tích lũy (CDF) của kho nhạc. Độ đo chính là \textit{sai số nhắm trúng đích} (targeting error, TE): khoảng cách Euclid trong không gian phân vị giữa đích phân vị của màu truy vấn và phân vị V-A của các bài được gợi ý, lấy trung bình trên các bài rồi trung bình trên 12 màu. Đây là một độ đo ngoại tuyến và \textit{tự tham chiếu} (đo trên chính nhãn V-A dùng để khớp); hạn chế này được nêu rõ ở cuối mục. Để tránh kết luận chỉ dựa vào một độ đo tự tham chiếu, TE được bổ sung bằng các kiểm chứng độc lập với nhãn (nhịp độ thật, chuẩn ICEAS, chuyển miền PMEmo) trình bày bên dưới. Các số liệu trong mục này được sinh bởi bộ công cụ đánh giá ngoại tuyến (\texttt{tools/color\_eval\_rigor.py}, \texttt{tools/color\_ablation.py}) và có thể chạy lại để tái lập.
+
+\subsection{Đánh giá chức năng gợi ý theo màu}
+\label{subsection:eval-color}
+Cấu hình hiện tại đạt \textbf{TE $= 0.0242$} với khoảng tin cậy bootstrap 95\% là $[0.0219,\,0.0263]$. Bảng~\ref{table:baseline} so sánh với năm đường cơ sở. Hệ thống vượt cả bốn đường cơ sở thực (ngẫu nhiên, theo độ phổ biến, chỉ Valence, chỉ Arousal): kiểm định Wilcoxon kèm hiệu chỉnh tỉ lệ phát hiện sai Benjamini--Hochberg \cite{benjamini1995fdr} cho \textbf{4/4 bác bỏ giả thuyết không với $p$ hiệu chỉnh $= 0.00031$}. Hệ thống không vượt đường cơ sở ``lân cận V-A tham lam'' --- đây là một \textit{trần lý thuyết} (oracle) loại bỏ đa dạng nên không phải đối thủ công bằng, và việc bám sát nó cho thấy phần đa dạng hóa chỉ đánh đổi rất ít TE.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{6.6cm} p{3.0cm} p{3.2cm}}
+\hline
+\textbf{Phương pháp} & \textbf{TE} & \textbf{Ghi chú} \\ \hline
+Ngẫu nhiên & 0.561 & đường cơ sở \\ \hline
+Theo độ phổ biến & 0.513 & đường cơ sở \\ \hline
+Chỉ Valence & 0.438 & loại bỏ một trục \\ \hline
+Chỉ Arousal & 0.292 & loại bỏ một trục \\ \hline
+Lân cận V-A tham lam (oracle) & 0.021 & trần lý thuyết, không đa dạng \\ \hline
+\textbf{Brightify (V-A RBF)} & \textbf{0.0242} & CI95 $[0.0219, 0.0263]$ \\ \hline
+\end{tabular}
+\caption{Sai số nhắm đích (TE) của hệ thống so với các đường cơ sở}
+\label{table:baseline}
+\end{table}
+
+Các kiểm chứng độc lập đều theo đúng hướng kỳ vọng. Valence của màu khớp chuẩn ICEAS với hệ số tương quan \textbf{$0.969$} (khoảng tin cậy Fisher-z $[0.889, 0.991]$); do chỉ có $n=12$ màu nên khoảng tin cậy rộng, và kiểm chứng giữ-một-ra (LOO-CV) cho $r \approx 0.87$. Công thức Arousal của Whiteford được kiểm bằng nhịp độ thật: $\rho(\text{độ sáng}, \text{BPM}) = 0.41$ và $\rho(\text{độ bão hòa}, \text{BPM}) = 0.66$. Bảng~\ref{table:ablation} cho thấy đóng góp của hai cải tiến chính: so khớp trong không gian phân vị nâng \textbf{độ tách biệt giữa các màu từ $0.13$ lên $0.31$}, còn việc trừ trung bình khi đo nhất quán âm thanh nâng \textbf{độ nhất quán từ khoảng $0.02$ lên $0.23$}. Với hành trình hai màu, kiểm định Kolmogorov--Smirnov so với phân bố đều cho $\text{KS} = 0.21$ (đạt) và độ chênh nhịp độ giữa các bước giảm từ $31$ xuống $2.7$ BPM.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{5.4cm} c c c}
+\hline
+\textbf{Cấu hình (cộng dồn)} & \textbf{Tách biệt} & \textbf{Nhất quán} & \textbf{TE} \\ \hline
+So khớp phân vị (cơ sở) & 0.129 & 0.015 & 0.0217 \\ \hline
++ Đích theo CDF & 0.225 & 0.026 & 0.0229 \\ \hline
++ Nhất quán âm thanh (trừ trung bình) & 0.224 & 0.113 & 0.0213 \\ \hline
++ Arousal Whiteford & 0.314 & 0.228 & 0.0242 \\ \hline
+\end{tabular}
+\caption{Ablation: mỗi cải tiến đóng góp vào tách biệt và nhất quán (12 màu, $top\text{-}k=10$)}
+\label{table:ablation}
+\end{table}
+
+Các kết quả này có một số hạn chế cần nêu thẳng: (1) TE là độ đo \textit{tự tham chiếu} (offline), chưa có nghiên cứu nghe thực tế của người dùng; (2) ánh xạ màu--cảm xúc là \textit{ngoại suy}: liên kết màu--cảm xúc tuy có khuôn mẫu phổ quát nhưng vẫn mang tính đặc thù văn hóa \cite{jonauskaite2019ml}, trong khi Việt Nam không nằm trong 30 quốc gia của khảo sát ICEAS; trục Valence--Arousal được ghi nhận ổn định xuyên văn hóa \cite{lee2025globalmood} song chưa có chuẩn màu--cảm xúc bản địa cho Việt Nam; (3) màu ấm và bão hòa (nâu, hồng) được đọc là ``năng lượng cao'' --- điều này \textit{trung thành} với quan hệ màu--âm nhạc của Whiteford dù có thể nghịch trực giác.
+
+\subsection{Đánh giá chức năng gợi ý bài tương tự}
+\label{subsection:eval-similar}
+Chức năng này được đánh giá trên các độ đo nội tại (80 bài hạt giống) và trên độ lợi NDCG \cite{steck2018calibrated} đối chiếu với các danh sách phát biên tập, theo tinh thần dùng đường cơ sở mạnh trong đánh giá hệ gợi ý \cite{dacrema2019progress}. Về độ đo nội tại (80 bài hạt giống, $top\text{-}k=10$), độ nhất quán tâm trạng (MoodCoherence) đạt $\approx 0.94$ và độ nhất quán nhịp độ (TempoCoherence) đạt $\approx 0.84$. Về NDCG@10 trên 872 truy vấn từ danh sách phát biên tập, hệ thống ở cấu hình hiện tại đạt $\approx 0.066$ (tái lập bằng \texttt{tools/eval\_editorial\_ndcg.py}); việc chọn MuQ làm trục biểu diễn âm thanh dựa trên một khảo sát so sánh trong đó MuQ vượt MERT trên chính độ đo này (mục~\ref{subsection:eval-bakeoff}). Khả năng chuyển miền của các đầu dò cảm xúc được kiểm trên tập PMEmo \cite{zhang2018pmemo}, đạt tương quan $0.69$ cho Valence và $0.65$ cho Arousal, cho thấy đầu dò nắm bắt cảm xúc thật chứ không phải hiện tượng riêng của tập huấn luyện; một kiểm chứng arousal độc lập bằng đặc trưng âm thanh khác cho tương quan $0.48$.
+
+\subsection{Khảo sát so sánh mô hình}
+\label{subsection:eval-bakeoff}
+Để bảo đảm mỗi thành phần học máy là lựa chọn tốt nhất, đồ án tiến hành một khảo sát so sánh nhiều mô hình tiên tiến, trong đó mỗi ứng viên được tinh chỉnh siêu tham số riêng trước khi so sánh và được đánh giá trên độ đo cuối. Kết quả tóm tắt trong Bảng~\ref{table:bakeoff}. Mô hình nhúng lời multilingual-e5-large \cite{wang2024e5} được chấp nhận thay cho mô hình tiếng Việt trước đó vì cải thiện độ nhất quán nội tại; các ứng viên còn lại không vượt được độ đo cuối nên các mô hình hiện hành được giữ nguyên. Chi tiết phân tích khảo sát này được trình bày ở Chương~\ref{chapter:SolutionAndContribution}.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{2.4cm} p{3.6cm} p{4.2cm} p{1.6cm}}
+\hline
+\textbf{Thành phần} & \textbf{Ứng viên} & \textbf{Kết quả trên độ đo cuối} & \textbf{Quyết định} \\ \hline
+Tương đồng lời & multilingual-e5-large & nhất quán nội tại tăng ở mọi trọng số & Chấp nhận \\ \hline
+Biểu diễn âm thanh & MuQ-MuLan & sai số màu và nhất quán đều kém hơn MuQ & Giữ MuQ \\ \hline
+Cảm xúc lời (VN) & PhoBERT-large & ngang ViSoBERT trên độ đo cuối & Giữ ViSoBERT \\ \hline
+Cảm xúc lời (liên ngữ) & mDeBERTa-v3 & kém XLM-R & Giữ XLM-R \\ \hline
+\end{tabular}
+\caption{Tóm tắt khảo sát so sánh mô hình}
+\label{table:bakeoff}
+\end{table}
+
+\section{Thời gian phản hồi và triển khai}
+\label{section:deploy}
+Hệ thống được triển khai thử nghiệm với pha ngoại tuyến chạy trước để sinh các đặc trưng và ma trận biểu diễn cho toàn bộ kho nhạc, sau đó động cơ gợi ý nạp các đặc trưng này vào bộ nhớ và phục vụ truy vấn qua giao diện lập trình ứng dụng cho ứng dụng trang đơn.
+
+\subsection{Thời gian phản hồi đo được}
+\label{subsec:latency}
+Vì mọi tính toán nặng đã thực hiện ở pha ngoại tuyến và không có mô hình nào được suy luận lúc phục vụ (nhãn cảm xúc đã đóng băng thành tra cứu), mỗi truy vấn chỉ gồm vài phép nhân ma trận trên ma trận $5138 \times 1024$. Đo trực tiếp trong tiến trình trên một máy Apple Silicon (chưa tính thời gian mạng và tuần tự hóa JSON), kết quả như Bảng~\ref{table:latency}: nạp động cơ một lần mất khoảng $10.7$ giây, còn mỗi truy vấn lúc phục vụ ở mức \textbf{vài mili-giây} (gợi ý theo một màu $\approx 3.6$ ms, gợi ý bài tương tự $\approx 4.5$ ms); hành trình hai màu nặng hơn ($\approx 90$ ms) do bước sắp xếp chuỗi cảm xúc. Đây là độ trễ tính toán lõi; độ trễ đầu cuối nhìn từ trình duyệt sẽ cao hơn do mạng và phát âm thanh.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{6.6cm} c c}
+\hline
+\textbf{Thao tác} & \textbf{Trung vị} & \textbf{p95} \\ \hline
+Nạp động cơ (một lần, lúc khởi động) & $\approx 10.7$ s & --- \\ \hline
+Gợi ý theo một màu (UC02) & $3.6$ ms & $3.8$ ms \\ \hline
+Gợi ý bài tương tự (UC01) & $4.5$ ms & $4.7$ ms \\ \hline
+Hành trình hai màu & $90$ ms & $96$ ms \\ \hline
+\end{tabular}
+\caption{Thời gian phản hồi tính toán lõi (đo trong tiến trình, không gồm mạng)}
+\label{table:latency}
+\end{table}
+
+\section{Kiểm thử chức năng hệ thống}
+\label{section:functest}
+Ngoài đánh giá mô hình, hệ thống còn được kiểm thử như một sản phẩm phần mềm. Bảng~\ref{table:testcase} tóm tắt các ca kiểm thử chính. Một phần được tự động hóa bằng \texttt{pytest} (\texttt{test/test\_color\_reco.py} kiểm tính hợp lệ cấu hình, ánh xạ 12 màu về đúng góc phần tư cảm xúc, đa dạng nghệ sĩ, tính đơn điệu của hành trình, độ trải Arousal; \texttt{test/test\_endless\_radio.py} kiểm hợp đồng loại trừ để chế độ ``đài'' không lặp), một phần được kiểm theo hợp đồng API và thủ công.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.0cm} p{4.4cm} p{5.2cm} p{2.6cm}}
+\hline
+\textbf{Mã} & \textbf{Mục tiêu} & \textbf{Kết quả mong đợi} & \textbf{Trạng thái} \\ \hline
+TC01 & Chọn màu và nhận danh sách bài hát & Trả về $\geq 5$ bài, V-A hợp lệ, đa dạng nghệ sĩ & Đạt (tự động) \\ \hline
+TC02 & Chọn bài và nhận bài tương tự & Trả về danh sách không chứa bài nguồn, đã loại cover & Đạt (tự động) \\ \hline
+TC03 & Xử lý mã màu không hợp lệ & Từ chối với lỗi xác thực đầu vào, không lỗi máy chủ & Đạt (hợp đồng API) \\ \hline
+TC04 & Xử lý bài không có lời & Trường lời rỗng, không gây lỗi & Đạt (hợp đồng API) \\ \hline
+TC05 & Xử lý bài không có đặc trưng & Trường tương ứng rỗng; lùi về tín hiệu còn lại & Đạt (hợp đồng API) \\ \hline
+TC06 & Kiểm tra thời gian phản hồi & Truy vấn đơn ở mức vài mili-giây & Đạt (mục~\ref{subsec:latency}) \\ \hline
+TC07 & Kiểm tra giao diện trên trình duyệt & Hai giao diện dựng và hoạt động & Đạt một phần (smoke; đa trình duyệt: hướng hoàn thiện) \\ \hline
+\end{tabular}
+\caption{Các ca kiểm thử chức năng hệ thống}
+\label{table:testcase}
+\end{table}
+
+Chương này đã trình bày kiến trúc, thiết kế chi tiết, dữ liệu và kho nhạc, giao diện lập trình ứng dụng và giao diện người dùng, kết quả đánh giá có thể kiểm chứng, thời gian phản hồi đo được và phần kiểm thử chức năng. Những giải pháp và đóng góp nổi bật rút ra từ quá trình này được phân tích trong chương tiếp theo.
+
+\end{document}

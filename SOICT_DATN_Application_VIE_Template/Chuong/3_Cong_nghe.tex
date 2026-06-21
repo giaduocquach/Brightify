@@ -1,0 +1,36 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Chương~\ref{chapter:Related_works} đã xác lập các yêu cầu cho một hệ thống gợi ý nhạc Việt dựa trên cảm xúc, không dùng dữ liệu người dùng và có cơ sở khoa học. Chương này trình bày các nền tảng lý thuyết và công nghệ được lựa chọn để đáp ứng các yêu cầu đó. Với mỗi thành phần, báo cáo nêu rõ nó giải quyết yêu cầu nào, các lựa chọn thay thế có thể dùng, và lý do của lựa chọn cuối cùng.
+
+\section{Mô hình cảm xúc Valence--Arousal}
+\label{section:3.1}
+Để cả bài hát và màu sắc có thể được so khớp trên cùng một thước đo, đồ án cần một biểu diễn cảm xúc thống nhất. Mô hình vòng tròn cảm xúc của Russell \cite{russell1980circumplex} mô tả cảm xúc bằng hai trục trực giao: Valence (tích cực--tiêu cực) và Arousal (mức năng lượng cao--thấp). Đây là mô hình được dùng phổ biến nhất trong nhận dạng cảm xúc âm nhạc và tâm lý học màu sắc, đồng thời là khung lý thuyết cho phép màu và nhạc gặp nhau, do liên kết màu--nhạc được trung gian hóa bởi cảm xúc \cite{palmer2013music}. So với các mô hình cảm xúc rời rạc (vui, buồn, giận...), mô hình hai trục liên tục cho phép tính khoảng cách và xếp hạng, nên phù hợp với bài toán truy hồi. Mô hình hai trục có một hạn chế đã biết là gộp một số cảm xúc cùng vùng (ví dụ giận dữ và sợ hãi đều ở vùng Valence thấp--Arousal cao), điều mà các mô hình ba chiều (thêm trục Dominance) \cite{russellmehrabian1977pad} hay các thang đo cảm xúc chuyên biệt cho âm nhạc như GEMS \cite{zentner2008gems} xử lý tốt hơn; tuy nhiên với bài toán truy hồi và xếp hạng theo tâm trạng, sự phân biệt tinh tế này không thiết yếu, nên mô hình hai trục vẫn là lựa chọn phù hợp và phổ biến nhất. Vì vậy, toàn bộ hệ thống quy về không gian Valence--Arousal.
+
+\section{Cơ sở liên kết màu sắc với cảm xúc}
+\label{section:3.2}
+Để ánh xạ màu về tọa độ cảm xúc, đồ án sử dụng ba cơ sở. Thứ nhất, để xử lý màu theo cảm nhận thị giác đồng đều, màu được chuyển sang không gian Oklab \cite{ottosson2020oklab} thay vì RGB thô. Thứ hai, trục Valence của màu được hồi quy về các chuẩn liên kết màu--cảm xúc của con người trong khảo sát ICEAS \cite{jonauskaite2020universal}, một khảo sát quy mô lớn trên nhiều quốc gia. Thứ ba, trục Arousal của màu được suy ra theo quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color}: nhạc nhanh, sôi động gắn với màu sáng và bão hòa hơn. Đặc biệt, độ đỏ và độ bão hòa được đặt trên trục Arousal, phù hợp với phát hiện rằng độ bão hòa là yếu tố chính chi phối Arousal của màu \cite{valdez1994effects}. Lựa chọn dùng Whiteford thay vì chỉ dùng quan hệ màu đơn thuần xuất phát từ việc cần đúng cấu trúc màu--âm nhạc, vì hệ thống ánh xạ màu sang nhạc chứ không phải mô tả cảm nhận màu độc lập.
+
+\section{Biểu diễn âm nhạc bằng học tự giám sát}
+\label{section:3.3}
+Để đo độ ``nghe giống nhau'' và để suy ra Arousal từ âm thanh, đồ án cần một biểu diễn âm nhạc mạnh. Các đặc trưng âm thanh thủ công nắm bắt cảm xúc yếu, nên đồ án dùng mô hình học tự giám sát. Hai ứng viên hàng đầu là MERT \cite{li2023mert} và MuQ \cite{zhu2025muq}; cả hai đều được đánh giá trên bộ chuẩn MARBLE \cite{yuan2023marble}. Đồ án lựa chọn MuQ làm trục biểu diễn âm thanh sau khi kiểm chứng cho thấy MuQ vượt MERT trên độ đo cuối của hệ thống. Biểu diễn của MuQ được dùng cho cả ba vai trò: đo tương đồng giữa hai bài, bảo đảm nhất quán âm thanh cho gợi ý theo màu, và làm đặc trưng cho đầu dò suy ra cảm xúc.
+
+\section{Biểu diễn lời và cảm xúc văn bản tiếng Việt}
+\label{section:3.4}
+Valence (mức vui--buồn) của một bài hát nằm chủ yếu ở nội dung lời, nên đồ án kết hợp nhiều tín hiệu văn bản độc lập. Tín hiệu từ điển dùng từ điển NRC-VAD \cite{mohammad2018nrcvad} ở bản dịch tiếng Việt, được đối chiếu và bổ sung bằng từ điển cảm xúc bản địa VnEmoLex \cite{doan2022vnemolex} nhằm giảm sai sót dịch máy. Tín hiệu chuyển hóa ngữ cảnh tiếng Việt dùng mô hình ViSoBERT \cite{nguyen2023visobert}, vốn được tiền huấn luyện cho văn bản mạng xã hội tiếng Việt nên hợp với văn phong lời nhạc; mô hình được gắn một đầu dò tuyến tính huấn luyện trên tập cảm xúc UIT-VSMEC \cite{ho2020vsmec}. Tín hiệu liên ngữ dùng mô hình đa ngữ XLM-R \cite{conneau2020xlmr} với đầu dò huấn luyện trên tập EmoBank tiếng Anh \cite{buechel2017emobank}, nhằm tận dụng nguồn nhãn Valence liên tục do con người chấm mà tiếng Việt không có. Các mô hình thay thế như PhoBERT \cite{nguyen2020phobert} đã được cân nhắc; lý do giữ ViSoBERT được trình bày ở Chương~\ref{chapter:SolutionAndContribution}.
+
+Đối với chức năng gợi ý bài tương tự, để đo độ tương đồng nội dung lời, đồ án dùng một mô hình nhúng câu (sentence embedding) theo kiến trúc Sentence-BERT \cite{reimers2019sbert}. Mô hình nhúng câu khác về mục đích so với các mô hình trên: nó tạo vector để \textit{so sánh} hai đoạn lời, trong khi các đầu dò cảm xúc \textit{dự đoán} một giá trị tuyệt đối. Việc lựa chọn cụ thể giữa một mô hình tiếng Việt chuyên biệt \cite{dangvantuan2024vnembedding} và một mô hình đa ngữ mạnh hơn \cite{wang2024e5} được kiểm chứng bằng thực nghiệm và trình bày ở Chương~\ref{chapter:Experiment}.
+
+\section{Phương pháp tổ hợp, hậu xử lý và sắp xếp}
+\label{section:3.5}
+Để tổ hợp nhiều tín hiệu Valence mà không tự đặt trọng số, đồ án dùng bộ ước lượng có trọng số theo độ tin cậy EWE \cite{grimm2005ewe}: mỗi tín hiệu được cân theo mức tương quan của nó với đồng thuận chung, nên không cần nhãn đích và tránh được tính vòng tròn. Khi đo tương đồng trên biểu diễn học sâu, các cosine thô bị thiên lệch dị hướng (anisotropy), nghĩa là mọi vector dồn về một nón hẹp khiến cosine gần như mất nghĩa \cite{ethayarajh2019anisotropy}; đồ án khắc phục bằng cách trừ trung bình (mean-centering) theo các kết quả đã công bố \cite{mu2018allbutthetop}. Để đa dạng hóa kết quả và tránh lặp nghệ sĩ, đồ án dùng độ liên quan biên cực đại MMR \cite{carbonell1998mmr}. Để sắp xếp danh sách gợi ý theo màu thành một chuỗi chuyển cảm xúc mượt, đồ án áp dụng nguyên lý đồng cảm (iso-principle) trong trị liệu âm nhạc \cite{starcke2021iso}.
+
+Ràng buộc ``không tinh chỉnh, chỉ đầu dò tuyến tính'' được củng cố bởi bằng chứng rằng đầu dò tuyến tính trên đặc trưng đóng băng có thể tổng quát hóa tốt hơn tinh chỉnh khi dữ liệu đích lệch miền \cite{kumar2022finetuning}, vốn đúng với trường hợp chuyển từ dữ liệu tiếng Anh sang nhạc Việt.
+
+\section{Công cụ và nền tảng triển khai}
+\label{section:3.6}
+Phần xử lý dữ liệu, trích đặc trưng và các đầu dò được hiện thực bằng Python với các thư viện học máy phổ biến, các mô hình được tải từ kho mô hình mở. Giao diện người dùng được xây dựng dưới dạng ứng dụng trang đơn (Single-Page Application, SPA). Phần liệt kê chi tiết công cụ kèm phiên bản được trình bày ở mục~\ref{section:4.3} của Chương~\ref{chapter:Experiment}.
+
+Chương này đã trình bày các nền tảng lý thuyết và công nghệ làm cơ sở cho hệ thống, từ mô hình cảm xúc, cơ sở màu sắc, các mô hình biểu diễn âm nhạc và văn bản, đến các phương pháp tổ hợp và sắp xếp. Cách các thành phần này được thiết kế, hiện thực và đánh giá cụ thể cho hai chức năng cốt lõi được trình bày trong chương tiếp theo.
+
+\end{document}

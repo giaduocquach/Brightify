@@ -1,0 +1,46 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Chương này trình bày năm đóng góp nổi bật của đồ án. Mỗi đóng góp được trình bày theo ba phần: \textit{bài toán} đặt ra, \textit{giải pháp} đã thực hiện, và \textit{kết quả} đạt được. Các chi tiết kỹ thuật và số liệu đã nêu ở Chương~\ref{chapter:Experiment} chỉ được tham chiếu lại, không lặp lại.
+
+\section{Quy trình gán tọa độ cảm xúc cho nhạc Việt trong điều kiện thiếu nhãn}
+\label{section:5.1}
+\textbf{Bài toán.} Để gợi ý theo cảm xúc, mỗi bài hát cần một tọa độ cảm xúc đáng tin cậy. Khó khăn đặc thù của nhạc Việt là \textit{không tồn tại} tập dữ liệu cảm xúc âm nhạc tiếng Việt được con người gán nhãn để huấn luyện trực tiếp, trong khi các đặc trưng âm thanh thủ công lại nắm bắt Valence (vui--buồn) rất yếu. Việc tự đặt nhãn hoặc tinh chỉnh trên dữ liệu lệch miền dễ dẫn tới kết luận vòng tròn và khó bảo vệ về mặt khoa học.
+
+\textbf{Giải pháp.} Đồ án tách cảm xúc thành hai trục và gán mỗi trục bằng nguồn phù hợp nhất: Valence suy chủ yếu từ \textit{lời}, Arousal suy từ \textit{âm thanh}. Valence là tổ hợp EWE của bốn tín hiệu (ba tín hiệu lời có nguồn gốc công bố và một tín hiệu âm thanh bổ trợ), trong đó trọng số bằng độ tin cậy đo được nên không cần nhãn đích (mục~\ref{subsection:4.2.1}). Arousal là hồi quy trên tập DEAM do con người gán nhãn, tổ hợp biểu diễn MuQ với nhịp độ và độ to để bù phần nhịp độ mà MuQ nắm bắt yếu. Toàn bộ mô hình được dùng ở dạng đóng băng kèm đầu dò tuyến tính, và \textit{không dùng mô hình ngôn ngữ lớn khi phục vụ}; mọi tín hiệu và từ điển đều truy nguồn được tới tài liệu đã công bố.
+
+\textbf{Kết quả.} Khả năng chuyển miền của các đầu dò được kiểm trên tập PMEmo và đạt tương quan $0.69$ cho Valence, $0.65$ cho Arousal (mục~\ref{subsection:eval-similar}), cho thấy đầu dò nắm bắt cảm xúc thật. Arousal sau khi bổ sung nhịp độ đã bám tempo thật với tương quan $0.47$, khắc phục điểm yếu của biểu diễn âm thanh đơn thuần. Đây là một quy trình gán cảm xúc cho nhạc Việt hoàn toàn có cơ sở khoa học và tái lập được trong điều kiện thiếu nhãn.
+
+\section{Cơ chế ánh xạ màu sắc sang nhạc qua không gian Valence--Arousal}
+\label{section:5.2}
+\textbf{Bài toán.} Cho phép người dùng chọn nhạc bằng \textit{màu sắc} đòi hỏi đặt màu và nhạc lên cùng một thước đo có ý nghĩa. Quan hệ màu--nhạc ở con người không trực tiếp mà được \textit{trung gian hóa bởi cảm xúc}, nên không thể ghép màu với nhạc một cách tùy tiện.
+
+\textbf{Giải pháp.} Đồ án quy màu về cùng không gian Valence--Arousal với bài hát. Màu được xử lý trong không gian tri giác Oklab; trục Valence được hồi quy về chuẩn liên kết màu--cảm xúc ICEAS, còn trục Arousal được suy theo quan hệ màu--âm nhạc của Whiteford (màu sáng và bão hòa hơn ứng với nhạc nhanh hơn) --- xem mục~\ref{subsection:4.2.2}. Nhờ đó, một màu trở thành một điểm cảm xúc và việc gợi ý quy về truy hồi các bài gần điểm đó.
+
+\textbf{Kết quả.} Valence của màu khớp chuẩn ICEAS với tương quan $0.969$, và công thức Arousal được kiểm chứng \textit{độc lập} bằng nhịp độ thật của các bài được truy hồi ($\rho$ với độ bão hòa $= 0.66$). Việc so khớp trong không gian phân vị nâng độ tách biệt giữa các màu từ $0.13$ lên $0.31$ (mục~\ref{subsection:eval-color}), bảo đảm các màu khác nhau thực sự gợi ra các vùng cảm xúc khác nhau thay vì cho kết quả giống nhau.
+
+\section{Thuật toán truy hồi kết hợp khớp cảm xúc và nhất quán âm thanh}
+\label{section:5.3}
+\textbf{Bài toán.} Chỉ khớp cảm xúc là chưa đủ: một danh sách có thể đúng tâm trạng nhưng nghe rời rạc vì các bài thuộc nhiều phong cách khác nhau. Hơn nữa, cosine thô trên biểu diễn học sâu bị thiên lệch dị hướng khiến độ tương đồng gần như mất nghĩa.
+
+\textbf{Giải pháp.} Hệ thống chấm điểm cảm xúc bằng hàm Gauss dị hướng (tin Arousal hơn Valence), so khớp trong không gian phân vị, rồi \textit{tăng nhất quán âm thanh} bằng cách chọn cụm ứng viên có độ gần cao trên biểu diễn MuQ \textit{đã trừ trung bình} để khử dị hướng. Kết quả được đa dạng hóa theo nghệ sĩ bằng MMR và, với gợi ý theo màu, được sắp xếp thành chuỗi chuyển cảm xúc mượt theo nguyên lý đồng cảm (mục~\ref{subsection:4.2.3}). Với gợi ý bài tương tự, điểm số là tổ hợp tuyến tính của âm thanh, cảm xúc và lời, kèm loại bỏ cover/trùng.
+
+\textbf{Kết quả.} Việc trừ trung bình nâng độ nhất quán âm thanh từ $0.06$ lên $0.34$; hành trình hai màu đạt kiểm định KS $= 0.21$ và giảm độ chênh nhịp độ giữa các bước từ $31$ xuống $2.7$ BPM (mục~\ref{subsection:eval-color}). Với gợi ý bài tương tự, độ nhất quán tâm trạng đạt $\approx 0.94$ (mục~\ref{subsection:eval-similar}). Như vậy thuật toán vừa khớp cảm xúc vừa tạo ra danh sách nghe đồng nhất.
+
+\section{Quy trình đánh giá nhiều tầng và khảo sát so sánh mô hình}
+\label{section:5.4}
+\textbf{Bài toán.} Khi không có dữ liệu người dùng, rất dễ rơi vào đánh giá vòng tròn (chỉ so với chính nhãn của mình). Đồng thời, một mô hình ``tốt nhất trên giấy'' theo các bộ chuẩn quốc tế chưa chắc là lựa chọn tốt nhất cho nhiệm vụ cụ thể trên nhạc Việt.
+
+\textbf{Giải pháp.} Đồ án xây dựng một quy trình đánh giá nhiều tầng: độ đo nội tại, các kiểm chứng \textit{độc lập với nhãn} (nhịp độ thật, chuẩn ICEAS, chuyển miền PMEmo), so sánh với các đường cơ sở mạnh kèm kiểm định thống kê (Wilcoxon + hiệu chỉnh FDR, khoảng tin cậy bootstrap), và một \textit{cổng không thụt lùi} trên độ đo cuối. Trên cùng tinh thần đó, đồ án tiến hành một khảo sát so sánh nhiều mô hình tiên tiến, trong đó \textit{mỗi ứng viên được tinh chỉnh siêu tham số riêng} trước khi so sánh và được phán quyết bằng độ đo cuối, không phải bằng thứ hạng trên bộ chuẩn (mục~\ref{subsection:eval-bakeoff}).
+
+\textbf{Kết quả.} Hệ thống vượt cả bốn đường cơ sở thực với $p$ hiệu chỉnh $= 0.00031$. Trong khảo sát so sánh, chỉ mô hình nhúng lời multilingual-e5-large được chấp nhận, còn ba ứng viên ``tốt nhất trên giấy'' khác không vượt độ đo cuối nên các mô hình hiện hành được giữ lại. Một bài học phương pháp luận rút ra là: phải tinh chỉnh siêu tham số của \textit{chính} thành phần mới rồi mới so sánh, vì kế thừa thiết lập của thành phần cũ có thể khiến một mô hình thực sự tốt hơn lại bị đánh giá là kém.
+
+\section{Hệ thống demo Brightify như một sản phẩm phần mềm}
+\label{section:5.5}
+\textbf{Bài toán.} Một đồ án tốt nghiệp không chỉ là thuật toán mà còn phải là một sản phẩm phần mềm chạy được, phản hồi nhanh và không phụ thuộc dữ liệu người dùng.
+
+\textbf{Giải pháp.} Đồ án hiện thực Brightify theo kiến trúc hai pha (mục~\ref{section:4.1}): pha ngoại tuyến tính sẵn mọi đặc trưng nặng cho $5.138$ bài hát và lưu ra tệp (mục~\ref{section:data}); pha phục vụ nạp các đặc trưng này vào bộ nhớ và đáp ứng truy vấn qua giao diện lập trình ứng dụng FastAPI (mục~\ref{section:api}) cho một ứng dụng trang đơn có \textit{hai giao diện} dùng chung logic gợi ý (mục~\ref{section:ui}).
+
+\textbf{Kết quả.} Nhờ tách pha, mỗi truy vấn lúc phục vụ chỉ là vài phép nhân ma trận và hoàn tất trong \textit{vài mili-giây} theo đo đạc thực tế (mục~\ref{subsec:latency}). Hệ thống vượt qua các ca kiểm thử chức năng chính (mục~\ref{section:functest}), bao gồm cả các trường hợp biên như màu không hợp lệ, bài thiếu lời hoặc thiếu đặc trưng. Brightify do đó là một sản phẩm hoàn chỉnh minh họa được hai chức năng cốt lõi chứ không chỉ là một tập thử nghiệm thuật toán.
+
+\end{document}

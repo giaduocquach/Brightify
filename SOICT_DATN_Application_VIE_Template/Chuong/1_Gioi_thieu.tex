@@ -1,0 +1,30 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+\section{Đặt vấn đề}
+\label{section:1.1}
+Âm nhạc số đã trở thành một phần thiết yếu của đời sống, kéo theo nhu cầu khám phá bài hát mới ngày càng lớn. Trên các nền tảng phổ biến, việc khám phá nhạc chủ yếu dựa trên siêu dữ liệu như nghệ sĩ, thể loại, hoặc dựa trên lịch sử nghe của người dùng. Cách làm này hoạt động tốt khi người nghe đã biết rõ mình muốn gì, nhưng lại tỏ ra hạn chế trong một tình huống rất phổ biến: người nghe muốn tìm nhạc theo \textit{cảm xúc} hay \textit{không khí} mà bài hát mang lại, chẳng hạn ``một bài buồn và nhẹ nhàng'' hoặc ``những bài cùng cảm giác với bài đang nghe''.
+
+Nhu cầu tìm nhạc theo cảm xúc gắn liền với một thực tế tâm lý học: cảm xúc của con người có thể được mô tả gọn trên hai trục Valence và Arousal trong mô hình vòng tròn cảm xúc của Russell \cite{russell1980circumplex}. Hơn nữa, cảm xúc không chỉ là cầu nối giữa người nghe và âm nhạc, mà còn là trung gian liên kết giữa âm nhạc và \textit{màu sắc}: các liên kết màu--nhạc ở con người được chứng minh là được trung gian hóa bởi cảm xúc, với mức tương quan rất cao \cite{palmer2013music}. Điều này gợi mở một cách khám phá nhạc trực quan và giàu cảm xúc hơn, đó là chọn nhạc thông qua màu sắc.
+
+Đối với kho nhạc tiếng Việt, bài toán có thêm khó khăn riêng. Hiện chưa có (theo hiểu biết của chúng tôi) một tập dữ liệu cảm xúc âm nhạc tiếng Việt được con người gán nhãn và công bố công khai để huấn luyện trực tiếp, trong khi các đặc trưng âm thanh thủ công lại nắm bắt Valence khá yếu. Vì vậy, việc gán cảm xúc đáng tin cậy cho nhạc Việt và xây dựng cơ chế gợi ý theo cảm xúc là một hướng đáng quan tâm, không chỉ phục vụ trải nghiệm nghe nhạc mà còn có thể áp dụng cho việc tạo danh sách phát theo tâm trạng hay các giao diện chọn nhạc bằng màu sắc.
+
+\section{Mục tiêu và phạm vi đề tài}
+\label{section:1.2}
+Hiện nay, các hệ thống gợi ý nhạc thương mại như Spotify chủ yếu khai thác lọc cộng tác (collaborative filtering) dựa trên hành vi người dùng, do đó cần lượng dữ liệu tương tác lớn và gặp khó với các bài hoặc người dùng mới. Một số nghiên cứu về nhận dạng cảm xúc trong âm nhạc đã đạt kết quả tốt trên các tập dữ liệu tiếng Anh như DEAM \cite{aljanaki2017deam} hay PMEmo \cite{zhang2018pmemo}, nhưng chưa có lời giải tương ứng cho nhạc Việt; còn các hệ thống gợi ý nhạc theo màu hiện có thì gắn với dữ liệu phương Tây và thường ánh xạ màu bằng quy tắc thủ công \cite{pesek2017moodo, kittimathaveenan2020color}. Như vậy, hạn chế chính hiện nay là: thiếu một cơ chế gợi ý nhạc Việt dựa trên cảm xúc, không phụ thuộc dữ liệu người dùng, hợp nhất truy vấn theo bài hát và theo màu trên một không gian cảm xúc học được dùng chung, và có cơ sở khoa học rõ ràng cho từng thành phần.
+
+Trên cơ sở đó, đồ án hướng tới xây dựng hệ thống Brightify với hai chức năng chính. Thứ nhất là \textbf{gợi ý bài hát tương tự}: cho một bài hát, hệ thống trả về các bài ``nghe giống nhau'' về âm thanh và cùng cảm xúc. Thứ hai là \textbf{gợi ý theo màu}: cho một màu sắc, hệ thống trả về một danh sách bài hát có cảm xúc tương ứng với màu đó và nghe đồng nhất với nhau. Phạm vi đồ án tập trung vào hai chức năng cốt lõi này; các chức năng phụ trợ khác không nằm trong phạm vi xét tới. Phần trình bày chi tiết về giải pháp và đóng góp được dành cho Chương~\ref{chapter:SolutionAndContribution}.
+
+\section{Định hướng giải pháp}
+\label{section:1.3}
+Đồ án giải quyết bài toán theo định hướng quy mọi đối tượng về cùng một không gian cảm xúc Valence--Arousal \cite{russell1980circumplex}, kết hợp các mô hình học sâu tự giám sát ở dạng đóng băng và đầu dò tuyến tính, thay vì tinh chỉnh hay dùng dữ liệu người dùng. Lựa chọn này xuất phát từ ràng buộc thực tế (không có dữ liệu cảm xúc nhạc Việt để huấn luyện) và từ bằng chứng cho thấy đầu dò tuyến tính trên đặc trưng đóng băng có thể tổng quát hóa tốt hơn tinh chỉnh khi dữ liệu đích lệch miền \cite{kumar2022finetuning}.
+
+Giải pháp của đồ án gồm ba khối. Khối thứ nhất gán tọa độ cảm xúc cho từng bài hát: Valence từ tổ hợp tín hiệu lời, Arousal từ đặc trưng âm thanh của mô hình MuQ \cite{zhu2025muq} kết hợp nhịp độ và độ to. Khối thứ hai ánh xạ màu sắc về cùng không gian cảm xúc dựa trên chuẩn ICEAS \cite{jonauskaite2020universal} và quan hệ màu--nhạc của Whiteford \cite{whiteford2018color}. Khối thứ ba truy hồi, sắp xếp và tinh chỉnh kết quả để bảo đảm vừa khớp cảm xúc vừa nhất quán âm thanh.
+
+Đóng góp chính của đồ án là một quy trình gán cảm xúc cho nhạc Việt hoàn toàn có nguồn gốc khoa học và không dùng mô hình ngôn ngữ lớn khi phục vụ, một cơ chế gợi ý theo màu dựa trên cảm xúc, cùng một quy trình đánh giá nhiều tầng và một khảo sát so sánh mô hình để bảo đảm mỗi thành phần là lựa chọn tốt nhất được kiểm chứng.
+
+\section{Bố cục đồ án}
+\label{section:1.4}
+Phần còn lại của báo cáo được tổ chức như sau. Chương~\ref{chapter:Related_works} khảo sát hiện trạng các hệ thống gợi ý nhạc và các nghiên cứu liên quan đến cảm xúc trong âm nhạc và màu sắc, từ đó rút ra các yêu cầu chức năng và phi chức năng cho hệ thống. Chương~\ref{chapter:Methodology} trình bày các nền tảng lý thuyết và công nghệ được sử dụng, bao gồm mô hình cảm xúc Valence--Arousal, các mô hình biểu diễn âm nhạc và ngôn ngữ, các từ điển và tập dữ liệu cảm xúc, cùng lý do lựa chọn từng thành phần. Chương~\ref{chapter:Experiment} mô tả kiến trúc, thiết kế chi tiết, quá trình xây dựng và đặc biệt là phần đánh giá thực nghiệm của hai chức năng cốt lõi. Chương~\ref{chapter:SolutionAndContribution} phân tích sâu các giải pháp và đóng góp nổi bật mà đồ án đạt được. Cuối cùng, Chương~\ref{chapter:conclusion} tổng kết kết quả, nêu các hạn chế còn tồn tại và đề xuất hướng phát triển.
+
+\end{document}
