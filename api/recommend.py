@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
-import pandas as pd
 
 import config
 from api.utils import dataframe_to_dict
@@ -16,28 +15,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/recommend", tags=["AI Recommendations"])
 
 _recommender = None
-
-
-def _enrich_album_art(song: dict):
-    """Add album art URL to a song dict, with thumbnail_url fallback."""
-    tid = song.get('track_id', '')
-    if tid:
-        from pathlib import Path
-        art_path = Path(__file__).parent.parent / 'album_art' / f'{tid}.jpg'
-        if art_path.exists():
-            song['has_album_art'] = True
-            song['album_art_url'] = f'/api/album-art/{tid}'
-        else:
-            thumb = song.get('thumbnail_url')
-            if thumb and not pd.isna(thumb):
-                song['has_album_art'] = True
-                song['album_art_url'] = str(thumb)
-            else:
-                song['has_album_art'] = False
-                song['album_art_url'] = None
-    else:
-        song['has_album_art'] = False
-        song['album_art_url'] = None
 
 
 def init(recommender):

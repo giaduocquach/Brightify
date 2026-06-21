@@ -6,7 +6,7 @@ import { solarRefs } from './refs';
 import { bodyByHex } from './bodies';
 import { glowTexture } from './glow';
 import { useDeviceTier } from './deviceTier';
-import ShipModel from './ShipModel';
+import ShipModel, { SHIP_RADIUS } from './ShipModel';
 
 const N_PARTICLES = 64;
 const UP = new Vector3(0, 1, 0);
@@ -37,7 +37,7 @@ export default function BoardingSequence() {
   // it stays visible above tiny bodies). Beam spans from the surface up to the saucer.
   const saucerScale = Math.max(0.4, size * 0.6);
   const beamH = Math.max(1.0, size * 2.5);
-  const beamBaseR = saucerScale * 0.85 * 0.9;
+  const beamBaseR = saucerScale * SHIP_RADIUS * 0.9; // beam mouth matches the pod's widest radius
 
   const particleData = useMemo(() => new Float32Array(N_PARTICLES * 3), []);
 

@@ -3,13 +3,20 @@
 > **Tên dự án**: Brightify — AI-Powered Vietnamese Music Streaming Platform  
 > **Phiên bản**: 7.1.0  
 > **Ngày đánh giá**: 22/05/2026  
-> **Ngôn ngữ chính**: Python (Backend), HTML/CSS/JavaScript (Frontend)
+> **Ngôn ngữ chính**: Python (Backend), TypeScript/React (Frontend)
+
+> ⚠️ **Lưu ý (snapshot lịch sử 22/05/2026).** Một số phần dưới đây đã lỗi thời so với mã nguồn hiện tại. Các thay đổi chính kể từ snapshot này:
+> - **Gỡ recommend-by-image** (CLIP / `core/image_analysis.py` không còn) và tính năng lyrics-search.
+> - **Frontend là React 19 + Vite** (`frontend/` → `static_spa/`) với 2 giao diện: vũ trụ 3D (react-three-fiber) và "classic" 2D — không còn là HTML/CSS/JS thuần.
+> - Bề mặt tính năng hiện tại: recommend-by-color, similar-song (radio vô tận), smart crossfade, tìm kiếm, player.
+>
+> Tài liệu chính xác nhất: [README.md](../README.md) và [SCIENTIFIC_AUDIT_AND_PLAN_V32.md](SCIENTIFIC_AUDIT_AND_PLAN_V32.md).
 
 ---
 
 ## 1. Giới Thiệu
 
-Brightify là một nền tảng streaming nhạc Việt Nam tích hợp AI, cho phép gợi ý bài hát dựa trên nhiều tín hiệu đa phương thức (multimodal): **màu sắc**, **hình ảnh**, **cảm xúc**, **lời bài hát**, **ngữ cảnh thời gian** và **sở thích cá nhân**. Hệ thống sử dụng các mô hình AI tiên tiến bao gồm PhoBERT (NLP tiếng Việt), CLIP (hiểu ảnh), Essentia (trích xuất đặc trưng âm thanh) và tự xây dựng bộ từ điển cảm xúc tiếng Việt với 730+ từ.
+Brightify là một nền tảng streaming nhạc Việt Nam tích hợp AI, cho phép gợi ý bài hát dựa trên nhiều tín hiệu đa phương thức (multimodal): **màu sắc**, **cảm xúc**, **lời bài hát** và **độ tương tự bài hát**. Hệ thống sử dụng các mô hình AI gồm bộ embedding lyrics đa ngữ (e5-large), MuQ (đặc trưng âm thanh), Essentia (DSP) và tự xây dựng bộ từ điển cảm xúc tiếng Việt với 730+ từ.
 
 ### Điểm nổi bật
 - **6 chế độ gợi ý AI**: Color, Image, Mood, Song Similarity, Lyrics, Context-aware

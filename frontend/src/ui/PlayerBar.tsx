@@ -27,7 +27,8 @@ export default function PlayerBar() {
 
   if (!current) return null;
   const pct = duration > 0 ? (time / duration) * 100 : 0;
-  // Per-song mood colour drives the dynamic accents (art halo, seek fill, beat strip, toggles).
+  // Per-song mood colour. --mood is published on the document root (App) so the whole field
+  // tints; here we only need the hex for the canvas beat strip + the album-art halo fallback.
   const mood = vaToHex(current.valence, current.arousal);
   // Volume icon graduates with the actual level so it reads at a glance.
   const VolIcon = volume <= 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
@@ -55,7 +56,7 @@ export default function PlayerBar() {
   };
 
   return (
-    <div className="player" style={{ ['--mood' as string]: mood }}>
+    <div className="player">
       {playbackError && <div className="player-error" role="status" aria-live="polite">{playbackError}</div>}
       <div className="player-track">
         <span className="player-art" style={{ background: mood }}>

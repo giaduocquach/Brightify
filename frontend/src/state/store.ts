@@ -55,6 +55,23 @@ function readOnboarded(): boolean {
   try { return localStorage.getItem(ONBOARD_KEY) === '1'; } catch { return false; }
 }
 
+// First-run usage guide: tracked separately from onboarding because onboarding is marked
+// on the first colour pick, whereas this records that the user has *seen the guide*. The "?"
+// button reopens it anytime, so this flag only gates the one-time auto-open.
+const GUIDE_KEY = 'brightify.guideSeen';
+function readGuideSeen(): boolean {
+  try { return localStorage.getItem(GUIDE_KEY) === '1'; } catch { return false; }
+}
+
+// Which UI skin the user prefers: the immersive 3D solar system (default — the showcase)
+// or the plain "classic" music-player layout (familiar list/library, lighter, mobile-friendly).
+// Persisted so the choice survives reloads; toggled from the top-right SkinToggle button.
+export type UiSkin = 'immersive' | 'classic';
+const SKIN_KEY = 'brightify.uiSkin';
+function readSkin(): UiSkin {
+  try { return localStorage.getItem(SKIN_KEY) === 'classic' ? 'classic' : 'immersive'; } catch { return 'immersive'; }
+}
+
 // Where the camera/Ui is: the astronaut greeting, the solar overview, exploring
 // one planet, or the two-planet journey. Derived from selection but `intro` is an
 // explicit gate the user dismisses by entering the system or picking a planet.
@@ -73,6 +90,7 @@ type QueueSeed =
 interface State {
   // view
   mode: Mode;
+  uiSkin: UiSkin;   // 'immersive' (3D) | 'classic' (plain player) — persisted, top-right toggle
 
   // selection + recommendations
   selectedColors: string[];
@@ -111,6 +129,7 @@ interface State {
 
   // onboarding + panel visibility (toggled from the player bar)
   onboardingDone: boolean;
+  guideOpen: boolean;      // usage-guide overlay visible (opened via the "?" button or first-run auto-open)
   showPlaylist: boolean;
   showLyrics: boolean;
 
@@ -123,11 +142,15 @@ interface State {
 
   // actions — selection
   enterSystem: () => void;
-  toggleColor: (hex: string) => void;
+  setSkin: (s: UiSkin) => void;
+  // opts.noTransitions: skip the 3D-only boarding camera sequence (classic skin has no camera).
+  toggleColor: (hex: string, opts?: { noTransitions?: boolean }) => void;
   clearColors: () => void;
   setJourneyLength: (n: number) => void;
   setHover: (hex: string | null) => void;
   markOnboarded: () => void;
+  openGuide: () => void;
+  closeGuide: () => void;
   togglePlaylist: () => void;
   toggleLyrics: () => void;
   reorderPlaylist: (from: number, to: number) => void;
@@ -156,6 +179,7 @@ interface State {
 
 export const useStore = create<State>((set, get) => ({
   mode: 'intro',
+  uiSkin: readSkin(),
 
   selectedColors: [],
   results: [],
@@ -187,6 +211,7 @@ export const useStore = create<State>((set, get) => ({
   reducedMotion: false,
 
   onboardingDone: readOnboarded(),
+  guideOpen: false,
   showPlaylist: true,
   showLyrics: false,
 
@@ -196,9 +221,16 @@ export const useStore = create<State>((set, get) => ({
   searchLoading: false,
   semanticAvailable: false,
 
-  enterSystem: () => set({ mode: 'system' }),
+  // Intro CTA → solar overview. First visit also auto-opens the usage guide once
+  // (best-effort via localStorage); the "?" button reopens it anytime afterwards.
+  enterSystem: () => set({ mode: 'system', guideOpen: !readGuideSeen() }),
 
-  toggleColor: (hex) => {
+  setSkin: (s) => {
+    try { localStorage.setItem(SKIN_KEY, s); } catch { /* ignore */ }
+    set({ uiSkin: s });
+  },
+
+  toggleColor: (hex, opts) => {
     // Cancel any pending boarding→journey transition from a previous pick so a stale
     // timer can't land us in the wrong mode after the selection changed.
     if (boardingTimer) { clearTimeout(boardingTimer); boardingTimer = null; }
@@ -210,7 +242,8 @@ export const useStore = create<State>((set, get) => ({
     else next = [sel[1], hex]; // replace oldest, keep a 2-colour journey
     const va = hexToVA(hex);
     // Adding the 2nd colour from explore plays the boarding (tractor-beam) sequence first.
-    const isBoarding = next.length === 2 && prevMode === 'explore';
+    // The classic skin has no camera → skip it (opts.noTransitions) and go straight to results.
+    const isBoarding = !opts?.noTransitions && next.length === 2 && prevMode === 'explore';
     const newMode: Mode = isBoarding ? 'boarding' : modeForColors(next.length);
     // Picking a colour also leaves the intro greeting behind + completes onboarding.
     if (!get().onboardingDone) get().markOnboarded();
@@ -249,6 +282,13 @@ export const useStore = create<State>((set, get) => ({
   markOnboarded: () => {
     try { localStorage.setItem(ONBOARD_KEY, '1'); } catch { /* ignore */ }
     set({ onboardingDone: true });
+  },
+
+  openGuide: () => set({ guideOpen: true }),
+  // Closing the guide records that it's been seen, so the one-time auto-open never fires again.
+  closeGuide: () => {
+    try { localStorage.setItem(GUIDE_KEY, '1'); } catch { /* ignore */ }
+    set({ guideOpen: false });
   },
   // Playlist + lyrics share one panel slot (in the HUD) → mutually exclusive: opening one closes
   // the other; closing leaves the other untouched.

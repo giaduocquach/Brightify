@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { engine } from '../audio/engine';
+import { solarRefs } from '../three/solar/refs';
 
 // A tiny vertical EQ strip at the far left of the player bar. Driven directly by the live
 // engine.features (bass / rms / treble) on a rAF loop that mutates the canvas — NO React state,
@@ -42,8 +43,10 @@ export default function BeatStrip({ color, playing }: { color: string; playing: 
         f.treble,
       ];
       ctx.clearRect(0, 0, W, H);
+      // Reduced-motion: rest flat (no perpetual EQ animation); smoothing still settles it down.
+      const flat = solarRefs.reducedMotion || !playingRef.current;
       for (let i = 0; i < BARS; i++) {
-        const tgt = playingRef.current ? Math.min(1, Math.max(0.05, targets[i])) : 0.04;
+        const tgt = flat ? 0.04 : Math.min(1, Math.max(0.05, targets[i]));
         levels[i] += (tgt - levels[i]) * 0.35; // smoothing toward target
         const h = Math.max(2, levels[i] * H);
         ctx.globalAlpha = 0.5 + levels[i] * 0.5;

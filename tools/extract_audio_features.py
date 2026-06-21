@@ -929,17 +929,6 @@ def patch_tags(
         df.to_csv(str(csv_path), index=False)
         log.info(f"  Done: ok={stats['ok']} fail={stats['fail']} → {csv_path}")
 
-    # Quick discriminativeness check
-    try:
-        df_check = pd.read_csv(str(targets[-1]))
-        from tools.backtest_v2.ground_truth.mood_tags_weak import discriminativeness_check
-        result = discriminativeness_check(df_check)
-        log.info(f"  §7.3 gate: verdict={result.get('verdict')}  "
-                 f"top1_frac={result.get('top1_frac', 0):.3f}  "
-                 f"distinct={result.get('distinct_top_tags', 0)}")
-    except Exception as e:
-        log.debug(f"  §7.3 check failed: {e}")
-
 
 def _dance_worker(args: tuple) -> tuple:
     """Worker for danceability patch — returns (track_id, danceability | None)."""

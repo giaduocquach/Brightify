@@ -14,6 +14,7 @@ import random
 import config as cfg
 
 from api.cache import cache_get, cache_set, make_key
+from api import serialization as _ser
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,8 @@ _music_path = None
 _artist_images_path = None
 _artist_data = {}  # artist_id → {name, image_url, genres, ...}
 _mp3_cache = set()       # cached set of existing mp3 filenames
-_albumart_cache = set()  # cached set of existing album art filenames
 _artistimg_cache = set() # cached set of existing artist image filenames
+# album-art existence cache lives in api.serialization (single source) — see _ser.*
 # Diacritics-stripped, lowercased search columns (positional to _recommender.df),
 # so toneless Vietnamese queries ("son tung", "anh nho em") still match. Built in init().
 _search_index = None  # {'name','artist','album','lyrics','lyrics_col'} or None
@@ -42,7 +43,7 @@ def _strip_diacritics(text: str) -> str:
 def _build_search_index(df: pd.DataFrame) -> None:
     """Precompute normalized name/artist/album/lyrics columns once at startup."""
     global _search_index
-    artist_col = next((c for c in ['primary_artist', 'artist_name', 'artist'] if c in df.columns), None)
+    artist_col = _ser.api_artist_column(df)
     lyrics_col = next((c for c in ['lyrics_cleaned', 'plain_lyrics'] if c in df.columns), None)
     name_norm = df['track_name'].fillna('').astype(str).map(_strip_diacritics)
     artist_norm = df[artist_col].fillna('').astype(str).map(_strip_diacritics) if artist_col else None
@@ -75,7 +76,7 @@ def _build_search_index(df: pd.DataFrame) -> None:
 
 def init(recommender, music_path: Path, artist_images_path: Path = None):
     global _recommender, _music_path, _artist_images_path, _artist_data
-    global _mp3_cache, _albumart_cache, _artistimg_cache
+    global _mp3_cache, _artistimg_cache
     _recommender = recommender
     _music_path = music_path
     _artist_images_path = artist_images_path
@@ -102,7 +103,7 @@ def init(recommender, music_path: Path, artist_images_path: Path = None):
         _mp3_cache = {f.stem for f in _music_path.glob("*.mp3")}
     album_art_dir = cfg.ALBUM_ART_DIR
     if album_art_dir.exists():
-        _albumart_cache = {f.stem for f in album_art_dir.glob("*.jpg")}
+        _ser.set_albumart_cache({f.stem for f in album_art_dir.glob("*.jpg")})
     if _artist_images_path and _artist_images_path.exists():
         _artistimg_cache = {f.stem for f in _artist_images_path.glob("*.jpg")}
 
@@ -151,7 +152,6 @@ def _song_to_dict(row, idx):
     """Convert a dataframe row to a clean song dict"""
     track_id = str(row.get('track_id', ''))
     has_audio = track_id in _mp3_cache if track_id else False
-    has_art = track_id in _albumart_cache
 
     # Artist image lookup
     artist_ids_str = str(row.get('artist_ids', ''))
@@ -169,14 +169,8 @@ def _song_to_dict(row, idx):
             has_artist_img = True
             artist_img_url = adata['image_url']  # direct CDN URL
 
-    # Determine album art URL: prefer local file, fallback to thumbnail_url
-    if has_art:
-        album_art_url = f"/api/album-art/{track_id}"
-    elif thumbnail_url:
-        has_art = True
-        album_art_url = thumbnail_url
-    else:
-        album_art_url = None
+    # Album art URL: local file → thumbnail fallback → none (shared resolver).
+    has_art, album_art_url = _ser.resolve_album_art_url(track_id, thumbnail_url)
 
     # Smart crossfade needs: tempo, energy, key, mode, mood_quadrant, duration_s,
     # loudness_lufs (Phase 2), fade_out_cue_s/fade_in_cue_s/downbeat_times_json (Phase 3).
@@ -248,11 +242,7 @@ async def browse_songs(
         df = df[df['mood_quadrant'].str.contains(mood, case=False, na=False, regex=False)]
 
     # Filter by artist
-    artist_col = None
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            artist_col = col
-            break
+    artist_col = _ser.api_artist_column(df)
     if artist and artist_col:
         df = df[df[artist_col].str.contains(artist, case=False, na=False)]
 
@@ -336,25 +326,6 @@ async def random_songs(count: int = Query(default=10, ge=1, le=50)):
     selected = df.sample(n=min(count, len(df)))
     songs = [_song_to_dict(row, idx) for idx, row in selected.iterrows()]
     return {"success": True, "songs": songs}
-
-
-@router.get("/songs/search")
-async def search_songs(q: str = Query(..., min_length=1), limit: int = Query(default=20, ge=1, le=50)):
-    """Legacy substring search — use GET /api/search for the smart multi-tier version."""
-    df = _recommender.df
-    query = q.strip().lower()
-
-    mask = df['track_name'].str.lower().str.contains(query, na=False)
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            mask = mask | df[col].str.lower().str.contains(query, na=False)
-            break
-    if 'album_name' in df.columns:
-        mask = mask | df['album_name'].str.lower().str.contains(query, na=False)
-
-    results = df[mask].head(limit)
-    songs = [_song_to_dict(row, idx) for idx, row in results.iterrows()]
-    return {"success": True, "songs": songs, "query": q, "total": len(songs)}
 
 
 def _extract_lyric_snippet(lyrics: str, qnorm: str, window: int = 90) -> Optional[str]:
@@ -525,11 +496,7 @@ async def list_artists(limit: int = Query(default=50, ge=1, le=9999)):
     """List unique artists with song counts and images"""
     df = _recommender.df
     
-    artist_col = None
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            artist_col = col
-            break
+    artist_col = _ser.api_artist_column(df)
     
     if not artist_col:
         return {"success": True, "artists": []}
@@ -542,16 +509,8 @@ async def list_artists(limit: int = Query(default=50, ge=1, le=9999)):
         track_id = str(sample.get('track_id', ''))
         thumbnail_url = str(sample.get('thumbnail_url', '')) if pd.notna(sample.get('thumbnail_url')) else None
 
-        # Album art: prefer local file, fallback to thumbnail_url
-        if track_id in _albumart_cache:
-            has_art = True
-            art_url = f"/api/album-art/{track_id}"
-        elif thumbnail_url:
-            has_art = True
-            art_url = thumbnail_url
-        else:
-            has_art = False
-            art_url = None
+        # Album art: prefer local file, fallback to thumbnail_url (shared resolver).
+        has_art, art_url = _ser.resolve_album_art_url(track_id, thumbnail_url)
 
         # Get artist image from artist_images directory
         artist_ids_str = str(sample.get('artist_ids', ''))
@@ -587,11 +546,7 @@ async def artist_songs(artist_name: str):
     """Get all songs by a specific artist"""
     df = _recommender.df
 
-    artist_col = None
-    for col in ['primary_artist', 'artist_name', 'artist']:
-        if col in df.columns:
-            artist_col = col
-            break
+    artist_col = _ser.api_artist_column(df)
 
     if not artist_col:
         raise HTTPException(status_code=404, detail="Artist data not available")
@@ -671,23 +626,8 @@ async def get_song_details(song_id: str):
     try:
         df = _recommender.df
         
-        # Try as track_id first (string identifier)
-        if not song_id.isdigit():
-            if 'track_id' in df.columns:
-                matches = df.index[df['track_id'] == song_id].tolist()
-                if matches:
-                    idx = int(matches[0])
-                    row = df.iloc[idx]
-                else:
-                    raise HTTPException(status_code=404, detail="Song not found")
-            else:
-                raise HTTPException(status_code=404, detail="Song not found")
-        else:
-            # Legacy: integer index support
-            idx = int(song_id)
-            if idx < 0 or idx >= len(df):
-                raise HTTPException(status_code=404, detail="Song not found")
-            row = df.iloc[idx]
+        idx = _ser.resolve_track_id_to_index(song_id, df)
+        row = df.iloc[idx]
         song = _song_to_dict(row, idx)
 
         # Add extra details
@@ -722,17 +662,9 @@ async def get_similar_songs(
     try:
         exclude_ids = [t for t in exclude.split(",") if t][:120]
         df = _recommender.df
-        # Resolve track_id to index
-        if not song_id.isdigit():
-            if 'track_id' in df.columns:
-                matches = df.index[df['track_id'] == song_id].tolist()
-                if not matches:
-                    raise HTTPException(status_code=404, detail="Song not found")
-                resolved_idx = int(matches[0])
-            else:
-                raise HTTPException(status_code=404, detail="Song not found")
-        else:
-            resolved_idx = int(song_id)
+        # Resolve track_id to index (bounds_check=False: an out-of-range integer falls
+        # through to the recommender → 500, preserving the original behavior).
+        resolved_idx = _ser.resolve_track_id_to_index(song_id, df, bounds_check=False)
         
         results = _recommender.recommend_by_song(resolved_idx, top_k=count, exclude_ids=exclude_ids)
         df_results = results
@@ -761,20 +693,7 @@ async def get_track_info(song_index: str):
     """Get track info with local audio availability. Accepts track_id or integer index."""
     try:
         df = _recommender.df
-        # Resolve to index
-        if not song_index.isdigit():
-            if 'track_id' in df.columns:
-                matches = df.index[df['track_id'] == song_index].tolist()
-                if not matches:
-                    raise HTTPException(status_code=404, detail="Song not found")
-                idx = int(matches[0])
-            else:
-                raise HTTPException(status_code=404, detail="Song not found")
-        else:
-            idx = int(song_index)
-            if idx < 0 or idx >= len(df):
-                raise HTTPException(status_code=404, detail="Song not found")
-
+        idx = _ser.resolve_track_id_to_index(song_index, df)
         track = df.iloc[idx]
         track_id = str(track.get('track_id', ''))
         file_path = _music_path / f"{track_id}.mp3"

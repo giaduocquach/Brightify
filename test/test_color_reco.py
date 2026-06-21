@@ -43,14 +43,13 @@ def test_config_sigma_heteroscedastic():
 
 
 def test_config_labels_version():
-    """Must use v5b+ or v6a+ labels (no LLM-only v4/v5a, no CLAP-raw labels)."""
+    """Must use v5b+ or v6x labels (no LLM-only v4/v5a, no CLAP-raw labels).
+    Accepts any v6 revision (v6a..v6z) — the active file has advanced to v6i."""
+    import re
     from config import RELABELED_EMOTIONS_FILE
     label_file = RELABELED_EMOTIONS_FILE
-    valid = (
-        any(f"v5{x}" in label_file for x in ["b", "c", "d", "e"])
-        or any(f"v6{x}" in label_file for x in ["a", "b", "c"])
-    )
-    assert valid, f"Expected v5b+ or v6a+ labels, got: {label_file}"
+    valid = bool(re.search(r"v(5[b-z]|6[a-z])", label_file))
+    assert valid, f"Expected v5b+ or v6x labels, got: {label_file}"
 
 
 def test_config_rrf_enabled():
@@ -70,7 +69,7 @@ ICEAS_CENTROIDS = [
     ('#0067A5', 'blue',      'Q4'),   # Oklab V=0.567, A=0.483 → Q4 (calm/peaceful; ICEAS: 25% calm+18% peaceful)
     ('#848482', 'grey',      'Q3'),   # Oklab V=0.411, A=0.320 → Q3
     ('#222222', 'black',     'Q3'),   # Oklab V=0.255, A=0.453 → Q3
-    ('#9C4F96', 'purple',    'Q2'),   # Oklab V=0.478, A=0.513 → Q2
+    ('#9C4F96', 'purple',    'Q3'),   # Oklab V=0.462, A=0.434 → Q3 (both below mid; calibration moved purple below the arousal mid-line)
     ('#80461B', 'brown',     'Q2'),   # Oklab V=0.424, A=0.753 → Q2
     ('#F2F3F4', 'white',     'Q4'),   # Oklab V=0.591, A=0.166 → Q4
 ]

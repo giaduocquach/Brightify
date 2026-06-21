@@ -18,8 +18,8 @@ import { useHiResMap } from './useHiResMap';
 import { giantParamsFor } from './giantConfig';
 import Atmosphere from './Atmosphere';
 import GasGiantDetail from './GasGiantDetail';
-import Comet from './Comet';
-import BlackHole from './BlackHole';
+import PlanetAurora from './PlanetAurora';
+import { vibeRefs } from '../vibe/vibeRefs';
 
 // ── Saturn-style ring with radial-correct UVs (sample the strip texture by radius) ──
 function PlanetRing({ def }: { def: BodyDef }) {
@@ -70,7 +70,7 @@ function TexturedSphere({ def }: { def: BodyDef }) {
         <sphereGeometry args={[def.size, 64, 64]} />
         <meshStandardMaterial
           map={activeMap}
-          color={giant ? giant.tint : undefined}
+          color={giant ? giant.tint : def.tint}
           bumpMap={bump}
           bumpScale={bump ? 0.015 : 0}
           // Earth city-lights: emissive only reads where the day map is dark, so it
@@ -96,12 +96,14 @@ function TexturedSphere({ def }: { def: BodyDef }) {
   );
 }
 
-// ── Pluto: no texture available → muted procedural tholin sphere ──
-function PlutoSphere({ def }: { def: BodyDef }) {
+// ── Texture-less bodies (Pluto, the violet ice-orb): a solid sphere in the body's `tint`
+//    (Pluto falls back to a muted tholin colour). The parent adds the emotion-hue atmosphere
+//    rim, so even a flat sphere reads clearly as its colour. ──
+function ColorSphere({ def }: { def: BodyDef }) {
   return (
     <mesh>
-      <sphereGeometry args={[def.size, 40, 40]} />
-      <meshStandardMaterial color="#9a7a5a" roughness={1} metalness={0} />
+      <sphereGeometry args={[def.size, 48, 48]} />
+      <meshStandardMaterial color={def.tint ?? '#9a7a5a'} roughness={0.85} metalness={0} envMapIntensity={0.3} />
     </mesh>
   );
 }
@@ -151,8 +153,8 @@ export default function CelestialBody({ def }: { def: BodyDef }) {
   });
 
   const dim = focused && !selected;
-  // Procedural showpieces (comet/black hole) bring their own glow → no fresnel atmosphere.
-  const showAtmo = !def.special && (def.kind === 'planet' || def.kind === 'ringed' || def.kind === 'moon');
+  // Every body wears a faint emotion-hue atmosphere rim (this is what carries the colour).
+  const showAtmo = def.kind === 'planet' || def.kind === 'ringed' || def.kind === 'moon';
 
   const enter = () => { setHovered(true); setHover(def.hex); document.body.style.cursor = 'pointer'; };
   const leave = () => { setHovered(false); setHover(null); document.body.style.cursor = 'default'; };
@@ -164,33 +166,29 @@ export default function CelestialBody({ def }: { def: BodyDef }) {
       onPointerOut={(e) => { e.stopPropagation(); leave(); }}
       onClick={(e) => { e.stopPropagation(); toggleColor(def.hex); }}
     >
-      {def.special === 'comet' ? (
-        <Comet def={def} selected={selected} />
-      ) : def.special === 'blackhole' ? (
-        <BlackHole def={def} selected={selected} />
-      ) : (
-        <group ref={tilt} rotation={[0, 0, def.axialTilt]}>
-          <group ref={spin}>
-            {/* fallback: a flat emotion-hue sphere until the texture streams in (no blank/blurry pop) */}
-            <Suspense fallback={
-              <mesh>
-                <sphereGeometry args={[def.size, 32, 32]} />
-                <meshStandardMaterial color={def.hex} roughness={1} metalness={0} />
-              </mesh>
-            }>
-              {def.texture ? (
-                <TexturedSphere def={def} />
-              ) : (
-                <PlutoSphere def={def} />
-              )}
-            </Suspense>
-          </group>
+      <group ref={tilt} rotation={[0, 0, def.axialTilt]}>
+        <group ref={spin}>
+          {/* fallback: a flat emotion-hue sphere until the texture streams in (no blank/blurry pop) */}
+          <Suspense fallback={
+            <mesh>
+              <sphereGeometry args={[def.size, 32, 32]} />
+              <meshStandardMaterial color={def.tint ?? def.hex} roughness={1} metalness={0} />
+            </mesh>
+          }>
+            {def.texture ? (
+              <TexturedSphere def={def} />
+            ) : (
+              <ColorSphere def={def} />
+            )}
+          </Suspense>
         </group>
-      )}
+        {/* polar aurora on the planet you're exploring (calm/happy moods, high tier) */}
+        {exploring && vibeRefs.heavy && <PlanetAurora size={def.size} />}
+      </group>
 
-      {/* invisible (opacity 0) but raycastable halo so distant specks — the comet (r48) and
-          black hole (r70) — stay easy to hover/click despite being sub-pixel on screen. */}
-      {def.special && (
+      {/* invisible (opacity 0) but raycastable halo so a far speck (Eris, r38) stays easy to
+          hover/click despite being sub-pixel on screen. */}
+      {def.orbitRadius >= 32 && (
         <mesh>
           <sphereGeometry args={[Math.max(def.size * 4, 2), 8, 8]} />
           <meshBasicMaterial transparent opacity={0} depthWrite={false} />

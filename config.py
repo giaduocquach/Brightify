@@ -74,7 +74,6 @@ LYRICS_EMBED_MODEL = "intfloat/multilingual-e5-large"
 EMBEDDINGS_META_FILE = str(DATA_DIR / "embeddings_metadata.json")
 ARTIST_IMAGES_DATA_FILE = str(DATA_DIR / "artist_images.json")
 PHASE1_ARTISTS_FILE = str(CHECKPOINTS_DIR / "phase1_artists.csv")
-CROSSFADE_FEATURES_FILE = str(DATA_DIR / "crossfade_features.json")
 
 # ============================================================================
 # PhoBERT Model Settings
@@ -123,20 +122,6 @@ NORMALIZED_FEATURES = [
 ]
 
 # ============================================================================
-# Color Mapping Settings (Based on Palmer et al. 2013 & Russell Model)
-# ============================================================================
-
-# HSL Color Space Ranges
-HUE_MAPPING = {
-    'sad_blue': (210, 240),      # Low valence → Blue
-    'neutral_green': (120, 210),  # Medium valence → Green-Cyan
-    'happy_yellow': (30, 120),    # High valence → Yellow-Orange
-}
-
-SATURATION_RANGE = (30, 100)  # Energy → Saturation
-LIGHTNESS_RANGE = (20, 80)     # Mode & Acousticness → Lightness
-
-# ============================================================================
 # Recommendation Weights (Research-based)
 # ============================================================================
 
@@ -172,12 +157,11 @@ RECO_SONG_WEIGHTS = {
 
 # Tag signal: MTG-Jamendo instrument tags (40-dim cosine) as post-ranking bonus.
 # Fixed sample rate bug (44.1→16kHz) on 2026-06-09: instrument_tags now discriminative.
-# Applied as: score = base_score * (1 + TAG_BONUS_WEIGHT * instrument_cosine)
+# Applied as: score = base_score * (1 + λ * instrument_cosine), λ from the similarity weight vector.
 # Additive-multiplier keeps existing weights unchanged; tag signal boosts/not kills.
 # Intrinsic eval (80 seeds, 2026-06-09): λ=0.03 → Symmetry +0.013 ✓, 0 regressions.
 # Adopted at λ=0.03 (conservative: max 3% boost, no regression at any metric).
 ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "True") == "True"
-TAG_BONUS_WEIGHT   = 0.03   # instrument cosine can boost score by up to 3%
 # Cover/duplicate filter (2026-06-09): exclude versions of the same song from recommendations.
 # Built by tools/detect_cover_songs.py — lyrics-first approach (VN-SBERT cosine > 0.92).
 # Catches: same song different title/case, feat. versions, cross-lingual (April Lie / Tháng Tư).
@@ -462,10 +446,6 @@ COLOR_DISTANCE_METHOD = 'CIEDE2000'  # Options: 'CIEDE2000', 'EUCLIDEAN', 'HSL'
 # ============================================================================
 # Data Quality Settings
 # ============================================================================
-REQUIRE_LYRICS = True           # Remove songs without lyrics
-REQUIRE_AUDIO_FEATURES = True   # Remove songs without audio features
-REMOVE_DUPLICATES = True        # Remove duplicate tracks
-
 # Tempo normalization range
 TEMPO_MIN = 60
 TEMPO_MAX = 200
@@ -603,7 +583,4 @@ RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6i.json")  # v6h groun
 # ============================================================================
 RANDOM_SEED = 42
 VERBOSE = False  # Set True to see detailed logs
-
-# GPU settings
-USE_GPU = True  # Auto-detect CUDA if available
 

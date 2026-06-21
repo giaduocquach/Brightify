@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import config as cfg
+from api import serialization as _ser
 
 
 def sanitize_for_json(obj):
@@ -38,20 +39,6 @@ def sanitize_for_json(obj):
             return None
     return obj
 
-# Cache album art existence to avoid per-request stat() calls
-_albumart_cache = None
-
-def _get_albumart_cache():
-    global _albumart_cache
-    if _albumart_cache is None:
-        art_dir = cfg.ALBUM_ART_DIR
-        if art_dir.exists():
-            _albumart_cache = {f.stem for f in art_dir.glob('*.jpg')}
-        else:
-            _albumart_cache = set()
-    return _albumart_cache
-
-
 def dataframe_to_dict(df: pd.DataFrame, enrich_album_art: bool = True) -> List[Dict[str, Any]]:
     """Convert a recommendation DataFrame to a list of JSON-safe dicts."""
     if df is None or len(df) == 0:
@@ -81,17 +68,7 @@ def dataframe_to_dict(df: pd.DataFrame, enrich_album_art: bool = True) -> List[D
                 )
             tid = item.get('track_id', '')
             if tid and 'album_art_url' not in item:
-                cache = _get_albumart_cache()
-                if tid in cache:
-                    item['has_album_art'] = True
-                    item['album_art_url'] = f'/api/album-art/{tid}'
-                else:
-                    # Fallback to thumbnail_url from data
-                    thumb = item.get('thumbnail_url')
-                    if thumb and not pd.isna(thumb):
-                        item['has_album_art'] = True
-                        item['album_art_url'] = str(thumb)
-                    else:
-                        item['has_album_art'] = False
-                        item['album_art_url'] = None
+                has_art, url = _ser.resolve_album_art_url(tid, item.get('thumbnail_url'))
+                item['has_album_art'] = has_art
+                item['album_art_url'] = url
     return result

@@ -26,11 +26,7 @@ from api import system as system_routes
 from api import cache as cache_module
 from api.rate_limit import RateLimitMiddleware, set_redis as _rl_set_redis
 
-# Static files & media directories
-static_path = Path(__file__).parent / "static"
-static_path.mkdir(exist_ok=True)
-
-# Built React SPA (Vite output). When present, it is served at "/".
+# Built React SPA (Vite output). Served at "/" (hashed assets under /assets).
 spa_path = Path(__file__).parent / "static_spa"
 
 music_path = cfg.MUSIC_DIR
@@ -168,7 +164,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Brightify API",
     description="AI-powered Vietnamese music streaming with color, image, mood, and lyrics recommendations.",
-    version="7.0.0",
+    version="7.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -187,8 +183,6 @@ app.add_middleware(
 # Rate limiting
 app.add_middleware(RateLimitMiddleware)
 
-app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-
 # Serve the built SPA's hashed assets (Vite emits them under /assets).
 _spa_assets = spa_path / "assets"
 if _spa_assets.is_dir():
@@ -200,12 +194,9 @@ app.include_router(system_routes.router)
 
 
 def _spa_index() -> Path | None:
-    """Built SPA index if available, else the legacy static index."""
+    """Built SPA index (static_spa/index.html) if present."""
     spa_index = spa_path / "index.html"
-    if spa_index.exists():
-        return spa_index
-    legacy = static_path / "index.html"
-    return legacy if legacy.exists() else None
+    return spa_index if spa_index.exists() else None
 
 
 @app.get("/", response_class=HTMLResponse)

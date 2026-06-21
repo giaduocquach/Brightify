@@ -66,15 +66,15 @@ Bài hát ngẫu nhiên.
 
 ---
 
-### GET `/api/songs/search` — Search Songs
-Tìm kiếm bài hát theo keyword.
+### GET `/api/search` — Smart Search
+Tìm kiếm đa tầng, không phân biệt dấu, có khôi phục lỗi gõ (rapidfuzz) + ngữ nghĩa (e5-large).
 
 | Param | Required | Mô tả |
 |---|---|---|
 | `q` | Yes (min 1 char) | Query string |
 | `limit` | No (20) | 1–50 |
 
-Tìm trong: `track_name`, `primary_artist`, `album_name`
+Trả `{success, results, query, total, semantic_available}`. Mỗi kết quả có `match_type` ∈ `artist | name | lyrics | vibe` và `lyric_snippet`. Ưu tiên theo khối: nghệ sĩ → tên/album → lời → ngữ nghĩa.
 
 ---
 

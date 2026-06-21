@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Search } from 'lucide-react';
 import { useStore } from '../state/store';
+import { useFocusTrap } from './hooks/useFocusTrap';
 
 function useDebounce(fn: (q: string) => void, delay: number) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -24,17 +25,10 @@ export default function SearchOverlay() {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  // Remember what had focus when we opened so we can hand it back on close (WCAG 2.4.3).
-  const restoreFocus = useRef<HTMLElement | null>(null);
+  // Trap Tab + restore focus on close (WCAG 2.1.2 / 2.4.3); initial focus → the search input.
+  const dialogRef = useFocusTrap<HTMLDivElement>(searchOpen, inputRef);
 
-  useEffect(() => {
-    if (searchOpen) {
-      restoreFocus.current = document.activeElement as HTMLElement | null;
-      setActive(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
-      return () => restoreFocus.current?.focus();
-    }
-  }, [searchOpen]);
+  useEffect(() => { if (searchOpen) setActive(0); }, [searchOpen]);
 
   // Reset active index when results change
   useEffect(() => { setActive(0); }, [searchResults]);
@@ -80,6 +74,8 @@ export default function SearchOverlay() {
         role="dialog"
         aria-label="Tìm kiếm bài hát"
         aria-modal="true"
+        ref={dialogRef}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKey}
       >

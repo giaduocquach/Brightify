@@ -3,11 +3,9 @@ import { useFrame } from '@react-three/fiber';
 import { Euler, Vector3 } from 'three';
 import { useStore } from '../../state/store';
 import { solarRefs } from './refs';
-import { bodyByHex, locomotionFor, orbitPosAt } from './bodies';
+import { bodyByHex, locomotionFor } from './bodies';
 
-const TAU = Math.PI * 2;
 const RING_EULER = new Euler(Math.PI / 2 - 0.35, 0, 0); // matches the Saturn ring mesh tilt
-const SINK_EULER = new Euler(1.3, 0, 0);                 // matches the black-hole accretion disk tilt
 
 // Smooth wandering direction on the unit sphere (sum of out-of-phase sines → organic,
 // non-repeating, deterministic — no Math.random). Used for walk/hop/float.
@@ -28,10 +26,10 @@ function planeBasis(e: Euler) {
   };
 }
 
-// Explore stage: each frame writes the shared runner refs (position/forward/up/stance/sink),
+// Explore stage: each frame writes the shared runner refs (position/forward/up/stance),
 // DISPATCHED by the body's locomotion type, so the astronaut moves differently on each body:
-//   walk (rocky) · hop (Moon, low-gravity) · float (gas giants) · ringwalk (Saturn rings) ·
-//   surf (ride the comet along its orbit) · sink (spiral into the black hole). Renders nothing.
+//   walk (rocky + asteroid) · hop (Moon, low-gravity) · float (gas/ice giants) ·
+//   ringwalk (Saturn rings). Renders nothing.
 export default function SurfaceRun() {
   const hex = useStore((s) => s.selectedColors[0]);
   const body = hex ? bodyByHex(hex) : undefined;
@@ -43,8 +41,7 @@ export default function SurfaceRun() {
   const a = useRef(new Vector3());
   const b = useRef(new Vector3());
   const ring = useMemo(() => planeBasis(RING_EULER), []);
-  const sink = useMemo(() => planeBasis(SINK_EULER), []);
-  const frozenT = useRef(0); // reduced-motion freezes the wander/orbit/sink path
+  const frozenT = useRef(0); // reduced-motion freezes the wander/orbit path
 
   useEffect(() => {
     solarRefs.runnerActive = true;
@@ -100,32 +97,7 @@ export default function SurfaceRun() {
         solarRefs.runnerUp.copy(ring.n);
         break;
       }
-      case 'surf': {
-        solarRefs.runnerUp.copy(center.current).normalize(); // stand "up" away from the Sun
-        if (solarRefs.runnerUp.lengthSq() < 1e-6) solarRefs.runnerUp.set(0, 1, 0);
-        solarRefs.runnerPos.copy(center.current).addScaledVector(solarRefs.runnerUp, size * 0.8);
-        orbitPosAt(body, t + 0.12, a.current);
-        orbitPosAt(body, t - 0.12, b.current);
-        solarRefs.runnerForward.copy(a.current).sub(b.current).normalize(); // ride the orbital velocity
-        if (solarRefs.runnerForward.lengthSq() < 1e-6) solarRefs.runnerForward.set(0, 0, 1);
-        break;
-      }
-      case 'sink': {
-        const LOOP = 14, TURNS = 4; // a longer, inexorable spiral-in (also hides the respawn)
-        const u = (t % LOOP) / LOOP; // 0=outer → 1=horizon, then respawns
-        solarRefs.runnerSink = u;
-        const radius = size * 4 * (1 - u);
-        const ang = u * TAU * TURNS;
-        a.current.copy(sink.u).multiplyScalar(Math.cos(ang) * radius);
-        b.current.copy(sink.v).multiplyScalar(Math.sin(ang) * radius);
-        solarRefs.runnerPos.copy(center.current).add(a.current).add(b.current);
-        a.current.copy(sink.u).multiplyScalar(-Math.sin(ang));
-        b.current.copy(sink.v).multiplyScalar(Math.cos(ang));
-        solarRefs.runnerForward.copy(a.current).add(b.current).normalize();
-        solarRefs.runnerUp.copy(sink.n);
-        break;
-      }
-      default: { // walk (rocky)
+      default: { // walk (rocky planets + the dark asteroid)
         wanderTangent(t, 1.0);
         solarRefs.runnerPos.copy(center.current).addScaledVector(dir.current, size * 1.03);
       }

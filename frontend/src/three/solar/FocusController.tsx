@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useStore } from '../../state/store';
 import { solarRefs } from './refs';
+import { vibeRefs } from '../vibe/vibeRefs';
 import { bodyByHex, locomotionFor, OUTER_RADIUS, type LocomotionType } from './bodies';
 
 // Camera Director.
@@ -264,6 +265,12 @@ export default function FocusController() {
     if (!framing.current && !rm) {
       const t = _.clock.elapsedTime;
       breath.current.set(Math.sin(t * 0.12) * 0.15, Math.sin(t * 0.17 + 1.0) * 0.10, Math.cos(t * 0.09) * 0.15);
+      // intense (Q2) songs add a subtle beat-driven shake (rides the same add/undo path as breath)
+      const shake = vibeRefs.current.q2 * vibeRefs.current.beat * 0.22;
+      if (shake > 0.001) {
+        breath.current.x += Math.sin(t * 47) * shake;
+        breath.current.y += Math.sin(t * 41 + 1.3) * shake;
+      }
     } else {
       breath.current.set(0, 0, 0);
     }

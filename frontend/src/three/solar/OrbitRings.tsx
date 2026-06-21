@@ -9,10 +9,9 @@ const SEGMENTS = 128;
 export default function OrbitRings() {
   const geometries = useMemo(
     () =>
-      // heliocentric, near-circular orbits only — skip the Moon (orbits Earth), the
-      // special objects (comet/black hole), and visibly eccentric orbits (Mercury/Mars):
-      // their paths wouldn't be these centred circles.
-      BODIES.filter((b) => !b.parent && !b.special && (b.eccentricity ?? 0) <= 0.06).map((b) => {
+      // heliocentric, near-circular orbits only — skip the Moon (orbits Earth) and visibly
+      // eccentric orbits (Mercury/Mars/Ceres/Eris): their paths wouldn't be these centred circles.
+      BODIES.filter((b) => !b.parent && (b.eccentricity ?? 0) <= 0.06).map((b) => {
         const pts: number[] = [];
         for (let i = 0; i <= SEGMENTS; i++) {
           const a = (i / SEGMENTS) * Math.PI * 2;
