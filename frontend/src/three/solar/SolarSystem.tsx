@@ -1,8 +1,9 @@
 import { Suspense, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerformanceMonitor, Stars, useTexture, usePerformanceMonitor } from '@react-three/drei';
-import { EffectComposer, Bloom, GodRays, SMAA, Vignette } from '@react-three/postprocessing';
-import { ACESFilmicToneMapping, AdditiveBlending, BackSide, Color, type Mesh, SRGBColorSpace, type Group, type Points, type ShaderMaterial } from 'three';
+import { EffectComposer, GodRays, SMAA } from '@react-three/postprocessing';
+import { BloomEffect, VignetteEffect, BlendFunction } from 'postprocessing';
+import { ACESFilmicToneMapping, AdditiveBlending, BackSide, Color, type Mesh, SRGBColorSpace, type Group, type Points, type ShaderMaterial, type Uniform } from 'three';
 import { useStore } from '../../state/store';
 import { BODIES, CAMERA_START, MILKYWAY_TEXTURE, OUTER_RADIUS } from './bodies';
 import { textureUrl } from './textureUrls';
@@ -10,6 +11,10 @@ import { glowTexture, nebulaTexture } from './glow';
 import { solarRefs } from './refs';
 import { useDeviceTier } from './deviceTier';
 import { STAR_VERT, STAR_FRAG } from '../shaders';
+import { vibeRefs } from '../vibe/vibeRefs';
+import { useVibeDriver } from '../vibe/useVibeDriver';
+import { VibeGradeEffect } from '../vibe/VibeGrade';
+import VibeEffects from '../vibe/VibeEffects';
 import CelestialBody from './CelestialBody';
 import Sun from './Sun';
 import OrbitRings from './OrbitRings';
@@ -69,9 +74,10 @@ function Nebula() {
   useFrame((state, dt) => {
     if (solarRefs.reducedMotion) return;
     const tt = state.clock.elapsedTime;
+    const drift = vibeRefs.current.nebulaSpeed; // arousal speeds the gas drift (calm ↔ energetic)
     layers.current.forEach((g, i) => {
       if (!g) return;
-      g.rotation.y += dt * shells[i].speed;
+      g.rotation.y += dt * shells[i].speed * drift;
       g.position.y = Math.sin(tt * 0.02 + i) * 2; // slow vertical parallax breathing
     });
   });
@@ -126,9 +132,13 @@ function ColorStars() {
   useFrame((state) => {
     if (solarRefs.reducedMotion) return; // freeze drift + twinkle
     if (ref.current) ref.current.rotation.y = state.clock.elapsedTime * 0.003;
-    if (matRef.current) matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    if (matRef.current) {
+      matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+      // upbeat (Q1) moods make the stars shimmer harder + sparkle on the beat
+      matRef.current.uniforms.uTwinkle.value = 0.6 + 1.6 * vibeRefs.current.q1 + vibeRefs.current.beat * 0.6;
+    }
   });
-  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uPixelRatio: { value: gl.getPixelRatio() } }), [gl]);
+  const uniforms = useMemo(() => ({ uTime: { value: 0 }, uPixelRatio: { value: gl.getPixelRatio() }, uTwinkle: { value: 1 } }), [gl]);
   return (
     <points ref={ref}>
       <bufferGeometry>
@@ -188,6 +198,32 @@ function Scene() {
   const heavy = tier === 'high' && !IS_MOBILE && !degraded;
   const godRaysOn = heavy && !flight && !!sunMesh; // rays only when the Sun is framed in space
 
+  // Vibe engine: smooth the per-song mood targets (writes vibeRefs.current), then push them onto
+  // the postprocessing effects each frame via refs — no re-render. Registration order matters:
+  // the driver runs first (registered before the modulation frame below).
+  useVibeDriver();
+  // Effects are constructed once and mounted via <primitive> (the lib's own pattern for effect
+  // instances) so we can mutate them per frame WITHOUT a ref on a wrapEffect component — that ref
+  // is what triggers the React19 circular-JSON crash. GodRays/SMAA stay as components (no ref).
+  const bloomEffect = useMemo(() => new BloomEffect({
+    blendFunction: BlendFunction.ADD, intensity: 0.5,
+    luminanceThreshold: 0.5, luminanceSmoothing: 0.9, mipmapBlur: true, radius: 0.6,
+  }), []);
+  const vignetteEffect = useMemo(() => new VignetteEffect({ offset: 0.3, darkness: 0.65 }), []);
+  const gradeEffect = useMemo(() => new VibeGradeEffect(), []);
+  useFrame(() => {
+    vibeRefs.heavy = heavy;
+    const v = vibeRefs.current;
+    // Bloom: bright/energetic moods glow more, sad dims; gentle beat pulse. Trim a touch when
+    // god rays already light the scene so it doesn't blow out.
+    bloomEffect.intensity = v.bloom * (godRaysOn ? 0.8 : 1) + v.beat * 0.12;
+    bloomEffect.luminanceMaterial.threshold = v.bloomThreshold;
+    vignetteEffect.darkness = v.vignette;
+    (gradeEffect.uniforms.get('uTint') as Uniform<Color>).value.copy(v.gradeTint);
+    (gradeEffect.uniforms.get('uSat') as Uniform<number>).value = v.saturation;
+    (gradeEffect.uniforms.get('uBeat') as Uniform<number>).value = v.beat;
+  });
+
   return (
     <>
       <color attach="background" args={['#05050B']} />
@@ -199,6 +235,8 @@ function Scene() {
       {!flight && <Stars radius={180} depth={80} count={STAR_COUNT} factor={4} saturation={0} fade speed={reducedMotion ? 0 : 0.5} />}
       <ColorStars />
       <Dust />
+      {/* Mood-driven cosmic set-pieces (meteor shower / stardust / embers / aurora / lone star) */}
+      <VibeEffects heavy={heavy} />
 
       {/* 3-point-ish lighting: the Sun is the key; a dim hemisphere + ambient fill the
           shadow side just enough to read, while keeping the night sides dramatic. */}
@@ -254,9 +292,9 @@ function Scene() {
             ? <GodRays key="godrays" sun={sunMesh} samples={60} density={0.92} decay={0.9}
                 weight={0.3} exposure={0.4} clampMax={0.85} blur />
             : null,
-          <Bloom key="bloom" intensity={godRaysOn ? 0.4 : (IS_MOBILE ? 0.38 : 0.5)} luminanceThreshold={0.5}
-            luminanceSmoothing={0.9} mipmapBlur radius={0.6} />,
-          <Vignette key="vignette" eskil={false} offset={0.3} darkness={0.65} />,
+          <primitive key="bloom" object={bloomEffect} dispose={null} />,
+          <primitive key="vibegrade" object={gradeEffect} dispose={null} />,
+          <primitive key="vignette" object={vignetteEffect} dispose={null} />,
           <SMAA key="smaa" />,
         ].filter(Boolean) as ReactElement[]}
       </EffectComposer>

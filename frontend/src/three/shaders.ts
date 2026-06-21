@@ -232,6 +232,43 @@ void main(){
   gl_FragColor = vec4(uTint, clamp(intensity, 0.0, 0.6));
 }`;
 
+// Vibe grade — a cheap screen-space colour grade (postprocessing Effect form) that makes the
+// WHOLE cosmos take on the now-playing song's valence-arousal mood: desaturate toward luma for
+// sad/low moods (uSat<1), multiply by a mood tint (warm for happy, cool indigo for sad), and a
+// gentle beat-synced lift on bright areas. uTint≈white + uSat≈1 → near-passthrough. One dependent
+// read, no convolution → merges with Bloom/SMAA for ~free.
+export const VIBE_GRADE_FRAG = /* glsl */ `
+uniform vec3 uTint; uniform float uSat; uniform float uBeat;
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor){
+  vec3 c = inputColor.rgb;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, uSat);            // desaturate toward luma (sad moods)
+  c *= uTint;                            // mood tint (warm ↔ cool)
+  c += uTint * l * uBeat * 0.12;         // gentle beat lift on already-bright pixels
+  outputColor = vec4(c, inputColor.a);
+}`;
+
+// Aurora curtains for calm/happy moods (Q1/Q4) — large additive planes high over the scene with
+// FBM-driven vertical "curtains" that scroll and fade top/bottom. uOpacity gates the whole thing
+// (0 = invisible) so it can ramp in/out with the vibe weight. Reuses SIMPLEX.
+export const AURORA_VERT = /* glsl */ `
+varying vec2 vUv;
+void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+export const AURORA_FRAG = /* glsl */ `
+${SIMPLEX}
+uniform float uTime, uOpacity, uShimmer;
+uniform vec3 uColA, uColB;
+varying vec2 vUv;
+float fbm(vec3 p){ float s = 0.0, a = 0.5; for(int i = 0; i < 3; i++){ s += a * snoise(p); p *= 2.0; a *= 0.5; } return s; }
+void main(){
+  float n = fbm(vec3(vUv.x * 3.0, vUv.y * 1.5 - uTime * 0.15 * uShimmer, uTime * 0.05));
+  float curtain = smoothstep(0.2, 0.92, 0.5 + 0.5 * sin(vUv.x * 16.0 + n * 3.2));
+  float vfade = smoothstep(0.0, 0.35, vUv.y) * (1.0 - smoothstep(0.6, 1.0, vUv.y));
+  vec3 col = mix(uColA, uColB, clamp(vUv.y + n * 0.2, 0.0, 1.0));
+  gl_FragColor = vec4(col, curtain * vfade * uOpacity);
+}`;
+
 // Twinkling coloured stars (round soft points). Each star has a deterministic phase + size so
 // it shimmers subtly (very low amplitude — real space doesn't atmospherically twinkle, this is
 // just for "alive"), with a few bright "hero" stars. Uses the geometry's `color` attribute.
@@ -239,11 +276,12 @@ export const STAR_VERT = /* glsl */ `
 attribute vec3 color;
 attribute float aPhase;
 attribute float aSize;
-uniform float uTime, uPixelRatio;
+uniform float uTime, uPixelRatio, uTwinkle;
 varying vec3 vCol;
 void main(){
-  float tw = 0.85 + 0.15 * sin(uTime * 1.5 + aPhase);
-  vCol = color * tw;
+  // uTwinkle (mood, ~0.6 calm … ~2.5 upbeat) scales the shimmer amplitude + a brightness lift
+  float tw = 0.85 + 0.15 * uTwinkle * sin(uTime * 1.5 + aPhase);
+  vCol = color * tw * (0.9 + 0.25 * (uTwinkle - 1.0));
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   gl_PointSize = aSize * uPixelRatio * (300.0 / max(-mv.z, 0.1));

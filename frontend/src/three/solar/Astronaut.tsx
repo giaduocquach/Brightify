@@ -1,13 +1,16 @@
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html, Outlines } from '@react-three/drei';
-import { AdditiveBlending, Color, DoubleSide, Group, Matrix4, Quaternion, Sprite, SpriteMaterial, Vector3 } from 'three';
+import { AdditiveBlending, Color, DoubleSide, Group, Matrix4, type Mesh, type MeshBasicMaterial, Quaternion, Sprite, SpriteMaterial, Vector3 } from 'three';
 import { useStore } from '../../state/store';
+import { engine } from '../../audio/engine';
+import { vaToColor } from '../va';
 import { solarRefs } from './refs';
 import { bodyByHex } from './bodies';
 import { glowTexture } from './glow';
 import { starShape } from './shapes';
 import { toonRamp, OUTLINE } from './toon';
+import { expressionFor, easeExpression, NEUTRAL, type Expression } from './character/face';
 
 interface Line { vi: string; en: string; }
 const SPEECH: Record<string, Line> = {
@@ -17,10 +20,10 @@ const SPEECH: Record<string, Line> = {
 
 // Distance (local model units) from the group origin down to the soles — used to lift
 // the runner so its feet sit ON the planet surface instead of sinking in. Derived from
-// the geometry: boot box bottom = legL(-0.26) + shinL(-0.17) + boot(-0.15 - 0.11/2) =
-// -0.635. The lift (FOOT_DROP * scale) cancels the scaled foot depth for ANY planet
-// size, so the soles land on the surface regardless of the body's radius.
-const FOOT_DROP = 0.635;
+// the robot leg chain: foot bottom = legL(-0.28) + shinL(-0.18) + foot(-0.15 - 0.07) = -0.68.
+// The lift (FOOT_DROP * scale) cancels the scaled foot depth for ANY planet size, so the
+// soles land on the surface regardless of the body's radius.
+const FOOT_DROP = 0.68;
 
 // A cel-shaded CHIBI Vietnamese astronaut mascot: oversized helmet head with a friendly FACE
 // behind the visor (big eyes, smile, rosy cheeks), round stubby body + limbs, ink outline. Keeps
@@ -41,15 +44,30 @@ export default function Astronaut() {
   const armR = useRef<Group>(null);
   const eyeL = useRef<Group>(null);
   const eyeR = useRef<Group>(null);
+  const browL = useRef<Mesh>(null);
+  const browR = useRef<Mesh>(null);
+  const mouth = useRef<Group>(null);
+  const cheekL = useRef<Mesh>(null);
+  const cheekR = useRef<Mesh>(null);
 
   const mode = useStore((s) => s.mode);
   const sel = useStore((s) => s.selectedColors);
-  const accent = useMemo(() => new Color(sel[0] || '#7cc7ff'), [sel]);
+  const current = useStore((s) => s.current);
+  // Accent = the NOW-PLAYING song's mood colour (falls back to the selected planet, then a default).
+  // Drives the chest light, visor glow and music notes so the mascot wears the song's emotion.
+  const accent = useMemo(
+    () => (current ? vaToColor(current.valence, current.arousal) : new Color(sel[0] || '#7cc7ff')),
+    [current, sel],
+  );
+  // Target facial expression for the current song; eased toward each frame (recomputed per track).
+  const exprTarget = useMemo<Expression>(
+    () => (current ? expressionFor(current.valence, current.arousal) : NEUTRAL),
+    [current],
+  );
+  const expr = useRef<Expression>({ ...NEUTRAL });
   const bubble: Line | undefined = SPEECH[mode];
 
   const star = useMemo(() => starShape(0.07, 0.03), []);
-  const helmetStar = useMemo(() => starShape(0.13, 0.055), []);
-  const dongSon = useMemo(() => Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2), []);
   const tex = glowTexture();
 
   const noteSpriteRefs = useRef<(Sprite | null)[]>([]);
@@ -117,6 +135,9 @@ export default function Astronaut() {
     const floating = running && stance === 'float';
     const cad = t * (hopping ? 5 : 7);
     const sw = Math.sin(cad);
+    // Dance overlay: an upbeat song makes the idle mascot bop to the beat (reduced-motion off).
+    const dancing = !rm && !!current && current.arousal > 0.62 && current.valence > 0.55 && !stepping && !hopping;
+    const danceBeat = dancing ? (0.5 + 0.5 * Math.sin(t * 6)) * (0.6 + engine.features.bass) : 0;
 
     if (bob.current) {
       if (stepping) {
@@ -130,8 +151,10 @@ export default function Astronaut() {
         bob.current.scale.set(1 + sq * 0.6, 1 - sq, 1 + sq * 0.6);
         bob.current.rotation.x = 0;
       } else {
-        bob.current.position.y = Math.sin(t * 0.9) * 0.04; // float / idle breathe
-        bob.current.scale.set(1, 1, 1); bob.current.rotation.x = 0;
+        bob.current.position.y = Math.sin(t * 0.9) * 0.04 + danceBeat * 0.06; // breathe (+ bounce when dancing)
+        const ds = danceBeat * 0.05;
+        bob.current.scale.set(1 + ds, 1 - ds, 1 + ds);
+        bob.current.rotation.x = 0;
       }
     }
     if (legL.current && legR.current && shinL.current && shinR.current) {
@@ -158,16 +181,33 @@ export default function Astronaut() {
         armL.current.rotation.x = sway; armR.current.rotation.x = -sway;
       } else {
         const run = stepping ? sw * 0.5 : 0;
-        armL.current.rotation.z = 0.2; armR.current.rotation.z = -0.2;
+        armL.current.rotation.z = 0.2 + danceBeat * 0.7; armR.current.rotation.z = -0.2 - danceBeat * 0.7;
         armL.current.rotation.x = -run; armR.current.rotation.x = run;
       }
     }
-    // ── blink: a quick lid-close every ~4.5s (0.2s V-shaped dip) ──
-    if (eyeL.current && eyeR.current) {
-      const cyc = t % 4.5;
-      let v = 1;
-      if (cyc > 4.3) v = 0.1 + 0.9 * Math.abs((cyc - 4.3) / 0.2 - 0.5) * 2; // 1→0.1→1
-      eyeL.current.scale.y = v; eyeR.current.scale.y = v;
+    // ── face: ease toward the song's mood expression, then drive eyes/brows/mouth/cheeks ──
+    easeExpression(expr.current, exprTarget, 1 - Math.pow(0.01, dt)); // ~0.5s melt on track change
+    const e = expr.current;
+    const pulse = rm ? 0 : engine.features.bass; // tiny beat liveliness
+    // blink: a quick lid-close every ~4.5s (0.2s V-shaped dip), multiplied onto the mood eye-open
+    const cyc = t % 4.5;
+    let blink = 1;
+    if (cyc > 4.3) blink = 0.1 + 0.9 * Math.abs((cyc - 4.3) / 0.2 - 0.5) * 2;
+    const open = (e.eyeOpen + pulse * 0.15) * blink;
+    if (eyeL.current && eyeR.current) { eyeL.current.scale.y = open; eyeR.current.scale.y = open; }
+    if (browL.current && browR.current) {
+      const by = 0.7 + e.browLift * 0.03;
+      browL.current.position.y = by; browR.current.position.y = by;
+      browL.current.rotation.z = e.browTilt * 0.4; browR.current.rotation.z = -e.browTilt * 0.4;
+    }
+    if (mouth.current) {
+      // flip the smile arc to a frown via negative Y-scale; widen + open with the mood
+      const mag = 0.5 + Math.abs(e.mouthCurve) * 0.9 + (e.mouthOpen + pulse * 0.2) * 0.5;
+      mouth.current.scale.set(0.8 + Math.abs(e.mouthCurve) * 0.4, (e.mouthCurve >= 0 ? 1 : -1) * mag, 1);
+    }
+    if (cheekL.current && cheekR.current) {
+      (cheekL.current.material as MeshBasicMaterial).opacity = e.blush;
+      (cheekR.current.material as MeshBasicMaterial).opacity = e.blush;
     }
 
     // ── add life: a gentle idle tether sway when not actively walking/hopping ──
@@ -192,112 +232,130 @@ export default function Astronaut() {
     });
   });
 
-  const SUIT = '#eef1f7';
-  const SUIT_D = '#c7cede';
-  const RED = '#da251d';   // VN flag red
-  const GOLD = '#ffcd00';  // VN star gold
-  const SKIN_SCREEN = '#121a30'; // dark visor screen the face sits on
+  // Two-colour system: a white body + neutral steel structure, with EVERYTHING that glows
+  // (LED face, chest core, ears, antennae, trim) reading in the now-playing mood colour (accent).
+  const SUIT = '#eef1f7';        // white body — the one neutral
+  const SUIT_D = '#9aa3b8';      // steel grey — joints / bezel / feet
+  const SKIN_SCREEN = '#0a0d18'; // dark screen the LED face glows on
 
   // First-person flight: we ARE the pilot → the body isn't drawn (cockpit shows the dashboard).
   if (mode === 'journey' || mode === 'fly') return null;
 
+  // LED face glows in the now-playing mood (accent); body is light toon metal with an ink outline.
+  const LED = accent;
   return (
     <group ref={root}>
       <group ref={bob}>
-        {/* ── oversized helmet head (model faces +Z) ── */}
-        <mesh position={[0, 0.56, 0]}>
-          <sphereGeometry args={[0.5, 32, 32]} />
+        {/* ── robot head: rounded shell + dark glossy SCREEN that the LED face glows on ── */}
+        <mesh position={[0, 0.62, 0]} scale={[1.12, 0.98, 0.96]}>
+          <sphereGeometry args={[0.46, 32, 32]} />
           <meshToonMaterial color={SUIT} gradientMap={ramp} />
           <Outlines {...OUTLINE} />
         </mesh>
-        <mesh position={[0, 0.55, 0.31]} scale={[0.82, 0.66, 0.34]}>
-          <sphereGeometry args={[0.42, 24, 24]} />
-          <meshToonMaterial color={SKIN_SCREEN} gradientMap={ramp} emissive={accent} emissiveIntensity={0.12} />
+        {/* dark screen panel (slightly proud, curved) */}
+        <mesh position={[0, 0.62, 0.34]} scale={[0.92, 0.76, 0.26]}>
+          <sphereGeometry args={[0.42, 28, 28]} />
+          <meshStandardMaterial color={SKIN_SCREEN} roughness={0.3} metalness={0.15} emissive={LED} emissiveIntensity={0.12} />
         </mesh>
-        <mesh position={[0, 0.55, 0.30]} rotation={[0.1, 0, 0]}>
-          <torusGeometry args={[0.3, 0.028, 12, 32]} />
-          <meshToonMaterial color={GOLD} gradientMap={ramp} emissive={GOLD} emissiveIntensity={0.3} />
-        </mesh>
-
-        {/* ── FACE: big eyes + smile + rosy cheeks ── */}
-        <group ref={eyeL} position={[-0.16, 0.6, 0.47]}>
-          <mesh scale={[0.85, 1.15, 0.6]}><sphereGeometry args={[0.095, 16, 16]} /><meshBasicMaterial color="#0c1020" /></mesh>
-          <mesh position={[0.035, 0.045, 0.06]}><sphereGeometry args={[0.032, 10, 10]} /><meshBasicMaterial color="#ffffff" /></mesh>
-        </group>
-        <group ref={eyeR} position={[0.16, 0.6, 0.47]}>
-          <mesh scale={[0.85, 1.15, 0.6]}><sphereGeometry args={[0.095, 16, 16]} /><meshBasicMaterial color="#0c1020" /></mesh>
-          <mesh position={[0.035, 0.045, 0.06]}><sphereGeometry args={[0.032, 10, 10]} /><meshBasicMaterial color="#ffffff" /></mesh>
-        </group>
-        <mesh position={[-0.26, 0.49, 0.41]} scale={[1, 0.72, 0.4]}><sphereGeometry args={[0.063, 12, 12]} /><meshBasicMaterial color="#ff8fa6" transparent opacity={0.85} /></mesh>
-        <mesh position={[0.26, 0.49, 0.41]} scale={[1, 0.72, 0.4]}><sphereGeometry args={[0.063, 12, 12]} /><meshBasicMaterial color="#ff8fa6" transparent opacity={0.85} /></mesh>
-        <mesh position={[0, 0.5, 0.46]} rotation={[Math.PI / 2, 0, Math.PI]}><torusGeometry args={[0.06, 0.013, 8, 16, Math.PI]} /><meshBasicMaterial color="#0c1020" /></mesh>
-
-        {/* gold star on the helmet crown */}
-        <mesh position={[0, 0.92, 0.2]} rotation={[-0.55, 0, 0]}>
-          <shapeGeometry args={[helmetStar]} />
-          <meshToonMaterial color={GOLD} gradientMap={ramp} emissive={GOLD} emissiveIntensity={0.8} side={DoubleSide} />
+        {/* screen bezel */}
+        <mesh position={[0, 0.62, 0.31]} rotation={[0.05, 0, 0]}>
+          <torusGeometry args={[0.34, 0.022, 12, 36]} />
+          <meshToonMaterial color={SUIT_D} gradientMap={ramp} />
         </mesh>
 
-        {/* ── blue headphones ── */}
-        <group position={[0, 0.56, 0]}>
-          <mesh><torusGeometry args={[0.52, 0.03, 8, 24, Math.PI]} /><meshToonMaterial color="#2277dd" gradientMap={ramp} /></mesh>
-          <mesh position={[0.52, 0, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.09, 0.09, 0.08, 16]} /><meshToonMaterial color="#1a66cc" gradientMap={ramp} /></mesh>
-          <mesh position={[-0.52, 0, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.09, 0.09, 0.08, 16]} /><meshToonMaterial color="#1a66cc" gradientMap={ramp} /></mesh>
+        {/* ── LED FACE: glowing eyes + brow bars + mouth + cheek dots (drive the same refs) ── */}
+        <group ref={eyeL} position={[-0.17, 0.64, 0.49]}>
+          <mesh scale={[0.95, 1.2, 0.5]}><sphereGeometry args={[0.085, 18, 18]} /><meshStandardMaterial color="#d7fbff" emissive={LED} emissiveIntensity={2.4} toneMapped={false} /></mesh>
+        </group>
+        <group ref={eyeR} position={[0.17, 0.64, 0.49]}>
+          <mesh scale={[0.95, 1.2, 0.5]}><sphereGeometry args={[0.085, 18, 18]} /><meshStandardMaterial color="#d7fbff" emissive={LED} emissiveIntensity={2.4} toneMapped={false} /></mesh>
+        </group>
+        {/* brow bars — biggest expressivity lever (lift + tilt driven by mood) */}
+        <mesh ref={browL} position={[-0.17, 0.76, 0.5]}><boxGeometry args={[0.13, 0.026, 0.02]} /><meshStandardMaterial color="#d7fbff" emissive={LED} emissiveIntensity={2} toneMapped={false} /></mesh>
+        <mesh ref={browR} position={[0.17, 0.76, 0.5]}><boxGeometry args={[0.13, 0.026, 0.02]} /><meshStandardMaterial color="#d7fbff" emissive={LED} emissiveIntensity={2} toneMapped={false} /></mesh>
+        {/* cheek dots — opacity tracks arousal (blush) */}
+        <mesh ref={cheekL} position={[-0.27, 0.54, 0.45]}><sphereGeometry args={[0.05, 12, 12]} /><meshBasicMaterial color={accent} transparent opacity={0.85} /></mesh>
+        <mesh ref={cheekR} position={[0.27, 0.54, 0.45]}><sphereGeometry args={[0.05, 12, 12]} /><meshBasicMaterial color={accent} transparent opacity={0.85} /></mesh>
+        {/* mouth — glowing arc; the group's Y-scale morphs smile↔frown↔open from the mood */}
+        <group ref={mouth} position={[0, 0.54, 0.49]}>
+          <mesh rotation={[Math.PI / 2, 0, Math.PI]}><torusGeometry args={[0.07, 0.016, 8, 20, Math.PI]} /><meshStandardMaterial color="#d7fbff" emissive={LED} emissiveIntensity={2} toneMapped={false} /></mesh>
         </group>
 
-        {/* neck ring */}
-        <mesh position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.2, 0.05, 12, 24]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+        {/* twin antennae — tip beads glow in the mood colour */}
+        {[-1, 1].map((s) => (
+          <group key={s}>
+            <mesh position={[s * 0.22, 0.92, 0.04]} rotation={[0, 0, -s * 0.3]}>
+              <cylinderGeometry args={[0.009, 0.009, 0.16, 8]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} />
+            </mesh>
+            <mesh position={[s * 0.27, 1.0, 0.04]}>
+              <sphereGeometry args={[0.03, 12, 12]} /><meshStandardMaterial color={LED} emissive={LED} emissiveIntensity={1.4} toneMapped={false} />
+            </mesh>
+          </group>
+        ))}
 
-        {/* ── round stubby torso ── */}
-        <mesh position={[0, -0.04, 0]}>
-          <capsuleGeometry args={[0.25, 0.1, 8, 16]} />
+        {/* ── headphone "ear-speakers" (the music robot's ears) + mood rings ── */}
+        <group position={[0, 0.62, 0]}>
+          <mesh><torusGeometry args={[0.5, 0.035, 8, 24, Math.PI]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+          <mesh position={[0.5, 0, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.13, 0.13, 0.12, 20]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+          <mesh position={[-0.5, 0, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.13, 0.13, 0.12, 20]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+          <mesh position={[0.565, 0, 0]} rotation={[0, 0, Math.PI / 2]}><torusGeometry args={[0.1, 0.018, 8, 20]} /><meshStandardMaterial color={LED} emissive={LED} emissiveIntensity={1.4} toneMapped={false} /></mesh>
+          <mesh position={[-0.565, 0, 0]} rotation={[0, 0, Math.PI / 2]}><torusGeometry args={[0.1, 0.018, 8, 20]} /><meshStandardMaterial color={LED} emissive={LED} emissiveIntensity={1.4} toneMapped={false} /></mesh>
+        </group>
+
+        {/* neck collar */}
+        <mesh position={[0, 0.24, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.2, 0.05, 12, 24]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+        {/* shoulder joints (round the arm/torso join; no outline, inside the silhouette) */}
+        <mesh position={[-0.31, 0.13, 0]}><sphereGeometry args={[0.1, 16, 16]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+        <mesh position={[0.31, 0.13, 0]}><sphereGeometry args={[0.1, 16, 16]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+
+        {/* ── rounded robot torso + glowing "music core" ── */}
+        <mesh position={[0, -0.06, 0]}>
+          <capsuleGeometry args={[0.27, 0.18, 10, 18]} />
           <meshToonMaterial color={SUIT} gradientMap={ramp} />
           <Outlines {...OUTLINE} />
         </mesh>
-        <mesh position={[0.02, 0.0, 0.27]}><boxGeometry args={[0.16, 0.12, 0.05]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
-        <mesh position={[0.05, 0.0, 0.31]}><sphereGeometry args={[0.022, 12, 12]} /><meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.8} /></mesh>
-        {/* VN flag patch + gold star */}
-        <mesh position={[-0.13, 0.04, 0.27]}><planeGeometry args={[0.15, 0.1]} /><meshBasicMaterial color={RED} side={DoubleSide} /></mesh>
-        <mesh position={[-0.13, 0.04, 0.281]}><shapeGeometry args={[star]} /><meshBasicMaterial color={GOLD} side={DoubleSide} /></mesh>
-        {/* small PLSS backpack */}
+        {/* chest core: a mood-glowing ring + dark disc + VN gold star at its centre */}
+        <mesh position={[0, 0.0, 0.255]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.1, 0.024, 12, 28]} /><meshStandardMaterial color={LED} emissive={LED} emissiveIntensity={1.6} toneMapped={false} /></mesh>
+        <mesh position={[0, 0.0, 0.265]}><circleGeometry args={[0.085, 28]} /><meshStandardMaterial color={SKIN_SCREEN} emissive={LED} emissiveIntensity={0.5} /></mesh>
+        <mesh position={[0, 0.0, 0.272]}><shapeGeometry args={[star]} /><meshStandardMaterial color="#d7fbff" emissive={accent} emissiveIntensity={1.4} toneMapped={false} side={DoubleSide} /></mesh>
+        {/* speaker backpack with a grille */}
         <mesh position={[0, 0.0, -0.27]}>
           <boxGeometry args={[0.34, 0.34, 0.16]} />
           <meshToonMaterial color={SUIT_D} gradientMap={ramp} />
           <Outlines {...OUTLINE} />
         </mesh>
+        <mesh position={[0, 0.0, -0.355]}><circleGeometry args={[0.12, 20]} /><meshStandardMaterial color="#0a0d18" emissive={LED} emissiveIntensity={0.25} /></mesh>
 
-        {/* ── Đông Sơn waist band (red belt + ring of gold studs) ── */}
-        <mesh position={[0, -0.16, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.28, 0.04, 12, 32]} /><meshToonMaterial color={RED} gradientMap={ramp} /></mesh>
-        {dongSon.map((a, i) => (
-          <mesh key={i} position={[Math.cos(a) * 0.29, -0.16, Math.sin(a) * 0.29]} rotation={[0, -a, 0]}>
-            <boxGeometry args={[0.028, 0.045, 0.028]} />
-            <meshToonMaterial color={GOLD} gradientMap={ramp} emissive={GOLD} emissiveIntensity={0.4} />
-          </mesh>
-        ))}
+        {/* waist seam (neutral steel) */}
+        <mesh position={[0, -0.18, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.27, 0.025, 12, 32]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
 
-        {/* ── stubby arms → red glove ── */}
-        <group ref={armL} position={[-0.3, 0.12, 0]}>
-          <mesh position={[0, -0.13, 0]}><capsuleGeometry args={[0.082, 0.1, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /><Outlines {...OUTLINE} /></mesh>
-          <mesh position={[0, -0.26, 0]}><sphereGeometry args={[0.12, 16, 16]} /><meshToonMaterial color={RED} gradientMap={ramp} /></mesh>
+        {/* ── segmented robot arms: shoulder cyl → elbow joint → mitten hand ── */}
+        <group ref={armL} position={[-0.31, 0.13, 0]}>
+          <mesh position={[0, -0.16, 0]}><cylinderGeometry args={[0.06, 0.055, 0.22, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /><Outlines {...OUTLINE} /></mesh>
+          <mesh position={[0, -0.28, 0]}><sphereGeometry args={[0.06, 14, 14]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+          <mesh position={[0, -0.35, 0]}><sphereGeometry args={[0.085, 16, 16]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
         </group>
-        <group ref={armR} position={[0.3, 0.12, 0]}>
-          <mesh position={[0, -0.13, 0]}><capsuleGeometry args={[0.082, 0.1, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /><Outlines {...OUTLINE} /></mesh>
-          <mesh position={[0, -0.26, 0]}><sphereGeometry args={[0.12, 16, 16]} /><meshToonMaterial color={RED} gradientMap={ramp} /></mesh>
+        <group ref={armR} position={[0.31, 0.13, 0]}>
+          <mesh position={[0, -0.16, 0]}><cylinderGeometry args={[0.06, 0.055, 0.22, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /><Outlines {...OUTLINE} /></mesh>
+          <mesh position={[0, -0.28, 0]}><sphereGeometry args={[0.06, 14, 14]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+          <mesh position={[0, -0.35, 0]}><sphereGeometry args={[0.085, 16, 16]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
         </group>
 
-        {/* ── stubby legs: thigh → shin → boot (offsets fixed for FOOT_DROP) ── */}
-        <group ref={legL} position={[-0.13, -0.26, 0]}>
-          <mesh position={[0, -0.08, 0]}><capsuleGeometry args={[0.1, 0.08, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
-          <group ref={shinL} position={[0, -0.17, 0]}>
-            <mesh position={[0, -0.07, 0]}><capsuleGeometry args={[0.092, 0.07, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
-            <mesh position={[0, -0.15, 0.05]}><boxGeometry args={[0.17, 0.11, 0.25]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+        {/* ── robot legs: thigh → knee → shin → rounded foot (FOOT_DROP = 0.68) ── */}
+        <group ref={legL} position={[-0.14, -0.28, 0]}>
+          <mesh position={[0, -0.08, 0]}><cylinderGeometry args={[0.075, 0.07, 0.18, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
+          <group ref={shinL} position={[0, -0.18, 0]}>
+            <mesh><sphereGeometry args={[0.072, 14, 14]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+            <mesh position={[0, -0.07, 0]}><cylinderGeometry args={[0.07, 0.065, 0.16, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
+            <mesh position={[0, -0.15, 0.045]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.07, 0.13, 6, 12]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
           </group>
         </group>
-        <group ref={legR} position={[0.13, -0.26, 0]}>
-          <mesh position={[0, -0.08, 0]}><capsuleGeometry args={[0.1, 0.08, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
-          <group ref={shinR} position={[0, -0.17, 0]}>
-            <mesh position={[0, -0.07, 0]}><capsuleGeometry args={[0.092, 0.07, 6, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
-            <mesh position={[0, -0.15, 0.05]}><boxGeometry args={[0.17, 0.11, 0.25]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+        <group ref={legR} position={[0.14, -0.28, 0]}>
+          <mesh position={[0, -0.08, 0]}><cylinderGeometry args={[0.075, 0.07, 0.18, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
+          <group ref={shinR} position={[0, -0.18, 0]}>
+            <mesh><sphereGeometry args={[0.072, 14, 14]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
+            <mesh position={[0, -0.07, 0]}><cylinderGeometry args={[0.07, 0.065, 0.16, 12]} /><meshToonMaterial color={SUIT} gradientMap={ramp} /></mesh>
+            <mesh position={[0, -0.15, 0.045]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.07, 0.13, 6, 12]} /><meshToonMaterial color={SUIT_D} gradientMap={ramp} /></mesh>
           </group>
         </group>
 

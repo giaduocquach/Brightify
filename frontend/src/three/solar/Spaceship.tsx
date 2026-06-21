@@ -29,6 +29,7 @@ export default function Spaceship() {
   const lookAt = useRef(new Vector3());
   const prevFwd = useRef(new Vector3(0, 0, 1));
   const rollV = useRef(0);
+  const pitchV = useRef(0);
   const elapsed = useRef(0);          // seconds since this journey began
   const arrived = useRef(false);       // true once we reach B → switch to orbiting it
   const orbitAngle = useRef(0);
@@ -93,9 +94,13 @@ export default function Spaceship() {
     const turn = prevFwd.current.x * solarRefs.shipForward.z - prevFwd.current.z * solarRefs.shipForward.x;
     const idleBank = solarRefs.reducedMotion ? 0 : Math.sin(state.clock.elapsedTime * 0.3) * 0.05;
     rollV.current += (Math.max(-0.6, Math.min(0.6, turn * 40)) + idleBank - rollV.current) * Math.min(1, dt * 3);
+    // lean into a climb/dive: nose tips up as the ship rises along the bowed arc, down as it falls
+    const pitchTarget = solarRefs.reducedMotion ? 0 : Math.max(-0.4, Math.min(0.4, -solarRefs.shipForward.y * 0.8));
+    pitchV.current += (pitchTarget - pitchV.current) * Math.min(1, dt * 3);
     prevFwd.current.copy(solarRefs.shipForward);
     if (body.current) {
       body.current.rotation.z = solarRefs.reducedMotion ? 0 : rollV.current;
+      body.current.rotation.x = pitchV.current;
       // hull micro-vibration (engine idle) — two incommensurate high freqs, sub-perceptible,
       // scaled by audio energy. Off under reduced-motion.
       const tt = state.clock.elapsedTime;

@@ -18,6 +18,8 @@ import { useHiResMap } from './useHiResMap';
 import { giantParamsFor } from './giantConfig';
 import Atmosphere from './Atmosphere';
 import GasGiantDetail from './GasGiantDetail';
+import PlanetAurora from './PlanetAurora';
+import { vibeRefs } from '../vibe/vibeRefs';
 
 // ── Saturn-style ring with radial-correct UVs (sample the strip texture by radius) ──
 function PlanetRing({ def }: { def: BodyDef }) {
@@ -180,6 +182,8 @@ export default function CelestialBody({ def }: { def: BodyDef }) {
             )}
           </Suspense>
         </group>
+        {/* polar aurora on the planet you're exploring (calm/happy moods, high tier) */}
+        {exploring && vibeRefs.heavy && <PlanetAurora size={def.size} />}
       </group>
 
       {/* invisible (opacity 0) but raycastable halo so a far speck (Eris, r38) stays easy to

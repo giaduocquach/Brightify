@@ -1,0 +1,223 @@
+/* ============================================================================
+   Classic skin — a plain, responsive music-web layout that runs in parallel to the
+   immersive 3D skin. Everything skin-specific is namespaced under `.classic-root` so
+   the two skins never collide; only the shared top-right chrome (skin toggle + the "?"
+   button repositioning) and the lazy-load splash live un-namespaced here (this file is
+   always loaded). Reuses global.css tokens + the existing 2D components' classes.
+   ========================================================================== */
+
+/* ── Shared top-right chrome (both skins) ──────────────────────────────────── */
+.skin-toggle {
+  /* z 85: above the intro greeting (80) so it's always reachable, below the search/guide
+     modals (90/91) so those still cover it when open. */
+  position: fixed; top: 14px; right: 16px; z-index: 85;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 14px; border-radius: var(--r-pill);
+  background: var(--panel-strong); color: var(--text);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(var(--blur-md)); -webkit-backdrop-filter: blur(var(--blur-md));
+  font-family: var(--font-body); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  transition: border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.skin-toggle:hover { border-color: var(--accent-2); color: var(--accent-2); transform: translateY(-1px); }
+.skin-toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+/* The "?" help button (ui.css fixes it top-right) shifts left to make room for the toggle. */
+.help-btn { right: 170px; }
+
+/* Lazy-load splash while the immersive (three.js) chunk downloads. */
+.skin-splash {
+  position: fixed; inset: 0; z-index: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-deep);
+}
+
+/* ── Classic shell ─────────────────────────────────────────────────────────── */
+.classic-root {
+  position: fixed; inset: 0; z-index: 2;
+  display: flex; flex-direction: column;
+  background:
+    radial-gradient(120% 80% at 80% -10%, color-mix(in srgb, var(--mood) 12%, transparent), transparent 60%),
+    var(--bg-deep);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.classic-topbar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 16px;
+  height: 60px; padding: 0 180px 0 20px; /* right pad clears the fixed help + toggle cluster */
+  border-bottom: 1px solid var(--panel-border);
+  background: var(--panel-strong);
+  backdrop-filter: blur(var(--blur-md)); -webkit-backdrop-filter: blur(var(--blur-md));
+}
+.classic-brand { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-lg); letter-spacing: 0.01em; }
+.classic-search {
+  flex: 1; max-width: 520px;
+  display: flex; align-items: center; gap: 10px;
+  height: 38px; padding: 0 14px; border-radius: var(--r-pill);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border);
+  color: var(--text-dim); font-size: var(--fs-sm); cursor: text;
+  transition: border-color var(--dur-fast), background var(--dur-fast);
+}
+.classic-search:hover { border-color: var(--accent); color: var(--text); }
+.classic-search-text { flex: 1; text-align: left; }
+.classic-search-kbd {
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
+  padding: 2px 7px; border-radius: var(--r-xs);
+  background: var(--overlay-active); border: 1px solid var(--panel-border); color: var(--text-faint);
+}
+
+.classic-body {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 288px 1fr;
+  overflow: hidden;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+.classic-sidebar {
+  overflow-y: auto;
+  border-right: 1px solid var(--panel-border);
+  padding: 18px 14px calc(var(--player-h) + 24px);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.classic-nav { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.classic-nav button {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-md);
+  color: var(--text-dim); font-size: var(--fs-md); font-weight: 600; text-align: left;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.classic-nav button:hover { background: var(--overlay-hover); color: var(--text); }
+.classic-nav button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+
+/* ── Mood picker (12 swatch cards — salvaged from the legacy color-emotion grid) ── */
+.mood-picker { border-top: 1px solid var(--border-soft); padding-top: 16px; }
+.mood-picker-head h3 { font-family: var(--font-display); font-size: var(--fs-md); margin-bottom: 4px; }
+.mood-picker-hint { font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: 12px; line-height: 1.4; }
+.mood-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mood-swatch {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 9px; border-radius: var(--r-md);
+  background: var(--overlay-hover); border: 1px solid transparent; text-align: left;
+  transition: border-color var(--dur-fast), background var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.mood-swatch:hover { background: var(--overlay-active); transform: translateY(-2px); }
+.mood-swatch.is-on { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); }
+.mood-swatch:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.mood-chip { height: 26px; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
+.mood-label { display: flex; flex-direction: column; min-width: 0; }
+.mood-name { font-size: var(--fs-sm); font-weight: 600; }
+.mood-emotion { font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Main content ──────────────────────────────────────────────────────────── */
+.classic-main {
+  overflow-y: auto;
+  padding: 22px 24px calc(var(--player-h) + 28px);
+}
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 16px;
+}
+.pane-head h2 { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; }
+.pane-back {
+  flex-shrink: 0; padding: 8px 14px; border-radius: var(--r-pill);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border);
+  color: var(--text-dim); font-size: var(--fs-sm); font-weight: 600;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.pane-back:hover { background: var(--overlay-active); color: var(--text); }
+.pane-back:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+/* Reused .results-panel / .lyrics-panel are styled in ui.css for the immersive HUD (glass,
+   bottom-anchored, height-capped). In the classic flow we want them plain + full-width. */
+.classic-root .results-panel {
+  max-width: none; max-height: none; margin-top: 0; padding: 0; overflow: visible;
+  background: transparent; border: none; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+/* Lyrics is an overlay in classic too: float it above the player, centred. */
+.classic-root .lyrics-panel {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--player-h) + 20px); margin-top: 0;
+  width: min(720px, calc(100% - 32px)); max-height: 60vh; z-index: 55;
+}
+
+/* ── Browse library ────────────────────────────────────────────────────────── */
+.browse { display: flex; flex-direction: column; gap: 30px; }
+.browse-section { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 12px; }
+.browse-h { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; }
+.browse-empty { color: var(--text-dim); font-size: var(--fs-sm); padding: 8px 2px; }
+.browse-all-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.browse-sort {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: var(--fs-sm); color: var(--text-dim);
+}
+.browse-sort select {
+  padding: 7px 12px; border-radius: var(--r-md);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border); color: var(--text);
+  font-family: var(--font-body); font-size: var(--fs-sm); cursor: pointer;
+}
+.browse-pager {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  margin-top: 18px; color: var(--text-dim); font-size: var(--fs-sm);
+}
+.browse-pager button {
+  padding: 8px 16px; border-radius: var(--r-pill);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border);
+  color: var(--text); font-weight: 600; font-size: var(--fs-sm);
+  transition: background var(--dur-fast);
+}
+.browse-pager button:hover:not(:disabled) { background: var(--overlay-active); }
+.browse-pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Horizontal card strips (featured / new releases) */
+.card-strip {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 150px;
+  gap: 14px; overflow-x: auto; padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+.song-card2 {
+  display: flex; flex-direction: column; gap: 8px; text-align: left;
+  padding: 10px; border-radius: var(--r-lg);
+  background: var(--overlay-hover); border: 1px solid transparent;
+  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.song-card2:hover:not(:disabled) { background: var(--overlay-active); transform: translateY(-3px); }
+.song-card2:disabled { opacity: 0.4; cursor: not-allowed; }
+.song-card2.is-active { border-color: var(--mood); box-shadow: 0 0 0 1px var(--mood); }
+.song-card2:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.song-card2-art {
+  aspect-ratio: 1; width: 100%; border-radius: var(--r-md); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.song-card2-art img { width: 100%; height: 100%; object-fit: cover; }
+.song-card2-title { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-card2-artist { font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Responsive: collapse to one column; sidebar becomes a top strip ──────────── */
+@media (max-width: 720px) {
+  .classic-topbar { padding-right: 120px; }
+  .classic-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .classic-sidebar {
+    border-right: none; border-bottom: 1px solid var(--panel-border);
+    padding: 14px 14px 16px;
+  }
+  .classic-nav { flex-direction: row; flex-wrap: wrap; }
+  .classic-nav button { width: auto; }
+  .mood-grid { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 140px; overflow-x: auto; padding-bottom: 6px; }
+  .classic-main { overflow: visible; }
+}
+@media (max-width: 640px) {
+  .skin-toggle-label { display: none; }
+  .skin-toggle { padding: 0 9px; }
+  .help-btn { right: 64px; }
+  .classic-topbar { padding-right: 104px; }
+  .classic-search-kbd { display: none; }
+}
+
+/* Reduced motion: drop the spring/lift transitions (transforms). */
+@media (prefers-reduced-motion: reduce) {
+  .skin-toggle, .mood-swatch, .song-card2, .pane-back { transition: none; }
+  .skin-toggle:hover, .mood-swatch:hover, .song-card2:hover:not(:disabled) { transform: none; }
+}

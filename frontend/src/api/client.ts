@@ -89,6 +89,24 @@ export interface ColorResult {
   bridge: Array<{ hex: string; emotion_vi: string; valence: number; arousal: number }> | null;
 }
 
+// Library browse (classic skin). Mirrors GET /api/songs.
+export type BrowseSort = 'name' | 'artist' | 'energy' | 'valence' | 'danceability' | 'random';
+export interface BrowseParams {
+  page?: number;
+  limit?: number;
+  sort?: BrowseSort;
+  mood?: string;
+  artist?: string;
+  search?: string;
+}
+export interface BrowseResult {
+  songs: Song[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 function safeColor(hex?: string): string {
   return hex && HEX_RE.test(hex) ? hex : '#a78bfa';
@@ -205,6 +223,37 @@ export const api = {
       })),
       semanticAvailable: data.semantic_available ?? false,
     };
+  },
+
+  // Library browse (classic skin) — paginated, sortable, filterable. GET /api/songs.
+  async browseSongs(p: BrowseParams = {}): Promise<BrowseResult> {
+    const qs = new URLSearchParams();
+    if (p.page) qs.set('page', String(p.page));
+    if (p.limit) qs.set('limit', String(p.limit));
+    if (p.sort) qs.set('sort', p.sort);
+    if (p.mood) qs.set('mood', p.mood);
+    if (p.artist) qs.set('artist', p.artist);
+    if (p.search) qs.set('search', p.search);
+    const data = await getJSON<{
+      songs?: RawSong[]; total?: number; page?: number; limit?: number; total_pages?: number;
+    }>(`/api/songs?${qs.toString()}`);
+    return {
+      songs: (data.songs || []).map(normalizeSong),
+      total: data.total ?? 0,
+      page: data.page ?? 1,
+      limit: data.limit ?? 20,
+      total_pages: data.total_pages ?? 1,
+    };
+  },
+
+  async getFeatured(count = 12): Promise<Song[]> {
+    const data = await getJSON<{ songs?: RawSong[] }>(`/api/songs/featured?count=${count}`);
+    return (data.songs || []).map(normalizeSong);
+  },
+
+  async getNewReleases(count = 12): Promise<Song[]> {
+    const data = await getJSON<{ songs?: RawSong[] }>(`/api/songs/new-releases?count=${count}`);
+    return (data.songs || []).map(normalizeSong);
   },
 
   streamUrl: (trackId: string) => `/api/audio/stream/${trackId}`,

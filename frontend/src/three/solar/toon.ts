@@ -19,4 +19,9 @@ export function toonRamp(): Texture {
 
 // Ink outline tuned once. Pixel-constant width (drei Outlines default screenspace=false →
 // thickness ≈ pixels), so the silhouette reads at every scale the astronaut takes.
+//
+// OUTLINE BUDGET: each <Outlines> is an extra back-face draw. Apply ONLY to the largest
+// silhouette masses — astronaut = head, torso, backpack, 2 arms (max 5); ship = disc (max 2).
+// Never outline small accents (gloves, boots, shoulder pads, antenna, pods, emblem, lights):
+// they sit inside a larger outlined silhouette, so an outline there only adds cost + clutter.
 export const OUTLINE = { color: '#171225', thickness: 5 } as const;
