@@ -59,8 +59,7 @@ async def health_check():
     try:
         from db.engine import check_async_db, SessionLocal
         from sqlalchemy import text
-        if check_async_db.__module__:   # asyncpg path
-            db_ok = await check_async_db()
+        db_ok = await check_async_db()   # asyncpg path (preferred); errors fall to except → sync probe
         if not db_ok:
             with SessionLocal() as session:
                 session.execute(text("SELECT 1"))
@@ -101,7 +100,10 @@ async def get_statistics():
             "embedding_dimension": stats.get('embedding_dimension'),
             "has_colors": stats['has_colors'],
             "model_info": {
-                "phobert": config.PHOBERT_MODEL,
+                # Report what actually serves at runtime: lyrics similarity = e5-large
+                # embeddings (PhoBERT is not loaded); audio backbone = MuQ/MERT.
+                "lyrics_embedding": config.LYRICS_EMBED_MODEL,
+                "audio_backbone": getattr(config, "AUDIO_BACKBONE", "mert"),
                 "color_mapping": "Palmer et al. 2013 + Russell Model",
                 "color_distance": config.COLOR_DISTANCE_METHOD,
                 "fusion_method": "Task-specific weighted fusion",

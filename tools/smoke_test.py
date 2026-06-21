@@ -92,11 +92,10 @@ def main():
     if song_id is not None:
         get(f"/api/song/{song_id}/similar", expect_list_key="songs")
 
-    # ---- Search (the F3 unified path: name / lyric / vibe) ----
-    get("/api/songs/search", q="yêu")
-    get("/api/songs/search/unified", q="Sơn Tùng")                 # by name
-    get("/api/songs/search/unified", q="đêm mưa buồn nhớ em")      # by lyric/vibe
-    get("/api/songs/search/unified", q="nhạc sôi động tiệc tùng")  # by vibe
+    # ---- Search (smart multi-tier: name / artist / lyric / vibe) ----
+    get("/api/search", q="Sơn Tùng", expect_list_key="results")              # by name/artist
+    get("/api/search", q="đêm mưa buồn nhớ em", expect_list_key="results")   # by lyric/vibe
+    get("/api/search", q="nhạc sôi động tiệc tùng", expect_list_key="results")  # by vibe
 
     # ---- AI recommendations ----
     post("1 color", "/api/recommend/color", {"colors": ["#2c3e66"], "top_k": 5})

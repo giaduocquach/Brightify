@@ -150,7 +150,6 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/letsencrypt:ro
       - ./nginx/www:/var/www/certbot:ro
-      - ./static:/var/www/static:ro
       - ${LOGS_PATH:-./logs}/nginx:/var/log/nginx
     depends_on:
       app:

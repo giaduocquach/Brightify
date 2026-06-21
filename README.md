@@ -1,6 +1,6 @@
 # Brightify — Vietnamese Music Recommendation System
 
-> AI-powered Vietnamese music streaming platform combining audio analysis, lyrics NLP, color psychology, and image understanding into a multimodal recommendation engine.
+> AI-powered Vietnamese music streaming platform combining audio analysis, lyrics NLP, and color psychology into a multimodal recommendation engine.
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.108+-green.svg)](https://fastapi.tiangolo.com)
@@ -21,20 +21,19 @@
 6. **Emotion profile** — Vietnamese Emotion Lexicon (730+ words, 13 categories)
 7. **Mood matching** — Q1-Q4 quadrant alignment
 
-Plus multimodal query inputs: **color** (CIEDE2000, Jonauskaite 2020), **image** (CLIP ViT-B/32 zero-shot), **mood**, **lyrics keywords**, **song-to-song**.
+Plus multimodal query inputs: **color** (CIEDE2000, Jonauskaite 2020), **mood**, **search**, **song-to-song**.
 
 ## Architecture
 
 ```
-Frontend SPA (Vanilla JS + Canvas + Web Audio)
+Frontend SPA (React 19 + Vite — react-three-fiber 3D + classic 2D skins, Web Audio)
         ↓ REST API
 FastAPI 0.108+ (lifespan, CORS, rate limiting)
         ↓
 Core AI/ML layer
-  ├─ recommendation_engine.py — 7-signal multimodal fusion
-  ├─ emotion_analysis.py — PhoBERT + Vietnamese lexicon
-  ├─ advanced_color_mapping.py — CIEDE2000 + 13 emotion-color profiles
-  └─ image_analysis.py — CLIP zero-shot (10 emotions, 18 scenes)
+  ├─ recommendation_engine.py — multimodal fusion (color + similar-song)
+  ├─ emotion_analysis.py — Vietnamese emotion lexicon + V-A
+  └─ advanced_color_mapping.py — CIEDE2000 + 13 emotion-color profiles
         ↓
 File-based serving release (`data/*.csv/*.npy/*.json` + `music_files/*.mp3`)
         ↓
@@ -52,9 +51,8 @@ Data pipeline (7-phase strict-gate, resumable)
 | Database | PostgreSQL 17, SQLAlchemy 2.0, Alembic, pgvector 0.4+, pg_trgm |
 | NLP (Vietnamese) | PhoBERT v2 (vinai/phobert-base-v2), pyvi ViTokenizer |
 | Audio ML | Essentia-TensorFlow (EffNet-Discogs, DEAM, MSD-MusiCNN, TempoCNN), librosa |
-| Vision | CLIP ViT-B/32 (openai/clip-vit-base-patch32) |
 | Color | CIEDE2000 (colormath) |
-| Frontend | Vanilla HTML/CSS/JS SPA, Web Audio API, Canvas visualizer |
+| Frontend | React 19 + Vite SPA (react-three-fiber 3D + classic 2D skins), Web Audio API |
 | Pipeline | ytmusicapi, yt-dlp, FFmpeg |
 
 ## Quick start
@@ -115,21 +113,19 @@ brightify/
 ├── core/                     # AI/ML core modules
 │   ├── recommendation_engine.py
 │   ├── emotion_analysis.py
-│   ├── advanced_color_mapping.py
-│   └── image_analysis.py
+│   └── advanced_color_mapping.py
 ├── db/                       # Database layer
 │   ├── models.py             # SQLAlchemy ORM (star schema, 10 tables)
 │   ├── engine.py
 │   └── seed.py
-├── alembic/                  # Database migrations (011 migrations)
+├── alembic/                  # Database migrations
 ├── tools/                    # 7-phase data pipeline
-├── static/                   # Frontend SPA
-├── test/                     # Tests (~5,700 lines)
-└── docs/                     # 18+ comprehensive reports
+├── frontend/                 # React 19 + Vite SPA (builds → static_spa/)
+├── static_spa/               # Built SPA served by FastAPI
+├── test/                     # Tests
+└── docs/                     # Reports (historical plans under docs/archive/)
     ├── PROJECT_OVERVIEW.md
-    ├── DETAILED_PROJECT_ANALYSIS.md
-    ├── PLAN_SYSTEM_UPGRADE.md
-    ├── PLAN_BACKTEST_METRICS.md
+    ├── SCIENTIFIC_AUDIT_AND_PLAN_V32.md
     └── PLAN_DOCKERIZATION.md
 ```
 
@@ -158,7 +154,6 @@ Brightify is built on validated academic research:
 | Vietnamese NLP | Nguyen & Tuan Nguyen 2020 (PhoBERT), Huynh et al. 2019 (UIT-VSMEC) |
 | Music IR | Berenzweig 2004 (Timbral), Hu & Downie 2010 (Lyrics > Audio for mood), Laurier 2009 (multimodal fusion) |
 | Color psychology | Palmer et al. 2013, Jonauskaite et al. 2020 (cross-cultural, 4,598 participants, 12 countries) |
-| Vision | Radford et al. 2021 (CLIP) |
 | Audio ML | Alonso-Jiménez et al. 2023 (DEAM V-A regression), MTG Essentia models |
 | Music therapy | Altshuler 1948 (Iso-Principle), Heiderscheit & Madson 2015 |
 
@@ -178,8 +173,6 @@ TBD — Academic / research use.
 
 - VinAI Research (PhoBERT, BARTpho)
 - MTG-UPF (Essentia, MTG-Jamendo dataset)
-- OpenAI (CLIP)
-- LAION (CLAP)
 - LRCLIB (lyrics database)
 - ytmusicapi & yt-dlp contributors
 
