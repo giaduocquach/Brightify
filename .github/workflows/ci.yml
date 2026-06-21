@@ -28,17 +28,26 @@ jobs:
       - run: npm run build   # `tsc && vite build` — typecheck + bundle to ../static_spa
 
   backend:
-    name: Backend compile-check
+    name: Backend compile-check + unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Data-dependent pytest runs locally (data/ embeddings + CSV are gitignored,
-      # so the engine cannot boot in CI). Here we just catch syntax/import-time errors.
-      - name: py_compile core modules
-        run: python -m compileall -q api core db app.py config.py logging_config.py
+          cache: pip
+      # Catch syntax/import-time errors across the backend (incl. the refactored
+      # core/ranking, core/color_va, core/explain, api/serialization, tools/mert_encoder).
+      - name: Compile-check
+        run: python -m compileall -q api core db tools app.py config.py logging_config.py
+      # Data-free unit tests. The full engine/pipeline tests run locally (data/ embeddings
+      # + the heavy pipeline deps — essentia/librosa/yt-dlp — are absent in CI, so the engine
+      # can't boot). The web-server deps cover the colour-mapping unit tests (the refactor's
+      # colour_va path). Engine-loading tests are marked `slow` and excluded here.
+      - name: Unit tests (data-free)
+        run: |
+          pip install -r requirements-app.txt pytest
+          pytest -m "not slow" test/test_color_reco.py -q
 
   docker-build:
     name: Docker image builds

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brightify"
+version = "7.2.0"
+description = "AI-powered Vietnamese music recommendation (color + similar-song + smart crossfade)."
+requires-python = ">=3.10"
+# Runtime dependencies are pinned in requirements.txt (full pipeline) and
+# requirements-app.txt (web server only) — installed via `pip install -r`.
+# Not duplicated here to keep a single source of truth.
+
+# Flat layout: packages live at the repo root (core/, api/, db/, tools/) alongside
+# the top-level entry modules (app.py, config.py, logging_config.py). The ASGI entry
+# stays `app:app` (uvicorn) — do NOT add a console_script that shadows it.
+[tool.setuptools]
+py-modules = ["app", "config", "logging_config"]
+
+[tool.setuptools.packages.find]
+include = ["core*", "api*", "db*", "tools*"]
+exclude = ["tools.archive*", "test*", "frontend*", "static_spa*", "alembic*"]
+
+[tool.pytest.ini_options]
+# Migrated from pytest.ini (single source of truth now).
+norecursedirs = ["archive", "tools/archive", "docs/archive", ".venv", "var"]
+markers = [
+    "slow: marks tests requiring full engine/model load (deselect with -m \"not slow\")",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Lint config only — advisory during the refactor (do NOT auto-format the tree,
+# it would pollute behavior-preserving diffs).

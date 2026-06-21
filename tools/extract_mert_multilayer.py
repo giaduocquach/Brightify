@@ -44,7 +44,7 @@ _ENC = None
 def _init_worker():
     global _ENC
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    from core.mert_encoder import MERTEncoder
+    from tools.mert_encoder import MERTEncoder
     _ENC = MERTEncoder(layers=LAYERS)
     _ENC._load()
 

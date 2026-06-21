@@ -9,17 +9,17 @@ warnings.filterwarnings('ignore')
 from config import *
 
 # Import color mapping
-try:
-    from core.advanced_color_mapping import get_advanced_color_mapper as get_color_mapper
-    USE_ADVANCED_COLOR = True
-except ImportError:
-    try:
-        from core.color_mapping import get_color_mapper
-    except ImportError:
-        from core.advanced_color_mapping import get_advanced_color_mapper as get_color_mapper
-    USE_ADVANCED_COLOR = False
+from core.advanced_color_mapping import get_advanced_color_mapper as get_color_mapper
 
 from core.emotion_analysis import get_emotion_analyzer
+from core import color_va
+# Cross-platform reproducible descending argsort — moved to core/ranking/_stable.py
+# so the extracted ranking helpers (coherence/journey) share the exact same tie-break.
+from core.ranking._stable import argsort_desc_stable as _argsort_desc_stable
+from core.ranking.artist import cap_per_artist as _cap_per_artist_fn
+from core.ranking import coherence as _coherence
+from core.ranking import journey as _journey
+from core import explain as _explain
 
 
 def detect_artist_column(df):
@@ -28,21 +28,6 @@ def detect_artist_column(df):
         if name in df.columns:
             return name
     return None
-
-
-def _argsort_desc_stable(scores, k=None):
-    """Descending argsort that is reproducible across CPU/BLAS platforms.
-
-    Ranking scores are float32 BLAS products (e.g. MERT/MuQ cosine @ centroid),
-    whose last bits differ between arm64 (Apple Accelerate) and amd64 (OpenBLAS).
-    A bare ``np.argsort(x)[::-1]`` is non-stable, so those ~1e-7 differences flip
-    near-tied songs and the same color returns a slightly different order per host.
-    Rounding absorbs the ULP noise; a stable sort then keeps ascending index order
-    for equal-rounded scores (a fixed tie-break) → identical output everywhere.
-    """
-    rounded = np.round(np.asarray(scores, dtype=np.float64), 6)
-    order = np.argsort(-rounded, kind='stable')
-    return order[:k] if k is not None else order
 
 
 # Columns the result-builders must carry through so the API (and the frontend Smart
@@ -491,15 +476,8 @@ class MusicRecommender:
         """
         # song_va_match is what the colour scorer / journey compare against.
         if COLOR_VA_RANK_MATCH:
-            from scipy.stats import rankdata
-            denom = max(self.n_songs - 1, 1)
-            rv = (rankdata(self.song_va[:, 0]) - 1) / denom
-            ra = (rankdata(self.song_va[:, 1]) - 1) / denom
-            self.song_va_match = np.column_stack([rv, ra]).astype(float)
-            # V36: sorted catalog raw V-A so a colour's raw value can be mapped through the
-            # catalog's empirical CDF to its target quantile (see _color_target_quantile).
-            self._va_sorted_v = np.sort(self.song_va[:, 0])
-            self._va_sorted_a = np.sort(self.song_va[:, 1])
+            self.song_va_match, self._va_sorted_v, self._va_sorted_a = \
+                color_va.build_rank_match_space(self.song_va, self.n_songs)
             # Ensure no stale linear calibration leaks into hsl_to_va.
             if hasattr(self.color_mapper, 'set_va_calibration'):
                 self.color_mapper._va_cal = None
@@ -508,36 +486,19 @@ class MusicRecommender:
         self.song_va_match = self.song_va
         if not COLOR_VA_CATALOG_CALIBRATE:
             return
-        cal = {
-            'v5':  float(np.percentile(self.song_va[:, 0], 5)),
-            'v95': float(np.percentile(self.song_va[:, 0], 95)),
-            'a5':  float(np.percentile(self.song_va[:, 1], 5)),
-            'a95': float(np.percentile(self.song_va[:, 1], 95)),
-        }
+        cal = color_va.catalog_va_percentiles(self.song_va)
         self._va_cal = cal
         if hasattr(self.color_mapper, 'set_va_calibration'):
             self.color_mapper.set_va_calibration(**cal)
 
     def _color_target_quantile(self, cva) -> np.ndarray:
         """Map a colour's raw V-A to its percentile within the catalog's own mood
-        distribution (V36). Raw colour arousal only spans ~[0.33,0.62], so using it
-        directly as a rank target crushes every colour into the catalog's middle band.
-        Mapping through the catalog empirical CDF spreads the 12 colours across the full
-        [0,1] mood range so each retrieves a distinct region. Only meaningful in
+        distribution (V36) — delegates to color_va.target_quantile. Only meaningful in
         rank-match mode (match space = catalog CDF ranks)."""
-        nv = len(self._va_sorted_v)
-        qv = float(np.searchsorted(self._va_sorted_v, cva[0]) / nv)
-        qa = float(np.searchsorted(self._va_sorted_a, cva[1]) / nv)
-        return np.clip(np.array([qv, qa]), 0.0, 1.0)
+        return color_va.target_quantile(cva, self._va_sorted_v, self._va_sorted_a)
 
-    # 8 CLAP emotion labels → Russell mood quadrant string (format the API expects:
-    # "QN: Name", consumed via startswith('QN') in /api/moods and contains() in filter)
-    _EMO_QUADRANT = {
-        'happy': 'Q1: Happy/Excited', 'excited': 'Q1: Happy/Excited',
-        'angry': 'Q2: Angry/Tense', 'tense': 'Q2: Angry/Tense',
-        'sad': 'Q3: Sad/Melancholic', 'melancholic': 'Q3: Sad/Melancholic',
-        'calm': 'Q4: Calm/Peaceful', 'peaceful': 'Q4: Calm/Peaceful',
-    }
+    # Russell mood quadrant + Vietnamese label maps (moved to core/color_va.py).
+    _EMO_QUADRANT = color_va.EMO_QUADRANT
 
     def _derive_mood_quadrant(self) -> None:
         """Overwrite mood_quadrant from fused_emotion (trusted labels) instead of the
@@ -906,172 +867,44 @@ class MusicRecommender:
 
     def _coherent_cluster_select(self, scores: np.ndarray, top_k: int,
                                  diversity_penalty: float) -> list[int]:
-        """V37: acoustically-coherent on-mood selection for recommend-by-color.
-
-        V-A relevance (`scores`, the heteroscedastic RBF) picks the colour's mood region;
-        MERT cosine to the growing set's centroid makes the chosen songs an acoustically
-        tight cluster — so a colour's songs feel alike AND feel like that colour. This is
-        the inverse objective of the old V-A-diversity MMR (which scattered results).
-        Artist-uniqueness penalty + cover filter keep variety. Basis: similar-song's MERT
-        backbone (Li 2023 / MARBLE) is what gives perceptual coherence; V-A alone (2
-        numbers) cannot carry timbre. α = COLOR_COHERENCE_ALPHA balances the two.
-        """
-        alpha = COLOR_COHERENCE_ALPHA
-        n_cand = min(top_k * COLOR_COHERENCE_OVERFETCH, self.n_songs)
-        cand = _argsort_desc_stable(scores, n_cand)            # top V-A candidates (global idx)
-        rel = scores[cand].astype(float)
-        rel = (rel - rel.min()) / (rel.max() - rel.min() + 1e-9)   # → [0,1]
-        # centred MERT (anisotropy-corrected) — raw cosines saturate ~0.9 and can't cluster.
-        # float64: the coherence matmul drives a greedy cascade (one different pick shifts
-        # the centroid → whole list diverges). float32 BLAS differs by ~1e-5 across CPUs
-        # (arm64 Accelerate vs amd64 OpenBLAS), too coarse for round-6 to absorb; float64
-        # BLAS agrees to ~1e-13 → reproducible selection on every host.
-        M = (getattr(self, 'mert_centered', None) if getattr(self, 'mert_centered', None) is not None
-             else self.mert_matrix)[cand].astype(np.float64)   # (n_cand, D), L2-normalised
+        """V37 acoustically-coherent on-mood selection — delegates to
+        core.ranking.coherence.coherent_cluster_select (the recommender owns the matrices)."""
+        M = (self.mert_centered if getattr(self, 'mert_centered', None) is not None
+             else self.mert_matrix)
         artists = (self.df[self.artist_col].fillna('__unknown__').values
                    if self.artist_col else None)
         cover_excl = getattr(self, '_cover_exclude', {}) if ENABLE_COVER_FILTER else {}
-
-        selected: list[int] = []         # local indices into `cand`
-        remaining = list(range(len(cand)))
-        blocked: set = set()             # global idxs blocked by the cover filter
-        artist_counts: dict = {}
-        centroid = None
-
-        while len(selected) < top_k and remaining:
-            if centroid is None:
-                combo = rel[remaining].copy()                  # seed = best V-A song
-            else:
-                coh = M[remaining] @ centroid                  # cosine (M is normalised)
-                combo = alpha * rel[remaining] + (1.0 - alpha) * coh
-            if diversity_penalty > 0 and artists is not None:
-                for j, li in enumerate(remaining):
-                    cnt = artist_counts.get(artists[cand[li]], 0)
-                    if cnt:
-                        combo[j] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
-            pick = None
-            for j in _argsort_desc_stable(combo):
-                li = remaining[int(j)]
-                if int(cand[li]) in blocked:
-                    continue
-                pick = li
-                break
-            if pick is None:
-                break
-            selected.append(pick)
-            remaining.remove(pick)
-            gi = int(cand[pick])
-            sel_M = M[selected].mean(0)
-            centroid = sel_M / (np.linalg.norm(sel_M) + 1e-9)
-            if artists is not None:
-                a = artists[gi]
-                artist_counts[a] = artist_counts.get(a, 0) + 1
-            blocked |= cover_excl.get(gi, set())
-
-        return [int(cand[li]) for li in selected]
+        return _coherence.coherent_cluster_select(
+            scores, top_k, diversity_penalty,
+            mert=M, artists=artists, cover_excl=cover_excl,
+            alpha=COLOR_COHERENCE_ALPHA, overfetch=COLOR_COHERENCE_OVERFETCH)
 
     def _journey_waypoint_sample(self, p1, p2, top_k: int,
                                   diversity_penalty: float,
                                   exclude_idx=None) -> list[int]:
-        """Greedy waypoint sampling for a true Iso-Principle gradient (V23 fix).
-
-        Divides the V-A path P1→P2 into `top_k` evenly-spaced waypoints and
-        greedily picks the best unselected song for each waypoint. This forces
-        intermediate songs into the list, avoiding the "2-block" artefact of
-        RRF + projection-sort (which only selected songs near the endpoints).
-
-        Basis: Iso-Principle — start matching A, shift ~10-15% per step (Saari
-        2016). Artist diversity applied with mild penalty (Δ ≤ 0.3 per repeat).
-        """
-        p1 = np.asarray(p1, float); p2 = np.asarray(p2, float)
-        n = self.n_songs
-        _sv = COLOR_SCORE_VA_SIGMA_V
-        _sa = COLOR_SCORE_VA_SIGMA_A
-
-        excluded = np.zeros(n, dtype=bool)
-        if exclude_idx:  # endless-radio: never re-pick an already-played song
-            excluded[exclude_idx] = True
-        artist_counts: dict[str, int] = {}
+        """Iso-Principle 2-colour waypoint sampling — delegates to
+        core.ranking.journey.waypoint_sample (the recommender owns the matrices)."""
+        smooth = COLOR_JOURNEY_AUDIO_SMOOTH
         artists = (self.df[self.artist_col].fillna('__unknown__').values
                    if self.artist_col else None)
-        selected: list[int] = []
-
-        # Ease-in-ease-out waypoints (sigmoid schedule) based on Iso-Principle.
-        # Starcke 2024 (d=0.52): mood transitions work better with slow start,
-        # faster middle, slow end. Saari 2016: "10-15% shift per step" implies
-        # faster middle transitions. Sigmoid replaces linear for smoother affective arc.
-        # ts_raw = sigmoid(linspace(-3,3)) normalised to [0,1]
-        try:
-            from scipy.special import expit as _expit
-            ts_raw = _expit(np.linspace(-3.0, 3.0, top_k))
-            ts = (ts_raw - ts_raw[0]) / (ts_raw[-1] - ts_raw[0])
-        except ImportError:
-            ts = np.linspace(0.0, 1.0, top_k)   # fallback
-        waypoints = p1[None, :] + ts[:, None] * (p2 - p1)[None, :]  # (K, 2)
-
-        match_va = getattr(self, 'song_va_match', self.song_va)
-        # V39: audio-smoothness setup — centred MERT + per-song BPM for continuity bonus.
-        smooth = COLOR_JOURNEY_AUDIO_SMOOTH
-        M = getattr(self, 'mert_centered', None) if smooth else None
-        bpm = self._journey_bpm_array() if smooth else None
-        for wp in waypoints:
-            dv = match_va[:, 0] - wp[0]
-            da = match_va[:, 1] - wp[1]
-            scores = np.exp(-0.5 * ((dv / _sv) ** 2 + (da / _sa) ** 2))
-
-            scores[excluded] = -1.0
-
-            # Mild diversity penalty (cap repeat-artist contribution at 3)
-            if diversity_penalty > 0 and artists is not None:
-                for i in np.where(scores > 0)[0]:
-                    cnt = artist_counts.get(artists[i], 0)
-                    if cnt:
-                        scores[i] *= max(0.0, 1.0 - diversity_penalty * min(cnt, 3))
-
-            # V39: continuity bonus — reward acoustic closeness to the previous pick so the
-            # journey also flows in tempo/timbre, not just V-A (Knopke 2018; iso-principle).
-            if smooth and selected:
-                prev = selected[-1]
-                cont = np.zeros(n, dtype=float)
-                if M is not None:
-                    cont += 0.5 * np.clip(M @ M[prev], -1, 1)        # centred-MERT timbre sim
-                if bpm is not None and not np.isnan(bpm[prev]):
-                    cont += 0.5 * np.exp(-np.abs(bpm - bpm[prev]) / COLOR_JOURNEY_BPM_TAU)
-                pos = scores > 0
-                scores[pos] = scores[pos] + COLOR_JOURNEY_SMOOTH_GAMMA * cont[pos]
-
-            best = int(np.argmax(scores))
-            if scores[best] <= 0:
-                continue
-            selected.append(best)
-            excluded[best] = True
-            if artists is not None:
-                art = artists[best]
-                artist_counts[art] = artist_counts.get(art, 0) + 1
-
-        return selected
+        return _journey.waypoint_sample(
+            p1, p2, top_k, diversity_penalty,
+            match_va=getattr(self, 'song_va_match', self.song_va),
+            mert_centered=(getattr(self, 'mert_centered', None) if smooth else None),
+            bpm=(self._journey_bpm_array() if smooth else None),
+            artists=artists, n_songs=self.n_songs, exclude_idx=exclude_idx,
+            sigma_v=COLOR_SCORE_VA_SIGMA_V, sigma_a=COLOR_SCORE_VA_SIGMA_A,
+            smooth=smooth, bpm_tau=COLOR_JOURNEY_BPM_TAU, smooth_gamma=COLOR_JOURNEY_SMOOTH_GAMMA)
 
     def _journey_bpm_array(self) -> "np.ndarray | None":
         """Per-song clean BPM aligned to catalog order (NaN where missing); cached. V39."""
         if hasattr(self, '_bpm_arr'):
             return self._bpm_arr
-        import json as _json
-        arr = np.full(self.n_songs, np.nan, dtype=float)
         # Resolve from DATA_DIR (serving release), not CWD-relative — otherwise in
         # Docker (CWD=/app) this missed the mounted serving data and BPM went NaN.
         path = globals().get("CLEAN_BPM_FILE", "data/clean_bpm.json")
-        if os.path.exists(path):
-            try:
-                d = _json.load(open(path))
-                tids = self.df['track_id'].astype(str).values
-                for i, t in enumerate(tids):
-                    v = d.get(t)
-                    if v:
-                        arr[i] = float(v)
-            except Exception as e:
-                logger.warning(f"[journey] BPM load failed: {e}")
-        self._bpm_arr = arr
-        return arr
+        self._bpm_arr = _journey.load_bpm_array(self.df, self.n_songs, path)
+        return self._bpm_arr
 
     def _build_result_df(self, idxs: list[int]):
         """Build a result DataFrame from a list of song indices (for journey)."""
@@ -1090,164 +923,29 @@ class MusicRecommender:
         cols = [c for c in optional if c in rows.columns]
         return rows[cols].reset_index(drop=True)
 
-    def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s,
-                         src_hex=None):
-        """E6 (V16) — per-recommendation "why this song".
-
-        Verbalises the REAL signal deltas behind each pick (no fabrication): the
-        song's V-A vs the colour's V-A (mood closeness), the dominant contributing
-        signal (mood / lyric-theme / categorical emotion), and the song's own mood
-        label. Norman's reflective level / explainability — earns trust vs a
-        black-box mood button. Values are JSON-safe primitives.
-        """
-        # F3: V-A-only scorer — "why" is purely the V-A closeness.
-        cval, caro = float(cva[0]), float(cva[1])
-        _has_fe = 'fused_emotion' in self.df.columns
-        out = []
-        for i in original_indices:
-            i = int(i)
-            sv, sa = float(self.song_va[i, 0]), float(self.song_va[i, 1])
-            song_emo = ''
-            if _has_fe:
-                _fe = self.df['fused_emotion'].iloc[i]
-                song_emo = '' if pd.isna(_fe) else str(_fe).lower()
-            va_match = round(float(va_s[i]), 3)
-            song_emo_vi = self._EMO_VI.get(song_emo, song_emo)
-            reason = 'Cùng vùng cảm xúc (Valence–Arousal) với màu bạn chọn'
-            if song_emo_vi:
-                reason = f"Tâm trạng bài ({song_emo_vi}) khớp vùng V-A của màu"
-            out.append({
-                'reason': reason,
-                'top_signal': 'mood',
-                'mood_match': va_match,
-                'song_va': [round(sv, 3), round(sa, 3)],
-                'color_va': [round(cval, 3), round(caro, 3)],
-                'song_emotion': song_emo,
-                'song_emotion_vi': song_emo_vi,
-                **({'color_hex': src_hex} if src_hex else {}),
-            })
-        return out
-
     # Vietnamese display names for the 8 CLAP emotion labels
-    _EMO_VI = {
-        'happy': 'Vui vẻ', 'excited': 'Phấn khích', 'peaceful': 'Bình yên',
-        'calm': 'Thư thái', 'melancholic': 'U sầu', 'sad': 'Buồn',
-        'tense': 'Căng thẳng', 'angry': 'Giận dữ',
-    }
+    _EMO_VI = color_va.EMO_VI
+
+    def _build_color_why(self, original_indices, cva, va_s, emo_s, lyr_s, src_hex=None):
+        """Per-rec "why this song" for recommend-by-color — delegates to core.explain.
+        (emo_s/lyr_s kept for call-site compatibility; the V-A-only scorer doesn't use them.)"""
+        fe = self.df['fused_emotion'] if 'fused_emotion' in self.df.columns else None
+        return _explain.build_color_why(original_indices, cva, va_s, src_hex,
+                                        song_va=self.song_va, fused_emotion=fe, emo_vi=self._EMO_VI)
 
     def _build_similar_why(self, seed_idx: int, rec_indices: list) -> list:
-        """Per-recommendation "why this song" for recommend_by_song.
-
-        Verbalises the 3 active signal scores (MERT audio, V-A mood, lyrics)
-        for each recommended song vs the seed. No fabrication — all values are
-        computed directly from the embedding matrices used in ranking.
-
-        Returns list of dicts, one per rec, JSON-safe.
-        """
-        _sv = RECO_SONG_VA_SIGMA_V
-        _sa = RECO_SONG_VA_SIGMA_A
-        _has_fe = 'fused_emotion' in self.df.columns
-
-        seed_emo = ''
-        if _has_fe:
-            _fe = self.df['fused_emotion'].iloc[seed_idx]
-            seed_emo = '' if pd.isna(_fe) else str(_fe).lower()
-
-        # Precompute seed vectors
-        seed_mert   = self.mert_matrix[seed_idx] if self.mert_matrix is not None else None
-        seed_lyrics = self.embeddings_normalized[seed_idx] if self.embeddings_normalized is not None else None
-        seed_va     = self.song_va[seed_idx]
-
-        out = []
-        for i in rec_indices:
-            i = int(i)
-
-            # MERT audio score
-            mert_score = 0.5
-            if seed_mert is not None:
-                raw = float(self.mert_matrix[i] @ seed_mert)
-                mert_score = round((raw + 1.0) / 2.0, 3)   # [-1,1] → [0,1]
-
-            # V-A mood score
-            dv = float(self.song_va[i, 0] - seed_va[0])
-            da = float(self.song_va[i, 1] - seed_va[1])
-            va_score = round(float(np.exp(-0.5 * ((dv / _sv)**2 + (da / _sa)**2))), 3)
-
-            # Lyrics score
-            lyrics_score = 0.5
-            if seed_lyrics is not None:
-                raw_l = float(self.embeddings_normalized[i] @ seed_lyrics)
-                lyrics_score = round((raw_l + 1.0) / 2.0, 3)
-
-            # Emotion labels
-            rec_emo = ''
-            if _has_fe:
-                _fe2 = self.df['fused_emotion'].iloc[i]
-                rec_emo = '' if pd.isna(_fe2) else str(_fe2).lower()
-
-            seed_emo_vi = self._EMO_VI.get(seed_emo, seed_emo)
-            rec_emo_vi  = self._EMO_VI.get(rec_emo,  rec_emo)
-
-            # Build Vietnamese reason — dominant signal first
-            same_mood = (seed_emo and rec_emo and seed_emo == rec_emo)
-            if mert_score >= 0.95:
-                if same_mood:
-                    reason = f"Âm nhạc rất gần — cùng tâm trạng {rec_emo_vi or ''} và chất nhạc"
-                else:
-                    reason = "Âm nhạc rất tương đồng (timbre, nhịp điệu, hòa âm)"
-                top_signal = "audio"
-            elif va_score >= 0.70 and same_mood:
-                reason = f"Cùng tâm trạng {rec_emo_vi or ''} và phong cách âm nhạc tương tự"
-                top_signal = "mood"
-            elif mert_score >= 0.90:
-                reason = "Phong cách âm nhạc tương tự — cùng thể loại và cảm giác"
-                top_signal = "audio"
-            elif lyrics_score >= 0.85 and mert_score >= 0.88:
-                reason = "Cùng phong cách nhạc và chủ đề lời bài hát"
-                top_signal = "audio+lyrics"
-            else:
-                reason = "Âm nhạc và tâm trạng tương tự"
-                top_signal = "audio"
-
-            out.append({
-                'reason':        reason,
-                'top_signal':    top_signal,
-                'audio_score':   mert_score,
-                'mood_score':    va_score,
-                'lyrics_score':  lyrics_score,
-                'seed_emotion':  seed_emo,
-                'seed_emotion_vi': seed_emo_vi,
-                'song_emotion':  rec_emo,
-                'song_emotion_vi': rec_emo_vi,
-                'same_mood':     same_mood,
-            })
-        return out
+        """Per-rec "why this song" for recommend_by_song — delegates to core.explain."""
+        fe = self.df['fused_emotion'] if 'fused_emotion' in self.df.columns else None
+        return _explain.build_similar_why(
+            seed_idx, rec_indices,
+            song_va=self.song_va, mert_matrix=self.mert_matrix,
+            lyrics_emb=self.embeddings_normalized, fused_emotion=fe, emo_vi=self._EMO_VI,
+            sigma_v=RECO_SONG_VA_SIGMA_V, sigma_a=RECO_SONG_VA_SIGMA_A)
 
     def color_emotion_bridge(self, color_hexes):
-        """Return the colour→emotion bridge for UI display (no song matching).
-
-        For each chosen colour: its inferred top emotion (CLAP label + Vietnamese
-        name) and V-A point. This is the feature's core value made visible
-        (Palmer/PLOS: emotion mediates the colour↔music link).
-        """
-        if isinstance(color_hexes, str):
-            color_hexes = [color_hexes]
-        bridge = []
-        for color in list(color_hexes)[:3]:
-            try:
-                v, a = self.color_mapper.hsl_to_va(color)
-                probs = self.color_mapper.color_to_emotion_probs(color)
-                top = max(probs.items(), key=lambda x: x[1])[0]
-                bridge.append({
-                    'hex': color,
-                    'emotion': top,
-                    'emotion_vi': self._EMO_VI.get(top, top),
-                    'valence': round(float(v), 2),
-                    'arousal': round(float(a), 2),
-                })
-            except (ValueError, KeyError, TypeError):
-                continue
-        return bridge
+        """Colour→emotion bridge for UI display (no song matching) — delegates to
+        core.explain.build_bridge (Palmer/PLOS: emotion mediates the colour↔music link)."""
+        return _explain.build_bridge(color_hexes, self.color_mapper, self._EMO_VI)
 
     def recommend_by_song(self,
                          song_id_or_name,
@@ -1431,7 +1129,7 @@ class MusicRecommender:
         Returns:
             (≤n,) int64 array of candidate song indices, RRF order.
         """
-        from core.retrieval import reciprocal_rank_fusion, scores_to_rank_list
+        from core.ranking.retrieval import reciprocal_rank_fusion, scores_to_rank_list
         if n is None:
             n = RRF_CANDIDATE_SIZE
         rank_lists = [scores_to_rank_list(s, top_n=n * 2) for s in score_arrays]
@@ -1439,27 +1137,8 @@ class MusicRecommender:
         return np.array(fused, dtype=np.int64)
 
     def _cap_per_artist(self, indices, max_per_artist, top_k):
-        """Keep at most `max_per_artist` songs per artist, preserving the input
-        order, until `top_k` are collected. Works regardless of DIVERSITY_METHOD.
-        Backfills from the surplus if the cap leaves the list short."""
-        if self.artists is None or not max_per_artist:
-            return list(indices)[:top_k]
-        out, counts, seen = [], {}, set()
-        for idx in indices:
-            artist = self.artists[idx]
-            if artist and counts.get(artist, 0) >= max_per_artist:
-                continue
-            out.append(idx); seen.add(idx)
-            if artist:
-                counts[artist] = counts.get(artist, 0) + 1
-            if len(out) >= top_k:
-                return out
-        for idx in indices:  # backfill if cap left us short
-            if idx not in seen:
-                out.append(idx)
-                if len(out) >= top_k:
-                    break
-        return out
+        """Cap songs per artist (delegates to core.ranking.artist.cap_per_artist)."""
+        return _cap_per_artist_fn(indices, self.artists, max_per_artist, top_k)
 
     def _fast_rank(self, scores, top_k, diversity_penalty, restrict_to=None, max_per_artist=None):
         """
@@ -1497,7 +1176,7 @@ class MusicRecommender:
 
         # --- MMR / DPP path ---
         if DIVERSITY_METHOD in ("mmr", "dpp") and self.embeddings_normalized is not None:
-            from core.diversity import mmr_rerank, dpp_greedy_map
+            from core.ranking.diversity import mmr_rerank, dpp_greedy_map
             candidates = top_indices.tolist()
             # Over-fetch when an artist cap is set, so trimming still yields top_k.
             fetch_k = top_k if not max_per_artist else min(top_k * 3, len(candidates))

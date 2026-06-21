@@ -21,7 +21,7 @@ Literature basis (Phase 1 — arXiv:2604.20847, Li et al. 2023 probing):
   Mean across all 12 layers captures the full spectrum.
 
 Usage:
-    from core.mert_encoder import get_mert_encoder
+    from tools.mert_encoder import get_mert_encoder
     enc = get_mert_encoder()
     emb = enc.extract("music_files/foo.mp3")   # (768,) float32 unit-norm
     # Multi-layer (explicit):
