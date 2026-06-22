@@ -161,13 +161,14 @@ Full citations in [docs/RESEARCH_FOUNDATIONS.md](docs/RESEARCH_FOUNDATIONS.md).
 
 ## Status
 
-- **Current version**: v7.1 (codebase) / v7.2 (after PhoBERT v2 + DEAM upgrade)
-- **Catalog size**: ~4,300+ Vietnamese songs
-- **In progress**: xem [docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md](docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md)
+- **Catalog**: 5,138 Vietnamese songs (audio + lyrics + precomputed features)
+- **Audio backbone**: MuQ · **Lyrics**: multilingual-e5-large · **Emotion labels**: v6i (frozen, reproducible via `tools/build_labels_repro.py`)
+- **Core features**: recommend-by-colour (Valence–Arousal) + similar-song; two UI skins (3D immersive + classic 2D)
+- **Thesis (ĐATN)**: see `SOICT_DATN_Application_VIE_Template/` — report + verifiable offline evaluation
 
 ## License
 
-TBD — Academic / research use.
+Đồ án tốt nghiệp — mã nguồn phục vụ **mục đích học thuật / nghiên cứu**, *all rights reserved*: vui lòng xin phép trước khi tái sử dụng. Dữ liệu **nhạc và lời bài hát thuộc bản quyền của bên thứ ba**, không kèm trong repo (đã loại trừ qua `.gitignore`) và không được phân phối lại; các mô hình và tập dữ liệu ngoài (MuQ, multilingual-e5-large, ViSoBERT, XLM-R, NRC-VAD, DEAM, PMEmo, EmoBank…) giữ nguyên giấy phép gốc của chúng.
 
 ## Acknowledgments
 
