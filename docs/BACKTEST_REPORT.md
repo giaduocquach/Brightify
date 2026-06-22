@@ -1,5 +1,9 @@
 # Báo cáo Đánh giá (Backtest) — Hệ thống gợi ý nhạc Brightify
 
+> ⚠️ **TÀI LIỆU LỊCH SỬ (2026-05-28) — KHÔNG còn phản ánh hệ thống hiện tại. Giữ lại để tham khảo quá trình.**
+> Số liệu **chuẩn, mới nhất** nằm ở **báo cáo ĐATN, Chương 4** (`SOICT_DATN_Application_VIE_Template/`).
+> Khác biệt chính so với hệ thống hiện tại: doc này dùng **5.548 bài** (nay là **5.138**); mô tả gợi ý theo màu bằng **công thức đa tín hiệu (lời/âm thanh/tâm trạng/cảm xúc)** — kiến trúc hiện tại đã đổi sang **thuần Valence–Arousal (Gaussian RBF) + nhất quán âm thanh trên MuQ**; và trích **NDCG@10 ≈ 0.185** trên harness `backtest_v2` cũ (đã drift) — số bài→bài hiện hành đo bằng `tools/eval_editorial_ndcg.py` (xem Chương 4, mục đánh giá gợi ý bài tương tự).
+
 **Ngày:** 2026-05-28 · **Quy mô:** 5,548 bài hát Việt Nam · **Mọi số liệu trong báo cáo đều đo lại trực tiếp trên hệ thống đang chạy.**
 
 ---

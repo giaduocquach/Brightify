@@ -576,7 +576,13 @@ USE_RELABELED_EMOTIONS = os.environ.get("USE_RELABELED_EMOTIONS", "True") == "Tr
 # orthogonality ✓); Whiteford-tempo + journey + ICEAS valence hold. Cost: valence ρ vs
 # GPT 0.71→0.67 / Gemini 0.64→0.56 (small; that agreement is partly circular). Tools:
 # build_grounded_vnlex.py (NRC-VAD-VN) → build_v6h_labels.py.
-RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6i.json")  # v6h grounded valence + MuQ-arousal (wt=0.35) — full MuQ backbone (V41)
+# V6i (2026-06-13, ACTIVE): re-tested AROUSAL on the now-MuQ backbone and SHIPPED it —
+# arousal = blend [MuQ-arousal 0.574, clean-BPM 0.35, loudness 0.076] (tempo weight raised
+# to 0.35 because MuQ encodes tempo weakly). This SUPERSEDES the v6f/v6g "inherit MERT
+# arousal" note above: in the V38-colour-arousal + α=0.55 context, MuQ-arousal now clears
+# tempo-tracking ρ(A,BPM)=0.466 AND DEAM-CV 0.692 > MERT 0.647 with no colour-TE regression.
+# Valence = v6h (grounded NRC-VAD-VN ensemble). Reproducible: tools/build_labels_repro.py.
+RELABELED_EMOTIONS_FILE = str(DATA_DIR / "emotion_labels_v6i.json")  # v6h grounded valence + MuQ-arousal (MuQ 0.574/tempo 0.35/loud 0.076) — full MuQ backbone (V41)
 
 # ============================================================================
 # System Settings

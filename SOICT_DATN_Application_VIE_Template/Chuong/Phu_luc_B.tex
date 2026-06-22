@@ -1,0 +1,40 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+\label{appendix:usecase}
+Phụ lục này đặc tả các use case phụ trợ của hệ thống Brightify (ngoài sáu use case nghiệp vụ chính đã đặc tả trong Chương~\ref{chapter:Related_works}).
+
+\section{Đặc tả use case ``Tìm kiếm bài hát''}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Tác nhân} & Người nghe \\ \hline
+\textbf{Mô tả} & Người nghe tìm bài hát theo tên, nghệ sĩ, lời hoặc theo ``cảm giác'' (ngữ nghĩa). \\ \hline
+\textbf{Tiền điều kiện} & Kho nhạc và chỉ mục tìm kiếm đã sẵn sàng. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người nghe nhập từ khóa. \newline 2. Hệ thống tìm khớp lần lượt theo tên/nghệ sĩ (không phân biệt dấu), rồi khớp gần đúng, rồi khớp ngữ nghĩa. \newline 3. Hệ thống trả về danh sách kết quả kèm loại khớp và trích đoạn lời (nếu khớp theo lời). \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 1a. Từ khóa rỗng: không thực hiện tìm kiếm. \newline 2a. Không có kết quả: hiển thị thông báo không tìm thấy. \\ \hline
+\textbf{Hậu điều kiện} & Danh sách bài hát phù hợp được hiển thị để người nghe chọn phát hoặc tìm bài tương tự. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case phụ trợ --- Tìm kiếm bài hát}
+\label{table:ucb1}
+\end{table}
+
+\section{Đặc tả use case ``Phát nhạc và quản lý hàng đợi''}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|p{3.0cm}|p{11.0cm}|}
+\hline
+\textbf{Tác nhân} & Người nghe \\ \hline
+\textbf{Mô tả} & Người nghe phát một bài hoặc cả danh sách, điều khiển phát và sắp xếp lại hàng đợi. \\ \hline
+\textbf{Tiền điều kiện} & Bài hát được chọn có tệp âm thanh khả dụng. \\ \hline
+\textbf{Luồng sự kiện chính} & 1. Người nghe nhấn phát một bài hoặc ``phát tất cả''. \newline 2. Hệ thống phát âm thanh và cập nhật thanh phát (tiến độ, bài kế tiếp). \newline 3. Người nghe có thể tạm dừng, chuyển bài, tua, hoặc kéo--thả để sắp xếp lại hàng đợi. \\ \hline
+\textbf{Luồng thay thế / ngoại lệ} & 1a. Tệp âm thanh không có: nút phát bị vô hiệu, hiển thị trạng thái không phát được. \newline 2a. Lỗi phát: hiển thị thông báo lỗi cho người nghe. \\ \hline
+\textbf{Hậu điều kiện} & Bài hát được phát; hàng đợi phản ánh đúng thao tác của người nghe. \\ \hline
+\end{tabular}
+\caption{Đặc tả use case phụ trợ --- Phát nhạc và quản lý hàng đợi}
+\label{table:ucb2}
+\end{table}
+
+\end{document}

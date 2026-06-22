@@ -1,0 +1,27 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+\section{Kết luận}
+Đồ án đã xây dựng được hệ thống Brightify --- một hệ thống gợi ý nhạc Việt dựa trên cảm xúc với \textbf{hai chức năng chính}: gợi ý bài hát tương tự một bài cho trước, và gợi ý danh sách bài hát theo một (hoặc hai) màu sắc do người dùng chọn. Cả hai chức năng được thống nhất trên một không gian cảm xúc Valence--Arousal, cho phép màu và nhạc gặp nhau trên cùng hệ tọa độ.
+
+Về mặt kỹ thuật, đồ án đã thiết kế một \textbf{kiến trúc hai pha offline/serving}: pha ngoại tuyến gán tọa độ cảm xúc, trích nhúng âm thanh MuQ và tính sẵn mọi ma trận biểu diễn cho $5.138$ bài hát; pha phục vụ chỉ thực hiện các phép nhân ma trận nên đáp ứng truy vấn trong vài mili-giây. Hệ thống được \textbf{đánh giá bằng nhiều tầng độ đo ngoại tuyến} có kiểm định thống kê (đường cơ sở mạnh, hiệu chỉnh FDR, khoảng tin cậy bootstrap) và các kiểm chứng độc lập (nhịp độ thật, chuẩn ICEAS, chuyển miền PMEmo), kèm một khảo sát so sánh mô hình để bảo đảm mỗi thành phần là lựa chọn tốt nhất theo độ đo cuối. So với các hệ thống gợi ý thương mại dựa trên lọc cộng tác, Brightify không phụ thuộc dữ liệu người dùng và cho phép truy vấn trực tiếp theo cảm xúc và theo màu --- một hướng mà các nền tảng hiện có chưa hỗ trợ.
+
+Bên cạnh những kết quả đạt được, đồ án còn một số \textbf{hạn chế} cần nêu thẳng:
+\begin{itemize}[leftmargin=1.4cm]
+    \item Chưa có \textit{đánh giá người dùng thật}: mọi độ đo đều là proxy ngoại tuyến, và sai số nhắm đích (TE) mang tính tự tham chiếu; còn khoảng cách giữa kết quả ngoại tuyến và cảm nhận trực tuyến.
+    \item Chưa có \textit{tập nhạc Việt được con người gán nhãn cảm xúc}, nên tọa độ cảm xúc dựa trên chuyển miền và đầu dò tuyến tính thay vì nhãn bản địa.
+    \item \textit{Dữ liệu lời bài hát có thể nhiễu} (thu thập tự động, có thể sai/lệch dòng), ảnh hưởng tới tín hiệu Valence.
+    \item \textit{Ánh xạ màu--cảm xúc còn phụ thuộc nghiên cứu quốc tế} (ICEAS, Whiteford): liên kết màu--cảm xúc có tính đặc thù văn hóa \cite{jonauskaite2019ml} và Việt Nam không nằm trong tập khảo sát gốc, nên việc áp dụng là ngoại suy.
+    \item \textit{Chưa triển khai production}: hệ thống mới ở mức demo; một số thông tin đã có ở API (tọa độ V-A dạng số, giải thích ``vì sao được gợi ý'') chưa được dựng thành màn giao diện riêng.
+\end{itemize}
+
+\section{Hướng phát triển}
+Để hoàn thiện và nâng cấp hệ thống, đồ án đề xuất các hướng phát triển sau:
+\begin{itemize}[leftmargin=1.4cm]
+    \item \textbf{Khảo sát người dùng}: tổ chức nghiên cứu nghe thực tế để kiểm chứng cảm nhận, thu hẹp khoảng cách ngoại tuyến--trực tuyến và làm chuẩn vàng cho việc tinh chỉnh.
+    \item \textbf{Mở rộng kho nhạc}: tăng số lượng và độ đa dạng bài hát, đặc biệt bổ sung vùng năng lượng cao còn thưa để cải thiện việc nhắm đích cho các màu ấm/bão hòa.
+    \item \textbf{Học từ phản hồi người nghe}: thu nhận tín hiệu ngầm (nghe hết, bỏ qua) và tường minh để tinh chỉnh trọng số, trong khuôn khổ bảo đảm riêng tư.
+    \item \textbf{Cá nhân hóa}: kết hợp gợi ý theo cảm xúc/màu với sở thích cá nhân, vẫn giữ khả năng truy vấn không cần dữ liệu người dùng làm mặc định.
+    \item \textbf{Cải thiện xử lý lời bài hát}: làm sạch và căn dòng lời, xử lý bài thiếu lời tốt hơn, và bổ sung từ điển cảm xúc bản địa để giảm nhiễu cho tín hiệu Valence.
+    \item \textbf{Thêm giao diện giải thích khuyến nghị}: dựng màn chi tiết hiển thị tọa độ Valence--Arousal dạng số và bảng giải thích ngắn ``vì sao bài được gợi ý'' từ dữ liệu đã có ở API, giúp người dùng hiểu cơ sở của mỗi gợi ý.
+\end{itemize}
+\end{document}

@@ -11,17 +11,12 @@
 
 ## Overview
 
-**Brightify** serves ~4,300+ Vietnamese songs through a content-based recommendation engine that fuses **7 multimodal signals**:
+**Brightify** serves **5,138 Vietnamese songs** through a content-based engine with **two core features**, both unified on a shared **Valence–Arousal (V-A)** emotion space (Russell's circumplex):
 
-1. **Timbral** — Essentia EffNet-Discogs spectral features
-2. **Rhythmic** — Tempo, danceability, liveness
-3. **Tonal** — Valence, key, mode
-4. **Lyrics semantic** — PhoBERT v2 (768-dim Vietnamese embeddings)
-5. **V-A proximity** — Russell's Circumplex Model (valence × arousal)
-6. **Emotion profile** — Vietnamese Emotion Lexicon (730+ words, 13 categories)
-7. **Mood matching** — Q1-Q4 quadrant alignment
+- **Recommend by colour** — a colour maps to a V-A point (Oklab → ICEAS valence + Whiteford arousal); the engine retrieves songs near that mood (anisotropic Gaussian RBF in quantile space) and tightens acoustic coherence on MuQ. Two colours → an iso-principle mood journey.
+- **Similar song** — fusion `0.76·MuQ audio + 0.16·V-A + 0.08·lyrics (e5-large)`, with cover-song dedup and artist diversification (endless "radio").
 
-Plus multimodal query inputs: **color** (CIEDE2000, Jonauskaite 2020), **mood**, **search**, **song-to-song**.
+Each song gets one offline-computed `(valence, arousal)`: **valence** from lyrics (reliability-weighted **EWE** of NRC-VAD-VN, ViSoBERT, XLM-R/EmoBank + a small MuQ term), **arousal** from audio (MuQ + tempo + loudness, DEAM-grounded). All models are **frozen + linear probes — no fine-tuning, and no LLM/model inference at serving** (labels are a precomputed lookup). Query inputs: **colour**, **song-to-song**, **search**, **browse**.
 
 ## Architecture
 
@@ -31,9 +26,10 @@ Frontend SPA (React 19 + Vite — react-three-fiber 3D + classic 2D skins, Web A
 FastAPI 0.108+ (lifespan, CORS, rate limiting)
         ↓
 Core AI/ML layer
-  ├─ recommendation_engine.py — multimodal fusion (color + similar-song)
-  ├─ emotion_analysis.py — Vietnamese emotion lexicon + V-A
-  └─ advanced_color_mapping.py — CIEDE2000 + 13 emotion-color profiles
+  ├─ recommendation_engine.py — colour + similar-song over precomputed features
+  ├─ ranking/ — retrieval, artist diversity (MMR), acoustic coherence, iso-principle journey
+  ├─ emotion_analysis.py / color_va.py — V-A labels + colour→V-A mapping
+  └─ advanced_color_mapping.py — Oklab + ICEAS (valence) + Whiteford (arousal)
         ↓
 File-based serving release (`data/*.csv/*.npy/*.json` + `music_files/*.mp3`)
         ↓
@@ -49,9 +45,9 @@ Data pipeline (7-phase strict-gate, resumable)
 |---|---|
 | Backend | FastAPI 0.108+, Uvicorn, Python 3.10+ |
 | Database | PostgreSQL 17, SQLAlchemy 2.0, Alembic, pgvector 0.4+, pg_trgm |
-| NLP (Vietnamese) | PhoBERT v2 (vinai/phobert-base-v2), pyvi ViTokenizer |
-| Audio ML | Essentia-TensorFlow (EffNet-Discogs, DEAM, MSD-MusiCNN, TempoCNN), librosa |
-| Color | CIEDE2000 (colormath) |
+| Lyrics / NLP | multilingual-e5-large (similarity); ViSoBERT + XLM-R + NRC-VAD-VN (valence signals) |
+| Audio ML | MuQ self-supervised embeddings (backbone), librosa (tempo), DEAM/PMEmo (probe training) |
+| Color | Oklab perceptual space + ICEAS norms + Whiteford arousal |
 | Frontend | React 19 + Vite SPA (react-three-fiber 3D + classic 2D skins), Web Audio API |
 | Pipeline | ytmusicapi, yt-dlp, FFmpeg |
 
@@ -105,14 +101,15 @@ Xem [docs/PLAN_DOCKERIZATION.md](docs/PLAN_DOCKERIZATION.md) cho chi tiết.
 brightify/
 ├── app.py                    # FastAPI entry point
 ├── config.py                  # Centralized config (weights, thresholds)
-├── api/                      # HTTP API layer (41 endpoints)
-│   ├── music.py              # Browse/search/stream (26 routes)
-│   ├── recommend.py          # AI recommendations (6 routes)
-│   ├── system.py             # Health, stats, backtest (9 routes)
+├── api/                      # HTTP API layer (~25 routes)
+│   ├── music.py              # Browse/search/stream/similar-song
+│   ├── recommend.py          # Colour recommendation (+ why/bridge)
+│   ├── system.py             # Health, stats, backtest
 │   └── rate_limit.py         # Sliding-window rate limiter
 ├── core/                     # AI/ML core modules
-│   ├── recommendation_engine.py
-│   ├── emotion_analysis.py
+│   ├── recommendation_engine.py   # colour + similar-song
+│   ├── ranking/                    # retrieval, diversity, coherence, journey
+│   ├── emotion_analysis.py / color_va.py
 │   └── advanced_color_mapping.py
 ├── db/                       # Database layer
 │   ├── models.py             # SQLAlchemy ORM (star schema, 10 tables)
@@ -150,30 +147,31 @@ Brightify is built on validated academic research:
 
 | Domain | Paper / Reference |
 |---|---|
-| Emotion psychology | Russell 1980 (Circumplex), Thayer 1989, Ekman 1992 |
-| Vietnamese NLP | Nguyen & Tuan Nguyen 2020 (PhoBERT), Huynh et al. 2019 (UIT-VSMEC) |
-| Music IR | Berenzweig 2004 (Timbral), Hu & Downie 2010 (Lyrics > Audio for mood), Laurier 2009 (multimodal fusion) |
-| Color psychology | Palmer et al. 2013, Jonauskaite et al. 2020 (cross-cultural, 4,598 participants, 12 countries) |
-| Audio ML | Alonso-Jiménez et al. 2023 (DEAM V-A regression), MTG Essentia models |
-| Music therapy | Altshuler 1948 (Iso-Principle), Heiderscheit & Madson 2015 |
+| Emotion psychology | Russell 1980 (Circumplex), Thayer 1989 |
+| Audio representation | Zhu et al. 2025 (MuQ self-supervised), Aljanaki et al. 2017 (DEAM), Zhang et al. 2018 (PMEmo) |
+| Lyrics / VN NLP | Wang et al. 2024 (multilingual-e5), Nguyen et al. 2023 (ViSoBERT), Mohammad 2018 (NRC-VAD), Buechel & Hahn 2017 (EmoBank) |
+| Colour ↔ emotion | Jonauskaite et al. 2020 (ICEAS, 4,598 participants), Whiteford et al. 2018 (colour↔music), Ottosson 2020 (Oklab) |
+| Recsys evaluation | Ferrari Dacrema 2019 (strong baselines), Steck 2018 (calibrated recommendation) |
+| Music therapy | Altshuler 1948 (Iso-Principle) |
 
 Full citations in [docs/RESEARCH_FOUNDATIONS.md](docs/RESEARCH_FOUNDATIONS.md).
 
 ## Status
 
-- **Current version**: v7.1 (codebase) / v7.2 (after PhoBERT v2 + DEAM upgrade)
-- **Catalog size**: ~4,300+ Vietnamese songs
-- **In progress**: xem [docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md](docs/SCIENTIFIC_AUDIT_AND_PLAN_V32.md)
+- **Catalog**: 5,138 Vietnamese songs (audio + lyrics + precomputed features)
+- **Audio backbone**: MuQ · **Lyrics**: multilingual-e5-large · **Emotion labels**: v6i (frozen, reproducible via `tools/build_labels_repro.py`)
+- **Core features**: recommend-by-colour (Valence–Arousal) + similar-song; two UI skins (3D immersive + classic 2D)
+- **Thesis (ĐATN)**: see `SOICT_DATN_Application_VIE_Template/` — report + verifiable offline evaluation
 
 ## License
 
-TBD — Academic / research use.
+Đồ án tốt nghiệp — mã nguồn phục vụ **mục đích học thuật / nghiên cứu**, *all rights reserved*: vui lòng xin phép trước khi tái sử dụng. Dữ liệu **nhạc và lời bài hát thuộc bản quyền của bên thứ ba**, không kèm trong repo (đã loại trừ qua `.gitignore`) và không được phân phối lại; các mô hình và tập dữ liệu ngoài (MuQ, multilingual-e5-large, ViSoBERT, XLM-R, NRC-VAD, DEAM, PMEmo, EmoBank…) giữ nguyên giấy phép gốc của chúng.
 
 ## Acknowledgments
 
-- VinAI Research (PhoBERT, BARTpho)
-- MTG-UPF (Essentia, MTG-Jamendo dataset)
-- LRCLIB (lyrics database)
+- OpenMuQ (MuQ audio model), intfloat (multilingual-e5), uitnlp (ViSoBERT)
+- DEAM, PMEmo, EmoBank, NRC-VAD, VnEmoLex (datasets / lexicons)
+- MTG-UPF (Essentia, MTG-Jamendo), LRCLIB (lyrics)
 - ytmusicapi & yt-dlp contributors
 
 ---

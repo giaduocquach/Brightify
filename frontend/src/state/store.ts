@@ -96,7 +96,7 @@ interface State {
   selectedColors: string[];
   results: Song[];
   journey: ColorResult['journey'];
-  bridge: ColorResult['bridge'];   // colour → {emotion_vi, valence, arousal} (the thesis chain, shown in the HUD)
+  bridge: ColorResult['bridge'];   // colour → {emotion_vi, valence, arousal} (the thesis chain; fetched from API but intentionally not surfaced in the UI yet — see report Ch.6 future work)
   flyTracks: Song[];          // similar-song nodes shown in free-flight mode
   journeyLength: number;      // 2-colour A→B waypoint count (pacing: longer = slower)
   loading: boolean;
