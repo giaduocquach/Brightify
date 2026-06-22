@@ -348,10 +348,14 @@ def main() -> int:
     print_table(results, args.top_k)
 
     # Qualitative spot-check: print top-5 recs for 3 seeds × top config
-    best_config = max((k for k in configs if not k.startswith("__")), key=lambda n: (
-        results[n]["tempo_coh"] + results[n]["mood_coh"] + results[n]["self_consist"]
-        - results[n]["calib_err"] - results[n]["same_artist"]
-    ) if n != "baseline (current)" else -9999)
+    real_names = [k for k in configs if not k.startswith("__")]
+    base_name = real_names[0]
+    best_config = max(
+        (k for k in real_names if k != base_name),
+        key=lambda n: (results[n]["tempo_coh"] + results[n]["mood_coh"] + results[n]["self_consist"]
+                       - results[n]["calib_err"] - results[n]["same_artist"]),
+        default=base_name,
+    )
     print(f"Top config by composite score: '{best_config}'")
     print("\n--- Spot-check: top-5 recs for 3 seeds ---")
     for seed_idx in seeds[:3]:
@@ -359,8 +363,8 @@ def main() -> int:
         seed_tempo = float(cat.tempo[seed_idx])
         seed_mood  = str(df.iloc[seed_idx].get("fused_emotion", "?"))
         print(f"\nSeed: '{seed_name}' | tempo={seed_tempo:.0f} | mood={seed_mood}")
-        for cname in ["baseline (current)", best_config]:
-            w = CONFIGS[cname]
+        for cname in dict.fromkeys([base_name, best_config]):   # dedup, preserve order
+            w = configs[cname]
             recs = cat.recommend_by_song(seed_idx, top_k=5, weights=w)
             print(f"  [{cname}]")
             for r in recs:
