@@ -9,7 +9,7 @@ Chương này trình bày năm đóng góp nổi bật của đồ án. Mỗi đ
 
 \textbf{Giải pháp.} Đồ án tách cảm xúc thành hai trục và gán mỗi trục bằng nguồn phù hợp nhất: Valence suy chủ yếu từ \textit{lời}, Arousal suy từ \textit{âm thanh}. Valence là tổ hợp EWE của bốn tín hiệu (ba tín hiệu lời có nguồn gốc công bố và một tín hiệu âm thanh bổ trợ), trong đó trọng số bằng độ tin cậy đo được nên không cần nhãn đích (mục~\ref{subsection:4.2.1}). Arousal là hồi quy trên tập DEAM do con người gán nhãn, tổ hợp biểu diễn MuQ với nhịp độ và độ to để bù phần nhịp độ mà MuQ nắm bắt yếu. Toàn bộ mô hình được dùng ở dạng đóng băng kèm đầu dò tuyến tính, và \textit{không dùng mô hình ngôn ngữ lớn khi phục vụ}; mọi tín hiệu và từ điển đều truy nguồn được tới tài liệu đã công bố.
 
-\textbf{Kết quả.} Khả năng chuyển miền của các đầu dò được kiểm trên tập PMEmo và đạt tương quan $0.69$ cho Valence, $0.65$ cho Arousal (mục~\ref{subsection:eval-similar}), cho thấy đầu dò nắm bắt cảm xúc thật. Arousal sau khi bổ sung nhịp độ đã bám tempo thật với tương quan $0.47$, khắc phục điểm yếu của biểu diễn âm thanh đơn thuần. Đây là một quy trình gán cảm xúc cho nhạc Việt hoàn toàn có cơ sở khoa học và tái lập được trong điều kiện thiếu nhãn.
+\textbf{Kết quả.} Khả năng chuyển miền của các đầu dò được kiểm trên tập PMEmo và đạt tương quan $0.69$ cho Valence, $0.65$ cho Arousal (mục~\ref{subsection:eval-similar}), cho thấy đầu dò nắm bắt cảm xúc thật. Arousal sau khi bổ sung nhịp độ đã bám tempo thật với tương quan $0.47$, khắc phục điểm yếu của biểu diễn âm thanh đơn thuần. Quy trình này tái lập được nguyên vẹn (chạy lại từ các tín hiệu nền cho ra đúng bộ nhãn đang phục vụ, $\rho = 1.00$) và đồng thuận với một bộ tham chiếu GPT độc lập ($\rho = 0.63$ cho Valence, mục~\ref{subsection:4.2.1}). Đây là một quy trình gán cảm xúc cho nhạc Việt hoàn toàn có cơ sở khoa học và tái lập được trong điều kiện thiếu nhãn.
 
 \section{Cơ chế ánh xạ màu sắc sang nhạc qua không gian Valence--Arousal}
 \label{section:5.2}
@@ -25,7 +25,7 @@ Chương này trình bày năm đóng góp nổi bật của đồ án. Mỗi đ
 
 \textbf{Giải pháp.} Hệ thống chấm điểm cảm xúc bằng hàm Gauss dị hướng (tin Arousal hơn Valence), so khớp trong không gian phân vị, rồi \textit{tăng nhất quán âm thanh} bằng cách chọn cụm ứng viên có độ gần cao trên biểu diễn MuQ \textit{đã trừ trung bình} để khử dị hướng. Kết quả được đa dạng hóa theo nghệ sĩ bằng MMR và, với gợi ý theo màu, được sắp xếp thành chuỗi chuyển cảm xúc mượt theo nguyên lý đồng cảm (mục~\ref{subsection:4.2.3}). Với gợi ý bài tương tự, điểm số là tổ hợp tuyến tính của âm thanh, cảm xúc và lời, kèm loại bỏ cover/trùng.
 
-\textbf{Kết quả.} Việc trừ trung bình nâng độ nhất quán âm thanh từ $0.06$ lên $0.34$; hành trình hai màu đạt kiểm định KS $= 0.21$ và giảm độ chênh nhịp độ giữa các bước từ $31$ xuống $2.7$ BPM (mục~\ref{subsection:eval-color}). Với gợi ý bài tương tự, độ nhất quán tâm trạng đạt $\approx 0.94$ (mục~\ref{subsection:eval-similar}). Như vậy thuật toán vừa khớp cảm xúc vừa tạo ra danh sách nghe đồng nhất.
+\textbf{Kết quả.} Việc trừ trung bình nâng độ nhất quán âm thanh từ khoảng $0.02$ lên $0.23$; hành trình hai màu đạt kiểm định KS $= 0.21$ và giảm độ chênh nhịp độ giữa các bước từ $31$ xuống $2.7$ BPM (mục~\ref{subsection:eval-color}). Với gợi ý bài tương tự, độ nhất quán tâm trạng đạt $\approx 0.95$ (mục~\ref{subsection:eval-similar}). Như vậy thuật toán vừa khớp cảm xúc vừa tạo ra danh sách nghe đồng nhất.
 
 \section{Quy trình đánh giá nhiều tầng và khảo sát so sánh mô hình}
 \label{section:5.4}
