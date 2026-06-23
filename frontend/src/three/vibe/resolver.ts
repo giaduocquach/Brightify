@@ -18,7 +18,7 @@ export interface VibeTarget {
   corona: number;
 }
 
-export function quadrantWeights(v: number, a: number) {
+function quadrantWeights(v: number, a: number) {
   const q1 = clamp01(v) * clamp01(a);
   const q2 = clamp01(1 - v) * clamp01(a);
   const q3 = clamp01(1 - v) * clamp01(1 - a);

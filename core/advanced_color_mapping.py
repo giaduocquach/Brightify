@@ -313,7 +313,12 @@ class AdvancedColorMapper:
         achromatic = s01 < 0.12
         redness = 0.5 if achromatic else (1 + np.cos(np.deg2rad(h))) / 2
 
-        # AROUSAL — V34: Valdez-Mehrabian 1994 (~76 Munsell colours; J.Exp.Psych:General)
+        # AROUSAL — ACTIVE MODEL is Whiteford 2018 (COLOR_AROUSAL_WHITEFORD=True, the first
+        # branch below). The Valdez-Mehrabian / ICEAS-fit / interaction blocks are ROLLBACK-ONLY
+        # (all their flags default off). The comment immediately below documents the V34 Valdez
+        # rationale for the COLOR_VA_VALDEZ branch — it is NOT the shipped path.
+        #
+        # V34 (rollback): Valdez-Mehrabian 1994 (~76 Munsell colours; J.Exp.Psych:General)
         # arousal = 0.60·saturation − 0.31·brightness, + a small Wilms-Oberfeld 2018 hue
         # term (arousal rises blue→green→red). The prior V33 ICEAS-12 fit under-weighted
         # saturation (0.087 vs the de-confounded 0.60) — a small-sample collinearity

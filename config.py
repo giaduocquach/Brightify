@@ -57,9 +57,6 @@ AUDIO_CDN_BASE = os.environ.get("AUDIO_CDN_BASE", "").rstrip("/")
 # has_audio. Generated from music_files/ when syncing to S3 (`make audio-manifest`).
 AUDIO_MANIFEST_FILE = str(DATA_DIR / "audio_manifest.json")
 
-ARCHIVE_ROOT = _resolve_path_env("BRIGHTIFY_ARCHIVE_ROOT", PROJECT_ROOT / "var" / "archive")
-RUNTIME_ROOT = _resolve_path_env("BRIGHTIFY_RUNTIME_ROOT", PROJECT_ROOT / "var" / "runtime")
-
 INPUT_FILE = str(DATA_DIR / "vietnamese_music_complete_dataset_full.csv")
 PROCESSED_FILE = str(DATA_DIR / "vietnamese_music_processed_full.csv")
 # VN Sentence-BERT (dangvantuan/vietnamese-embedding) replaces PhoBERT mean-pool.
@@ -85,9 +82,11 @@ BATCH_SIZE = 32  # Batch size for embedding generation
 # Skip loading the PhoBERT model weights at startup. PhoBERT is loaded eagerly
 # but never invoked on any request path: runtime emotion comes from precomputed
 # EMOTION_LABELS_FILE (full catalog coverage) + the pure-Python lexicon, and
-# emotions_to_valence_arousal() does no model inference. Set True in production
-# to save ~850 MB RAM and the model download. Default False keeps dev unchanged.
-SKIP_PHOBERT_LOAD = os.environ.get("SKIP_PHOBERT_LOAD", "False") == "True"
+# emotions_to_valence_arousal() does no model inference. Saves ~850 MB RAM.
+# Default True (2026-06-24): confirmed PhoBERT.encode_lyrics has NO caller on any request
+# path — search query encoding uses multilingual-e5-large (core/search_encoder.py), not
+# PhoBERT. Set False only to re-enable PhoBERT for offline experiments.
+SKIP_PHOBERT_LOAD = os.environ.get("SKIP_PHOBERT_LOAD", "True") == "True"
 
 # Load multilingual-e5-large at runtime to encode user search queries (FP16, ~560 MB).
 # Downloads to the hf_cache Docker volume on first run; cached on restarts.
@@ -160,8 +159,10 @@ RECO_SONG_WEIGHTS = {
 # Applied as: score = base_score * (1 + λ * instrument_cosine), λ from the similarity weight vector.
 # Additive-multiplier keeps existing weights unchanged; tag signal boosts/not kills.
 # Intrinsic eval (80 seeds, 2026-06-09): λ=0.03 → Symmetry +0.013 ✓, 0 regressions.
-# Adopted at λ=0.03 (conservative: max 3% boost, no regression at any metric).
-ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "True") == "True"
+# Default False (2026-06-24): the production fusion weight for the instrument-tag slot
+# (RECO_SONG_WEIGHTS_MERT slot 5) is 0, so the (N,40) matrix was built at startup but never
+# contributed to ranking — wasted compute. Set True (+ a non-zero slot-5 weight) to re-enable.
+ENABLE_TAG_SIGNAL  = os.environ.get("ENABLE_TAG_SIGNAL", "False") == "True"
 # Cover/duplicate filter (2026-06-09): exclude versions of the same song from recommendations.
 # Built by tools/detect_cover_songs.py — lyrics-first approach (VN-SBERT cosine > 0.92).
 # Catches: same song different title/case, feat. versions, cross-lingual (April Lie / Tháng Tư).
@@ -190,16 +191,30 @@ RECO_SONG_WEIGHTS_MERT = {
     # Sensitivity (80 seeds): lyr=0.04 marginally better but within noise on 200 seeds.
     # Instrument tag in additive slot: consistently reduces score → removed (slot 5 = 0).
     # Weights unchanged from prior validation (82/12/6 validated Mức 1).
-    # V40 (2026-06-13): MuQ backbone re-optimised — audio weight 0.82→0.76 (MuQ audio is
-    # richer so the va/lyrics complement gains weight). Editorial NDCG@10 0.0739 (MuQ@0.76)
-    # > 0.0708 (MERT@0.88), robust across the weight grid. va:lyrics kept 2:1.
+    # V40 (2026-06-13): MuQ backbone, audio weight 0.82→0.76 (the va/lyrics complement gains
+    # weight). va:lyrics kept 2:1.
+    # RE-MEASURED 2026-06-24 (docs/EVAL_FINDINGS.md) — FAIR head-to-head (real backbone switch +
+    # fusion weights re-optimised per backbone via 5-fold CV on the musical GT, paired bootstrap):
+    #   musical CV-NDCG@10  MuQ 0.7345 vs MERT 0.7343 (tie); audio-only 0.7476 vs 0.7424 (tie);
+    #   GPT-GT transfer     MuQ 0.806 vs MERT 0.771 (Δ +0.035, CI[+0.014,+0.056] SIG → MuQ better);
+    #   editorial           MuQ 0.0895 vs MERT 0.0801 (Δ +0.009 SIG). → MuQ equal-or-better.
+    # NOTE: the original headline "editorial 0.0739 > 0.0708" still does not reproduce numerically,
+    # but the DIRECTION (MuQ ≥ MERT) holds. Also: CV-optimal similar-song weights collapse to ≈pure
+    # audio (lyr/va add ~0 to pooled NDCG) — the production 0.76/0.16/0.08 trades a little pooled
+    # NDCG for higher MoodCoherence (va=0 drops it). Backbone MuQ is justified.
     "with_lyrics": [0.0, 0.0, 0.0, 0.08, 0.16, 0.0, 0.0, 0.76],
     "with_lyrics_mert": [0.0, 0.0, 0.0, 0.06, 0.12, 0.0, 0.0, 0.82],  # MERT-backbone rollback
 }
 
 # V40: audio backbone for similar-song + colour-coherence. "muq" (MuQ-large, SOTA-2025,
-# arXiv 2501.01108) beats "mert" on BOTH end metrics after re-optimization (editorial NDCG +
-# colour-TE). MuQ already won the valence-audio probe. "mert" = rollback. Cover index unaffected.
+# arXiv 2501.01108); "mert" = rollback. Cover index unaffected.
+# RE-MEASURED 2026-06-24 (docs/EVAL_FINDINGS.md) with a FAIR head-to-head (real backbone switch
+# + per-backbone CV-optimal weights): MuQ is equal-or-better. Tie on musical CV-NDCG (0.7345 vs
+# 0.7343) and audio-only (0.7476 vs 0.7424, ns); MuQ SIGNIFICANTLY better on the independent-judge
+# transfer (GPT-GT 0.806 vs 0.771, CI[+0.014,+0.056]); colour-TE a tie (~0.062, MuQ marginally
+# lower at α≤0.55). MuQ retained — justified. (Methodology note: an earlier run that appeared to
+# show "MERT better" was a harness bug — the engine reads AUDIO_BACKBONE from its own module
+# globals, so a runtime cfg.AUDIO_BACKBONE switch was a no-op and both arms ran MuQ.)
 AUDIO_BACKBONE = "muq"
 
 # ============================================================================
@@ -333,11 +348,6 @@ COLOR_AROUSAL_WHITEFORD = True
 # documented, ready alternative if the picker ever offers free colour choice.
 # Evidence: tools/color_va_model_compare.py. Valence stays Oklab (r=0.97).
 COLOR_VA_VALDEZ = False
-
-# A3 (V27): Calibration reranking — boost underrepresented V-A quadrant after MMR.
-# gate FAILED 2026-06-10: TE 0.0466→0.0570, ordering fail; reverted + superseded by C1.
-COLOR_CALIBRATION_RERANK = False
-COLOR_CALIBRATION_ALPHA  = 0.3
 
 # C1 (V28): Catalog-relative V-A calibration — fix scale mismatch between color model
 # (Jonauskaite absolute scale) and catalog V-A (MERT-compressed, A max ~0.72).

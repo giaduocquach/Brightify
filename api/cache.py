@@ -2,9 +2,13 @@
 Async Redis cache layer for Brightify API.
 
 Usage:
-    from api.cache import cache_get_or_set, invalidate
+    from api.cache import make_key, cache_get, cache_set
 
-    result = await cache_get_or_set("key", async_fn, ttl=300)
+    key = make_key("recommend", **params)
+    cached = await cache_get(key)
+    if cached is None:
+        cached = await compute()
+        await cache_set(key, cached, ttl=300)
 
 When Redis is unavailable the cache degrades gracefully — every call
 executes the underlying function without caching. This makes Redis
@@ -16,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -58,31 +62,3 @@ async def cache_set(key: str, value: Any, ttl: int = 300) -> None:
         await _redis.setex(key, ttl, json.dumps(value, default=str))
     except Exception as e:
         logger.debug(f"[cache] set {key!r}: {e}")
-
-
-async def cache_get_or_set(
-    key: str,
-    fn: Callable[[], Awaitable[Any]],
-    ttl: int = 300,
-) -> Any:
-    """Return cached value or call fn(), cache it, and return the result."""
-    cached = await cache_get(key)
-    if cached is not None:
-        return cached
-    result = await fn()
-    await cache_set(key, result, ttl)
-    return result
-
-
-async def invalidate(pattern: str) -> int:
-    """Delete all keys matching pattern (Redis SCAN + DEL). Returns count."""
-    if not _available():
-        return 0
-    try:
-        keys = [k async for k in _redis.scan_iter(pattern)]
-        if keys:
-            return await _redis.delete(*keys)
-        return 0
-    except Exception as e:
-        logger.debug(f"[cache] invalidate {pattern!r}: {e}")
-        return 0

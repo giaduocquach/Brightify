@@ -12,8 +12,8 @@ function labF(t: number) {
   return t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
 }
 
-/** sRGB hex → CIELAB {L, C}. */
-export function hexToLab(hex: string): { L: number; C: number } {
+/** sRGB hex → CIELAB {L, C}. Internal helper for hexToVA's arbitrary-hex fallback. */
+function hexToLab(hex: string): { L: number; C: number } {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
@@ -31,8 +31,8 @@ export function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
 }
 
-/** CIELAB → Valence/Arousal (Valdez–Mehrabian coefficients). */
-export function labToVA(L: number, C: number): { v: number; a: number } {
+/** CIELAB → Valence/Arousal (Valdez–Mehrabian coefficients). Internal helper for hexToVA. */
+function labToVA(L: number, C: number): { v: number; a: number } {
   const Ln = L / 100, Cn = C / 130;
   return {
     v: clamp01(0.69 * Ln + 0.22 * Cn),

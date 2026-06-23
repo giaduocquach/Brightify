@@ -5,32 +5,250 @@ Chương~\ref{chapter:Related_works} đã xác lập các yêu cầu cho một h
 
 \section{Mô hình cảm xúc Valence--Arousal}
 \label{section:3.1}
-Để cả bài hát và màu sắc có thể được so khớp trên cùng một thước đo, đồ án cần một biểu diễn cảm xúc thống nhất. Mô hình vòng tròn cảm xúc của Russell \cite{russell1980circumplex} mô tả cảm xúc bằng hai trục trực giao: Valence (tích cực--tiêu cực) và Arousal (mức năng lượng cao--thấp). Đây là mô hình được dùng phổ biến nhất trong nhận dạng cảm xúc âm nhạc và tâm lý học màu sắc, đồng thời là khung lý thuyết cho phép màu và nhạc gặp nhau, do liên kết màu--nhạc được trung gian hóa bởi cảm xúc \cite{palmer2013music}. So với các mô hình cảm xúc rời rạc (vui, buồn, giận...), mô hình hai trục liên tục cho phép tính khoảng cách và xếp hạng, nên phù hợp với bài toán truy hồi. Mô hình hai trục có một hạn chế đã biết là gộp một số cảm xúc cùng vùng (ví dụ giận dữ và sợ hãi đều ở vùng Valence thấp--Arousal cao), điều mà các mô hình ba chiều (thêm trục Dominance) \cite{russellmehrabian1977pad} hay các thang đo cảm xúc chuyên biệt cho âm nhạc như GEMS \cite{zentner2008gems} xử lý tốt hơn; tuy nhiên với bài toán truy hồi và xếp hạng theo tâm trạng, sự phân biệt tinh tế này không thiết yếu, nên mô hình hai trục vẫn là lựa chọn phù hợp và phổ biến nhất. Vì vậy, toàn bộ hệ thống quy về không gian Valence--Arousal.
+Để cả bài hát và màu sắc có thể được so khớp trên cùng một thước đo, đồ án cần một biểu diễn cảm xúc thống nhất. Mô hình vòng tròn cảm xúc của Russell \cite{russell1980circumplex} mô tả cảm xúc bằng hai trục trực giao: \textit{Valence} (mức độ dễ chịu, từ tiêu cực đến tích cực) và \textit{Arousal} (mức độ kích thích/năng lượng, từ trầm lắng đến sôi động). Mỗi trạng thái cảm xúc trở thành một điểm trên mặt phẳng hai chiều này, và các nhãn cảm xúc rời rạc quen thuộc tương ứng với các vùng (góc phần tư) của mặt phẳng. Hình~\ref{fig:circumplex} minh họa bốn góc phần tư cùng tám nhãn cảm xúc mà hệ thống sử dụng.
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[scale=1.0, font=\small,
+   emo/.style={circle, fill=blue!55, inner sep=1.6pt}]
+  % axes
+  \draw[-{Stealth[length=2.5mm]}] (-3.4,0) -- (3.6,0) node[right] {Valence};
+  \draw[-{Stealth[length=2.5mm]}] (0,-3.4) -- (0,3.6) node[above] {Arousal};
+  \draw[dashed, gray] (0,0) circle (2.5);
+  % quadrant labels
+  \node[align=center, gray] at (1.9,3.1) {\textbf{Q1}};
+  \node[align=center, gray] at (-1.9,3.1) {\textbf{Q2}};
+  \node[align=center, gray] at (-1.9,-3.1) {\textbf{Q3}};
+  \node[align=center, gray] at (1.9,-3.1) {\textbf{Q4}};
+  % 8 emotions on the circle
+  \node[emo] (e1) at (60:2.5) {}; \node[above right, font=\scriptsize] at (e1) {Phấn khích};
+  \node[emo] (e2) at (25:2.5) {}; \node[right, font=\scriptsize] at (e2) {Vui vẻ};
+  \node[emo] (e3) at (120:2.5) {}; \node[above left, font=\scriptsize] at (e3) {Căng thẳng};
+  \node[emo] (e4) at (155:2.5) {}; \node[left, font=\scriptsize] at (e4) {Giận dữ};
+  \node[emo] (e5) at (205:2.5) {}; \node[left, font=\scriptsize] at (e5) {U sầu};
+  \node[emo] (e6) at (240:2.5) {}; \node[below left, font=\scriptsize] at (e6) {Buồn};
+  \node[emo] (e7) at (300:2.5) {}; \node[below right, font=\scriptsize] at (e7) {Thư thái};
+  \node[emo] (e8) at (335:2.5) {}; \node[right, font=\scriptsize] at (e8) {Bình yên};
+\end{tikzpicture}
+\caption{Mô hình vòng tròn cảm xúc của Russell: bốn góc phần tư (Q1 vui--sôi nổi, Q2 căng--giận, Q3 buồn--u sầu, Q4 thư thái--bình yên) và tám nhãn cảm xúc hệ thống sử dụng}
+\label{fig:circumplex}
+\end{figure}
+
+Đây là mô hình được dùng phổ biến nhất trong nhận dạng cảm xúc âm nhạc và tâm lý học màu sắc, đồng thời là khung lý thuyết cho phép màu và nhạc gặp nhau, do liên kết màu--nhạc được trung gian hóa bởi cảm xúc \cite{palmer2013music}. So với các mô hình cảm xúc rời rạc (vui, buồn, giận...), mô hình hai trục liên tục cho phép tính khoảng cách và xếp hạng, nên phù hợp với bài toán truy hồi: ``gần nhau về cảm xúc'' trở thành ``gần nhau trên mặt phẳng V-A''. Mô hình hai trục có một hạn chế đã biết là gộp một số cảm xúc cùng vùng (ví dụ giận dữ và sợ hãi đều ở vùng Valence thấp--Arousal cao), điều mà các mô hình ba chiều (thêm trục Dominance) \cite{russellmehrabian1977pad} hay các thang đo cảm xúc chuyên biệt cho âm nhạc như GEMS \cite{zentner2008gems} xử lý tốt hơn; tuy nhiên với bài toán truy hồi và xếp hạng theo tâm trạng, sự phân biệt tinh tế này không thiết yếu, nên mô hình hai trục vẫn là lựa chọn phù hợp và phổ biến nhất. Vì vậy, toàn bộ hệ thống quy về không gian Valence--Arousal.
+
+Có hai trường phái lớn trong biểu diễn cảm xúc. Trường phái \textit{rời rạc} (categorical) coi cảm xúc là một tập hữu hạn các trạng thái cơ bản (vui, buồn, giận, sợ...), tiêu biểu là sáu cảm xúc cơ bản của Ekman. Trường phái \textit{liên tục} (dimensional) như mô hình của Russell coi cảm xúc là điểm trong một không gian ít chiều liên tục. Với bài toán gợi ý, biểu diễn liên tục có hai lợi thế quyết định: nó cho phép định nghĩa \textit{khoảng cách} giữa hai trạng thái cảm xúc (để truy hồi ``gần nhau''), và cho phép \textit{nội suy} một đường chuyển cảm xúc mượt giữa hai điểm (phục vụ hành trình hai màu). Một biểu diễn rời rạc không có hai tính chất này: hai nhãn ``buồn'' và ``u sầu'' hoặc giống hệt hoặc khác hẳn, không có mức độ ở giữa. Trong hệ thống, các nhãn tâm trạng hiển thị cho người dùng (như ở Hình~\ref{fig:circumplex}) được suy ra \textit{từ} tọa độ V-A bằng cách xác định góc phần tư và vùng chứa điểm đó --- tức là nhãn rời rạc chỉ là một lớp trình bày trên nền biểu diễn liên tục, chứ không phải đơn vị tính toán.
 
 \section{Cơ sở liên kết màu sắc với cảm xúc}
 \label{section:3.2}
-Để ánh xạ màu về tọa độ cảm xúc, đồ án sử dụng ba cơ sở. Thứ nhất, để xử lý màu theo cảm nhận thị giác đồng đều, màu được chuyển sang không gian Oklab \cite{ottosson2020oklab} thay vì RGB thô. Thứ hai, trục Valence của màu được hồi quy về các chuẩn liên kết màu--cảm xúc của con người trong khảo sát ICEAS \cite{jonauskaite2020universal}, một khảo sát quy mô lớn trên nhiều quốc gia. Thứ ba, trục Arousal của màu được suy ra theo quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color}: nhạc nhanh, sôi động gắn với màu sáng và bão hòa hơn. Đặc biệt, độ đỏ và độ bão hòa được đặt trên trục Arousal, phù hợp với phát hiện rằng độ bão hòa là yếu tố chính chi phối Arousal của màu \cite{valdez1994effects}. Lựa chọn dùng Whiteford thay vì chỉ dùng quan hệ màu đơn thuần xuất phát từ việc cần đúng cấu trúc màu--âm nhạc, vì hệ thống ánh xạ màu sang nhạc chứ không phải mô tả cảm nhận màu độc lập.
+Để ánh xạ màu về tọa độ cảm xúc, đồ án sử dụng ba cơ sở. Thứ nhất, để xử lý màu theo cảm nhận thị giác đồng đều, màu được chuyển sang không gian Oklab \cite{ottosson2020oklab} thay vì RGB thô. Không gian RGB không đồng đều về tri giác: cùng một khoảng cách số trong RGB có thể ứng với mức khác biệt cảm nhận rất khác nhau ở các vùng màu khác nhau. Oklab được thiết kế để khoảng cách Euclid xấp xỉ khác biệt cảm nhận, với trục $L$ (độ sáng) và hai trục màu $a$ (lục--đỏ), $b$ (lam--vàng). Từ tọa độ Oklab, đồ án suy ra hai đại lượng tri giác phục vụ ánh xạ cảm xúc: \textit{độ đỏ} (redness) tính từ góc màu $h$ và \textit{độ bão hòa} (saturation), theo Phương trình~\eqref{eq:redness}.
+
+\begin{equation}\label{eq:redness}
+  \text{redness} = \frac{1 + \cos h}{2}, \qquad h = \operatorname{atan2}(b, a)
+\end{equation}
+
+Thứ hai, trục Valence của màu được hồi quy về các chuẩn liên kết màu--cảm xúc của con người trong khảo sát ICEAS \cite{jonauskaite2020universal}, một khảo sát quy mô lớn trên nhiều quốc gia. Thứ ba, trục Arousal của màu được suy ra theo quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color}: nhạc nhanh, sôi động gắn với màu sáng và bão hòa hơn. Đặc biệt, độ đỏ và độ bão hòa được đặt trên trục Arousal, phù hợp với phát hiện rằng độ bão hòa là yếu tố chính chi phối Arousal của màu \cite{valdez1994effects}. Hình~\ref{fig:oklab} minh họa hướng tăng của hai trục cảm xúc trong mặt phẳng màu. Lựa chọn dùng Whiteford thay vì chỉ dùng quan hệ màu đơn thuần xuất phát từ việc cần đúng cấu trúc màu--âm nhạc, vì hệ thống ánh xạ màu sang nhạc chứ không phải mô tả cảm nhận màu độc lập; công thức Arousal cụ thể được trình bày ở mục~\ref{subsection:4.2.2}.
+
+Việc chọn không gian màu không phải là chi tiết kỹ thuật nhỏ. RGB là không gian thiết bị, không đồng đều về tri giác và trộn lẫn độ sáng với màu sắc. CIELAB cải thiện tính đồng đều nhưng vẫn có hiện tượng không đồng đều ở vùng xanh lam. Oklab \cite{ottosson2020oklab} là một cải tiến gần đây được thiết kế riêng để khoảng cách Euclid khớp tốt hơn với khác biệt cảm nhận, đồng thời tách bạch độ sáng ($L$) khỏi sắc độ ($a, b$) --- điều quan trọng vì hai trục cảm xúc của màu phụ thuộc vào các thành phần tri giác khác nhau (Valence gắn nhiều với độ sáng, Arousal gắn nhiều với độ bão hòa). Về phía cảm xúc, khảo sát ICEAS \cite{jonauskaite2020universal} thu thập liên kết màu--cảm xúc trên hàng nghìn người ở khoảng ba mươi quốc gia, cung cấp một chuẩn định lượng đáng tin cho trục Valence của màu. Riêng trục Arousal, ngoài Whiteford, phát hiện của Valdez và Mehrabian \cite{valdez1994effects} trên khoảng bảy mươi sáu màu Munsell cho thấy \textit{độ bão hòa} là yếu tố chi phối Arousal mạnh hơn cả độ sáng --- đây là cơ sở để công thức Arousal đặt trọng số đáng kể cho độ bão hòa.
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[scale=1.0, font=\small]
+  \draw[-{Stealth[length=2.5mm]}] (-3.0,0) -- (3.2,0) node[right] {$a$ (lục $\rightarrow$ đỏ)};
+  \draw[-{Stealth[length=2.5mm]}] (0,-3.0) -- (0,3.2) node[above] {$b$ (lam $\rightarrow$ vàng)};
+  \draw[dashed, gray] (0,0) circle (2.4);
+  \node[font=\scriptsize, gray] at (2.55,-0.3) {đỏ};
+  \node[font=\scriptsize, gray] at (-2.5,-0.3) {lục};
+  \node[font=\scriptsize, gray] at (0.4,2.5) {vàng};
+  \node[font=\scriptsize, gray] at (0.4,-2.5) {lam};
+  % arousal direction (toward red/saturated)
+  \draw[-{Stealth[length=2.5mm]}, very thick, red!70] (0,0) -- (35:2.3)
+       node[pos=1.18, align=center, font=\scriptsize] {Arousal $\uparrow$\\(đỏ, bão hòa, sáng)};
+  % valence note
+  \node[align=center, font=\scriptsize, blue!60!black] at (-1.5,1.7)
+       {Valence $\uparrow$:\\sáng hơn ($L$),\\ít đỏ hơn};
+\end{tikzpicture}
+\caption{Mặt phẳng màu Oklab ($a$--$b$) và hướng tăng của hai trục cảm xúc: Arousal tăng theo độ đỏ và độ bão hòa (Whiteford), Valence tăng theo độ sáng và giảm theo độ đỏ (ICEAS)}
+\label{fig:oklab}
+\end{figure}
 
 \section{Biểu diễn âm nhạc bằng học tự giám sát}
 \label{section:3.3}
-Để đo độ ``nghe giống nhau'' và để suy ra Arousal từ âm thanh, đồ án cần một biểu diễn âm nhạc mạnh. Các đặc trưng âm thanh thủ công nắm bắt cảm xúc yếu, nên đồ án dùng mô hình học tự giám sát. Hai ứng viên hàng đầu là MERT \cite{li2023mert} và MuQ \cite{zhu2025muq}; cả hai đều được đánh giá trên bộ chuẩn MARBLE \cite{yuan2023marble}. Đồ án lựa chọn MuQ làm trục biểu diễn âm thanh sau khi kiểm chứng cho thấy MuQ vượt MERT trên độ đo cuối của hệ thống. Biểu diễn của MuQ được dùng cho cả ba vai trò: đo tương đồng giữa hai bài, bảo đảm nhất quán âm thanh cho gợi ý theo màu, và làm đặc trưng cho đầu dò suy ra cảm xúc.
+Để đo độ ``nghe giống nhau'' và để suy ra Arousal từ âm thanh, đồ án cần một biểu diễn âm nhạc mạnh. Các đặc trưng âm thanh thủ công (như MFCC, chroma) nắm bắt cảm xúc yếu, nên đồ án dùng mô hình học tự giám sát (Self-Supervised Learning, SSL). Học tự giám sát huấn luyện mô hình trên lượng lớn nhạc \textit{không nhãn} bằng các bài toán tự sinh (dự đoán đoạn bị che, lượng tử hóa đặc trưng), nhờ đó thu được biểu diễn tổng quát mà không cần nhãn cảm xúc. Hai ứng viên hàng đầu là MERT \cite{li2023mert}, dùng cơ chế thầy--trò với mục tiêu âm học và âm nhạc, và MuQ \cite{zhu2025muq}, dùng lượng tử hóa vector dư trên phổ Mel; cả hai đều được đánh giá trên bộ chuẩn MARBLE \cite{yuan2023marble}.
+
+Hình~\ref{fig:ssl} mô tả cách một mô hình SSL âm nhạc được sử dụng trong đồ án. Tín hiệu âm thanh đi qua khối tiền xử lý, qua nhiều lớp biến đổi (transformer) đã được \textit{đóng băng}, rồi được gộp trung bình thành một vector biểu diễn 1024 chiều. Vector này phục vụ ba vai trò: (i) đo tương đồng giữa hai bài bằng cosine theo Phương trình~\eqref{eq:cosine}; (ii) bảo đảm nhất quán âm thanh cho gợi ý theo màu; và (iii) làm đặc trưng đầu vào cho đầu dò tuyến tính suy ra cảm xúc (mục~\ref{section:3.4}).
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[font=\small,
+   blk/.style={draw, rounded corners, align=center, minimum height=0.85cm, fill=black!3},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[blk, text width=1.7cm] (wav) at (0,0) {Tín hiệu\\âm thanh};
+  \node[blk, text width=1.9cm] (pre) at (2.6,0) {Tiền xử lý\\(Mel / patch)};
+  \node[blk, text width=2.3cm, fill=blue!6] (tr) at (5.7,0) {Transformer\\(đóng băng) $\times N$};
+  \node[blk, text width=1.7cm] (pool) at (8.6,0) {Gộp\\trung bình};
+  \node[blk, text width=1.8cm, fill=green!7] (emb) at (11.0,0) {Vector\\1024 chiều};
+  \draw[arr] (wav)--(pre); \draw[arr] (pre)--(tr); \draw[arr] (tr)--(pool); \draw[arr] (pool)--(emb);
+  % uses
+  \node[blk, text width=3.0cm] (sim) at (8.0,-1.8) {Cosine $\rightarrow$ độ tương đồng};
+  \node[blk, text width=3.0cm] (probe) at (11.6,-1.8) {Đầu dò tuyến tính $\rightarrow$ Arousal};
+  \draw[arr] (emb) |- (sim);
+  \draw[arr] (emb) -- (probe);
+\end{tikzpicture}
+\caption{Sơ đồ khối sử dụng mô hình học tự giám sát âm nhạc: từ tín hiệu âm thanh tới vector biểu diễn 1024 chiều, dùng cho đo tương đồng và làm đặc trưng cho đầu dò cảm xúc}
+\label{fig:ssl}
+\end{figure}
+
+\begin{equation}\label{eq:cosine}
+  \cos(\mathbf{x},\mathbf{y}) = \frac{\mathbf{x}^\top \mathbf{y}}{\lVert \mathbf{x}\rVert \, \lVert \mathbf{y}\rVert}
+\end{equation}
+
+Hai mô hình khác nhau ở \textit{bài toán tự giám sát} (pretext task). MERT học bằng cách dự đoán các nhãn giả sinh từ một ``thầy âm học'' (gom cụm đặc trưng âm thanh) và một ``thầy âm nhạc'' (biểu diễn dựa trên cao độ), nhờ đó nắm được cả kết cấu âm sắc lẫn thông tin hòa âm. MuQ thay thế nhãn giả bằng mục tiêu lượng tử hóa vector dư trên phổ Mel (Mel Residual Vector Quantization), cho mục tiêu học ổn định hơn. Bộ chuẩn MARBLE \cite{yuan2023marble} đánh giá các mô hình này trên nhiều tác vụ hiểu nhạc (gắn thẻ, nhận dạng nhạc cụ, phát hiện cảm xúc...). Một điểm cốt lõi trong thiết kế của đồ án là dùng các mô hình này ở dạng \textit{đóng băng}: trọng số của mô hình không được cập nhật, chỉ một lớp tuyến tính phía trên được huấn luyện. Cách này phù hợp với bằng chứng rằng đầu dò tuyến tính trên đặc trưng đóng băng tổng quát hóa tốt hơn tinh chỉnh khi dữ liệu đích lệch miền \cite{kumar2022finetuning}, và đặc biệt cần thiết khi dữ liệu nhãn cảm xúc nhạc Việt khan hiếm.
+
+Đồ án lựa chọn MuQ làm trục biểu diễn âm thanh sau khi kiểm chứng cho thấy MuQ vượt MERT trên độ đo cuối của hệ thống (chi tiết ở mục~\ref{subsection:eval-bakeoff}). Biểu diễn của MuQ được dùng cho cả ba vai trò nêu trên, bảo đảm một trục biểu diễn nhất quán cho toàn hệ thống.
 
 \section{Biểu diễn lời và cảm xúc văn bản tiếng Việt}
 \label{section:3.4}
-Valence (mức vui--buồn) của một bài hát nằm chủ yếu ở nội dung lời, nên đồ án kết hợp nhiều tín hiệu văn bản độc lập. Tín hiệu từ điển dùng từ điển NRC-VAD \cite{mohammad2018nrcvad} ở bản dịch tiếng Việt, được đối chiếu và bổ sung bằng từ điển cảm xúc bản địa VnEmoLex \cite{doan2022vnemolex} nhằm giảm sai sót dịch máy. Tín hiệu chuyển hóa ngữ cảnh tiếng Việt dùng mô hình ViSoBERT \cite{nguyen2023visobert}, vốn được tiền huấn luyện cho văn bản mạng xã hội tiếng Việt nên hợp với văn phong lời nhạc; mô hình được gắn một đầu dò tuyến tính huấn luyện trên tập cảm xúc UIT-VSMEC \cite{ho2020vsmec}. Tín hiệu liên ngữ dùng mô hình đa ngữ XLM-R \cite{conneau2020xlmr} với đầu dò huấn luyện trên tập EmoBank tiếng Anh \cite{buechel2017emobank}, nhằm tận dụng nguồn nhãn Valence liên tục do con người chấm mà tiếng Việt không có. Các mô hình thay thế như PhoBERT \cite{nguyen2020phobert} đã được cân nhắc; lý do giữ ViSoBERT được trình bày ở Chương~\ref{chapter:SolutionAndContribution}.
+Valence (mức vui--buồn) của một bài hát nằm chủ yếu ở nội dung lời, nên đồ án kết hợp nhiều tín hiệu văn bản độc lập. Điều quan trọng cần phân biệt là ba \textit{loại} mô hình văn bản phục vụ hai mục đích khác nhau, như minh họa trong Hình~\ref{fig:text}: nhóm dự đoán một \textit{giá trị tuyệt đối} (Valence) gồm từ điển và đầu dò trên mô hình ngữ cảnh, còn nhóm \textit{so sánh} hai đoạn lời là mô hình embedding câu.
 
-Đối với chức năng gợi ý bài tương tự, để đo độ tương đồng nội dung lời, đồ án dùng một mô hình nhúng câu (sentence embedding) theo kiến trúc Sentence-BERT \cite{reimers2019sbert}. Mô hình nhúng câu khác về mục đích so với các mô hình trên: nó tạo vector để \textit{so sánh} hai đoạn lời, trong khi các đầu dò cảm xúc \textit{dự đoán} một giá trị tuyệt đối. Việc lựa chọn cụ thể giữa một mô hình tiếng Việt chuyên biệt \cite{dangvantuan2024vnembedding} và một mô hình đa ngữ mạnh hơn \cite{wang2024e5} được kiểm chứng bằng thực nghiệm và trình bày ở Chương~\ref{chapter:Experiment}.
+Tín hiệu từ điển dùng từ điển NRC-VAD \cite{mohammad2018nrcvad} ở bản dịch tiếng Việt, được đối chiếu và bổ sung bằng từ điển cảm xúc bản địa VnEmoLex \cite{doan2022vnemolex} nhằm giảm sai sót dịch máy. Tín hiệu chuyển hóa ngữ cảnh tiếng Việt dùng mô hình ViSoBERT \cite{nguyen2023visobert}, vốn được tiền huấn luyện cho văn bản mạng xã hội tiếng Việt nên hợp với văn phong lời nhạc; mô hình được gắn một đầu dò tuyến tính huấn luyện trên tập cảm xúc UIT-VSMEC \cite{ho2020vsmec}. Tín hiệu liên ngữ dùng mô hình đa ngữ XLM-R \cite{conneau2020xlmr} với đầu dò huấn luyện trên tập EmoBank tiếng Anh \cite{buechel2017emobank}, nhằm tận dụng nguồn nhãn Valence liên tục do con người chấm mà tiếng Việt không có. Các mô hình thay thế như PhoBERT \cite{nguyen2020phobert} đã được cân nhắc; lý do giữ ViSoBERT được trình bày ở Chương~\ref{chapter:SolutionAndContribution}.
+
+Lý do dùng \textit{ba} tín hiệu lời thay vì một là chúng có các kiểu sai khác nhau và bổ trợ cho nhau. Từ điển nhanh và minh bạch nhưng không hiểu ngữ cảnh: nó dễ chấm sai khi gặp phủ định (``không buồn'') hay đảo nghĩa, nên đồ án bổ sung xử lý phủ định và liên từ đối lập cho tín hiệu này. Đầu dò trên mô hình ngữ cảnh (ViSoBERT) hiểu ngữ cảnh và văn phong nhưng phụ thuộc miền tiền huấn luyện --- chính vì văn phong lời nhạc gần với văn bản mạng xã hội mà ViSoBERT được tiền huấn luyện, mô hình này hợp hơn các mô hình huấn luyện trên văn bản trang trọng. Đầu dò liên ngữ (XLM-R trên EmoBank) cho phép \textit{chuyển} nguồn nhãn Valence liên tục do con người chấm từ tiếng Anh sang tiếng Việt --- nguồn nhãn mà tiếng Việt không có. Khi tổ hợp, những lỗi độc lập của ba tín hiệu có xu hướng triệt tiêu lẫn nhau, và bộ tổ hợp EWE (mục~\ref{section:3.5}) tự giảm trọng số cho tín hiệu kém nhất quán với phần còn lại.
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[font=\small,
+   blk/.style={draw, rounded corners, align=center, minimum height=0.8cm, inner sep=3pt},
+   src/.style={blk, fill=black!4, text width=2.2cm},
+   mid/.style={blk, fill=blue!6, text width=3.2cm},
+   outv/.style={blk, fill=green!7, text width=2.0cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[src] (lyr) at (0,-2.0) {Lời bài hát};
+  % branch 1 lexicon
+  \node[mid] (lex) at (4.2,-0.2) {Từ điển NRC-VAD-VN + VnEmoLex};
+  % branch 2 contextual probe
+  \node[mid] (enc) at (4.2,-2.0) {Encoder ngữ cảnh (ViSoBERT / XLM-R, đóng băng)};
+  \node[blk, fill=blue!10, text width=2.0cm] (pb) at (8.2,-2.0) {Đầu dò tuyến tính};
+  % branch 3 sentence embedding
+  \node[mid] (se) at (4.2,-3.8) {Embedding câu (e5-large)};
+  \node[blk, fill=blue!10, text width=2.0cm] (cos) at (8.2,-3.8) {Cosine};
+  % outputs
+  \node[outv] (val) at (11.4,-1.1) {Valence (tuyệt đối)};
+  \node[outv] (simout) at (11.4,-3.8) {Độ tương đồng lời};
+  \draw[arr] (lyr) |- (lex);
+  \draw[arr] (lyr) -- (enc);
+  \draw[arr] (lyr) |- (se);
+  \draw[arr] (enc) -- (pb);
+  \draw[arr] (se) -- (cos);
+  \draw[arr] (lex) -| (val);
+  \draw[arr] (pb) -| (val);
+  \draw[arr] (cos) -- (simout);
+\end{tikzpicture}
+\caption{Ba loại tín hiệu văn bản: từ điển và đầu dò ngữ cảnh \textit{dự đoán} Valence tuyệt đối (tổ hợp ở mục~\ref{section:3.5}), còn embedding câu \textit{so sánh} độ tương đồng nội dung lời}
+\label{fig:text}
+\end{figure}
+
+Các đầu dò cảm xúc nói trên đều là \textit{hồi quy tuyến tính có ràng buộc} (ridge) trên đặc trưng đóng băng, theo Phương trình~\eqref{eq:ridge}: mô hình lớn chỉ đóng vai trò trích đặc trưng $\phi(x)$, còn việc ánh xạ sang giá trị cảm xúc do một lớp tuyến tính đảm nhiệm. Cách này giữ số tham số huấn luyện rất nhỏ, tránh quá khớp khi dữ liệu đích ít và lệch miền.
+
+\begin{equation}\label{eq:ridge}
+  \hat{y} = \mathbf{w}^\top \phi(x) + b, \qquad
+  \mathbf{w} = \arg\min_{\mathbf{w}} \sum_{i=1}^{n}\big(y_i - \mathbf{w}^\top\phi(x_i)\big)^2 + \lambda \lVert \mathbf{w}\rVert^2
+\end{equation}
+
+Đối với chức năng gợi ý bài tương tự, để đo độ tương đồng nội dung lời, đồ án dùng một mô hình embedding câu (sentence embedding) theo kiến trúc Sentence-BERT \cite{reimers2019sbert}. Mô hình embedding câu khác về mục đích so với các đầu dò trên: nó tạo vector để \textit{so sánh} hai đoạn lời bằng cosine, trong khi các đầu dò cảm xúc \textit{dự đoán} một giá trị tuyệt đối. Việc lựa chọn cụ thể giữa một mô hình tiếng Việt chuyên biệt \cite{dangvantuan2024vnembedding} và một mô hình đa ngữ mạnh hơn \cite{wang2024e5} được kiểm chứng bằng thực nghiệm và trình bày ở Chương~\ref{chapter:Experiment}.
 
 \section{Phương pháp tổ hợp, hậu xử lý và sắp xếp}
 \label{section:3.5}
-Để tổ hợp nhiều tín hiệu Valence mà không tự đặt trọng số, đồ án dùng bộ ước lượng có trọng số theo độ tin cậy EWE \cite{grimm2005ewe}: mỗi tín hiệu được cân theo mức tương quan của nó với đồng thuận chung, nên không cần nhãn đích và tránh được tính vòng tròn. Khi đo tương đồng trên biểu diễn học sâu, các cosine thô bị thiên lệch dị hướng (anisotropy), nghĩa là mọi vector dồn về một nón hẹp khiến cosine gần như mất nghĩa \cite{ethayarajh2019anisotropy}; đồ án khắc phục bằng cách trừ trung bình (mean-centering) theo các kết quả đã công bố \cite{mu2018allbutthetop}. Để đa dạng hóa kết quả và tránh lặp nghệ sĩ, đồ án dùng độ liên quan biên cực đại MMR \cite{carbonell1998mmr}. Để sắp xếp danh sách gợi ý theo màu thành một chuỗi chuyển cảm xúc mượt, đồ án áp dụng nguyên lý đồng cảm (iso-principle) trong trị liệu âm nhạc \cite{starcke2021iso}.
+Để tổ hợp nhiều tín hiệu Valence mà không tự đặt trọng số, đồ án dùng bộ ước lượng có trọng số theo độ tin cậy EWE \cite{grimm2005ewe}. Ý tưởng của EWE là: mỗi tín hiệu được cân theo mức tương quan của nó với \textit{đồng thuận chung} của các tín hiệu, nên những tín hiệu nhất quán với phần còn lại được tin hơn (Phương trình~\eqref{eq:ewe}). Cách này không cần nhãn đích nên tránh được tính vòng tròn (không ``học'' để khớp một bộ nhãn có sẵn), đồng thời tự giảm trọng số cho tín hiệu nhiễu.
+
+\begin{equation}\label{eq:ewe}
+  \hat{v} = \frac{\sum_{k} w_k\, v_k}{\sum_{k} w_k}, \qquad
+  w_k \;\propto\; \operatorname{corr}\!\Big(v_k,\; \tfrac{1}{K-1}\textstyle\sum_{j\neq k} v_j\Big)
+\end{equation}
+
+Khi đo tương đồng trên biểu diễn học sâu, các cosine thô bị thiên lệch dị hướng (anisotropy): mọi vector dồn về một nón hẹp khiến cosine giữa hai vector bất kỳ đều cao và gần như mất khả năng phân biệt \cite{ethayarajh2019anisotropy}. Hình~\ref{fig:aniso} minh họa hiện tượng này. Đồ án khắc phục bằng cách trừ trung bình (mean-centering) theo các kết quả đã công bố \cite{mu2018allbutthetop}: trừ đi vector trung bình của toàn kho trước khi tính cosine (Phương trình~\eqref{eq:center}), nhờ đó khôi phục dải động của độ tương đồng.
+
+\begin{equation}\label{eq:center}
+  \tilde{\mathbf{x}} = \mathbf{x} - \boldsymbol{\mu}, \qquad
+  \boldsymbol{\mu} = \frac{1}{N}\sum_{i=1}^{N}\mathbf{x}_i
+\end{equation}
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[font=\small, scale=0.95, arr/.style={-{Stealth[length=1.8mm]}, thick}]
+  % left: anisotropic cone
+  \begin{scope}[shift={(0,0)}]
+    \node at (0,2.6) {\footnotesize Trước (dị hướng)};
+    \draw[gray] (0,0) circle (2);
+    \foreach \ang in {52,58,63,68,73,78} {\draw[arr, blue!60] (0,0)--(\ang:1.9);}
+    \node[font=\scriptsize, align=center] at (0,-0.6) {vector dồn\\vào nón hẹp\\(cosine $\approx 1$)};
+  \end{scope}
+  % right: after centering
+  \begin{scope}[shift={(6,0)}]
+    \node at (0,2.6) {\footnotesize Sau khi trừ trung bình};
+    \draw[gray] (0,0) circle (2);
+    \foreach \ang in {15,65,110,165,215,300} {\draw[arr, green!50!black] (0,0)--(\ang:1.9);}
+    \node[font=\scriptsize, align=center] at (0,-0.7) {vector trải rộng\\(cosine có nghĩa)};
+  \end{scope}
+\end{tikzpicture}
+\caption{Hiện tượng dị hướng và hiệu ứng trừ trung bình: trước khi trừ, các vector dồn vào một nón hẹp nên cosine gần như bằng nhau; sau khi trừ trung bình, chúng trải rộng và cosine khôi phục khả năng phân biệt}
+\label{fig:aniso}
+\end{figure}
+
+Để đa dạng hóa kết quả và tránh lặp nghệ sĩ, đồ án dùng độ liên quan biên cực đại MMR \cite{carbonell1998mmr}: ở mỗi bước, hệ thống chọn ứng viên cân bằng giữa \textit{độ liên quan} với truy vấn và \textit{độ khác biệt} so với các bài đã chọn, theo Phương trình~\eqref{eq:mmr}.
+
+\begin{equation}\label{eq:mmr}
+  \text{next} = \arg\max_{i \in R \setminus S}\Big[\,\lambda\,\operatorname{rel}(i) - (1-\lambda)\max_{j \in S}\operatorname{sim}(i,j)\,\Big]
+\end{equation}
+
+Cuối cùng, để sắp xếp danh sách gợi ý theo màu thành một chuỗi chuyển cảm xúc mượt, đồ án áp dụng nguyên lý đồng cảm (iso-principle) trong trị liệu âm nhạc \cite{starcke2021iso}: chuỗi bài được sắp để tâm trạng thay đổi dần dần dọc theo một đường nối hai điểm cảm xúc, thay vì nhảy đột ngột. Nguyên lý này có gốc rễ trong trị liệu âm nhạc, nơi người trị liệu dẫn dắt tâm trạng người nghe từ trạng thái hiện tại tới trạng thái đích bằng các bước chuyển nhỏ; áp dụng vào playlist hai màu, hệ thống tạo một ``hành trình'' từ tâm trạng của màu A sang màu B.
+
+Cần làm rõ thêm về hai phương pháp ít quen thuộc. EWE \cite{grimm2005ewe} bắt nguồn từ bài toán nhận dạng cảm xúc trong tiếng nói, nơi nhiều người chấm cùng một mẫu và độ tin cậy của mỗi người chấm được ước lượng lặp bằng mức tương quan của họ với trung bình của những người còn lại; ở đây ``người chấm'' được thay bằng ``tín hiệu cảm xúc''. Hiện tượng dị hướng của biểu diễn học sâu \cite{ethayarajh2019anisotropy} đã được quan sát rộng rãi ở các mô hình ngôn ngữ: các vector ngữ cảnh chiếm một hình nón hẹp trong không gian, làm cosine giữa hai vector bất kỳ đều dương và cao. Phương pháp trừ thành phần trội chung (\textit{all-but-the-top}) \cite{mu2018allbutthetop} cho thấy chỉ cần loại bỏ trung bình và một vài thành phần chính là khôi phục được khả năng phân biệt; đồ án dùng phiên bản đơn giản nhất là trừ trung bình, vừa đủ để cải thiện rõ rệt độ nhất quán âm thanh (mục~\ref{subsection:eval-color}).
 
 Ràng buộc ``không tinh chỉnh, chỉ đầu dò tuyến tính'' được củng cố bởi bằng chứng rằng đầu dò tuyến tính trên đặc trưng đóng băng có thể tổng quát hóa tốt hơn tinh chỉnh khi dữ liệu đích lệch miền \cite{kumar2022finetuning}, vốn đúng với trường hợp chuyển từ dữ liệu tiếng Anh sang nhạc Việt.
 
 \section{Công cụ và nền tảng triển khai}
 \label{section:3.6}
-Phần xử lý dữ liệu, trích đặc trưng và các đầu dò được hiện thực bằng Python với các thư viện học máy phổ biến, các mô hình được tải từ kho mô hình mở. Giao diện người dùng được xây dựng dưới dạng ứng dụng trang đơn (Single-Page Application, SPA). Phần liệt kê chi tiết công cụ kèm phiên bản được trình bày ở mục~\ref{section:4.3} của Chương~\ref{chapter:Experiment}.
+Phần xử lý dữ liệu, trích đặc trưng và các đầu dò được hiện thực bằng Python với các thư viện học máy phổ biến (NumPy, scikit-learn), các mô hình được tải từ kho mô hình mở. Tầng phục vụ dùng FastAPI vì hỗ trợ tốt kiểu dữ liệu và sinh tài liệu API tự động. Giao diện người dùng được xây dựng dưới dạng ứng dụng trang đơn (Single-Page Application, SPA) bằng React, cho phép tương tác mượt và dựng các hiệu ứng trực quan hóa cảm xúc. Lựa chọn FastAPI cho tầng phục vụ xuất phát từ việc nó hỗ trợ kiểu dữ liệu chặt (giúp xác thực đầu vào ở biên, đáp ứng yêu cầu xử lý lỗi tường minh) và sinh tài liệu API tự động, đồng thời tích hợp tốt với hệ sinh thái Python nơi các đặc trưng đã được tính. Toàn bộ phép so khớp ở pha phục vụ được vector hóa bằng NumPy: thay vì lặp trên từng bài, hệ thống thực hiện một phép nhân ma trận duy nhất giữa vector truy vấn và ma trận đặc trưng của cả kho --- đây là chìa khóa cho thời gian phản hồi mili-giây. Phần liệt kê chi tiết công cụ kèm phiên bản được trình bày ở mục~\ref{section:4.3} của Chương~\ref{chapter:Experiment}.
 
-Chương này đã trình bày các nền tảng lý thuyết và công nghệ làm cơ sở cho hệ thống, từ mô hình cảm xúc, cơ sở màu sắc, các mô hình biểu diễn âm nhạc và văn bản, đến các phương pháp tổ hợp và sắp xếp. Cách các thành phần này được thiết kế, hiện thực và đánh giá cụ thể cho hai chức năng cốt lõi được trình bày trong chương tiếp theo.
+\section{Ánh xạ yêu cầu sang nền tảng}
+\label{section:3.7}
+Để thấy rõ mỗi nền tảng phục vụ yêu cầu nào, Bảng~\ref{table:req2found} đối chiếu các yêu cầu (Chương~\ref{chapter:Related_works}) với thành phần lý thuyết/công nghệ đáp ứng. Bảng này cũng cho thấy mọi thành phần đều có nguồn gốc khoa học rõ ràng, đáp ứng yêu cầu NFR01.
+
+\begin{table}[h!]
+\centering
+\caption{Ánh xạ giữa yêu cầu của hệ thống và nền tảng lý thuyết/công nghệ}
+\label{table:req2found}
+\begin{tabular}{p{5.2cm} p{8.0cm}}
+\toprule
+\textbf{Yêu cầu} & \textbf{Nền tảng đáp ứng} \\
+\midrule
+Biểu diễn cảm xúc thống nhất (FR01--FR03, FR07) & Mô hình V-A của Russell (mục~\ref{section:3.1}) \\
+Gợi ý theo màu (FR02, FR03) & Oklab + ICEAS + Whiteford (mục~\ref{section:3.2}) \\
+Đo ``nghe giống'' \& suy Arousal (FR01) & SSL âm nhạc MuQ (mục~\ref{section:3.3}) \\
+Suy Valence từ lời (FR07) & Từ điển + đầu dò ViSoBERT/XLM-R (mục~\ref{section:3.4}) \\
+Tổ hợp tín hiệu không tự đặt trọng số (NFR01) & EWE (mục~\ref{section:3.5}) \\
+Kết quả nhất quán âm thanh (FR02) & Trừ trung bình khử dị hướng (mục~\ref{section:3.5}) \\
+Đa dạng hóa \& hành trình mượt (FR03, FR05) & MMR + iso-principle (mục~\ref{section:3.5}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Phát biểu bài toán hình thức}
+\label{section:3.8}
+Trên cơ sở các nền tảng đã trình bày, có thể phát biểu hình thức hai bài toán mà hệ thống giải quyết. Gọi $\mathcal{S} = \{s_1, \dots, s_N\}$ là kho nhạc với $N = 5138$ bài. Pha ngoại tuyến gán cho mỗi bài $s_i$ một bộ ba biểu diễn: tọa độ cảm xúc $\mathbf{p}_i \in [0,1]^2$ (Valence--Arousal), vector embedding âm thanh $\mathbf{m}_i \in \mathbb{R}^{1024}$ (MuQ), và vector embedding lời $\mathbf{l}_i \in \mathbb{R}^{1024}$ (e5-large).
+
+\textit{Bài toán 1 (gợi ý bài tương tự).} Cho một bài nguồn $s_q$, tìm tập $k$ bài $\mathcal{R} \subseteq \mathcal{S} \setminus \{s_q\}$ cực đại hóa tổng điểm tương đồng tổ hợp:
+\begin{equation}\label{eq:prob-similar}
+  \mathcal{R} = \operatorname*{arg\,top\text{-}k}_{i \,:\, s_i \notin \text{cover}(s_q)} \big[\,0.76\cos(\mathbf{m}_q, \mathbf{m}_i) + 0.16\,\text{sim}(\mathbf{p}_q, \mathbf{p}_i) + 0.08\cos(\mathbf{l}_q, \mathbf{l}_i)\,\big]
+\end{equation}
+sau đó áp đa dạng hóa MMR trên biểu diễn âm thanh (gián tiếp giảm trùng nghệ sĩ; giới hạn cứng số bài mỗi nghệ sĩ là tùy chọn, mặc định tắt).
+
+\textit{Bài toán 2 (gợi ý theo màu).} Cho một (hoặc hai) màu, ánh xạ thành điểm đích $\mathbf{q}$ trong không gian phân vị V-A của kho nhạc, rồi tìm tập $k$ bài vừa cực đại hóa độ gần cảm xúc (RBF) vừa cực đại hóa độ nhất quán âm thanh:
+\begin{equation}\label{eq:prob-color}
+  \mathcal{R} = \operatorname*{arg\,top\text{-}k}_{i} \big[\,\alpha\, s_{\text{RBF}}(\mathbf{q}, \mathbf{p}_i) + (1-\alpha)\,\text{coh}(\mathbf{m}_i, \mathcal{R})\,\big], \quad \alpha = 0.55
+\end{equation}
+trong đó $\text{coh}$ là độ nhất quán âm thanh đo trên biểu diễn MuQ đã trừ trung bình, và kết quả được sắp theo nguyên lý đồng cảm khi có hai màu. Điểm chung của hai bài toán là cùng làm việc trên các biểu diễn $(\mathbf{p}, \mathbf{m}, \mathbf{l})$ đã tính sẵn, nên mọi truy vấn quy về các phép đại số tuyến tính --- nền tảng cho hiệu năng phục vụ ở mức mili-giây (Chương~\ref{chapter:Experiment}).
+
+Chương này đã trình bày các nền tảng lý thuyết và công nghệ làm cơ sở cho hệ thống, từ mô hình cảm xúc, cơ sở màu sắc, các mô hình biểu diễn âm nhạc và văn bản, đến các phương pháp tổ hợp và sắp xếp, kèm các công thức hình thức hóa cho từng phương pháp. Cách các thành phần này được thiết kế, hiện thực và đánh giá cụ thể cho hai chức năng cốt lõi được trình bày trong chương tiếp theo.
 
 \end{document}
