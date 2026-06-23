@@ -23,10 +23,12 @@ Chúng tôi nêu rõ các hạn chế sau để bảo đảm tính trung thực 
         hệ cố ý áp dụng (Dacrema 2019). Vì vậy chúng tôi dùng GT \emph{tương tự âm
         nhạc} (được chấm theo thang 0--3) cùng các chỉ số nội tại (MoodCoherence
         $=0.96$, TempoCoherence $=0.84$) làm thước đo chính, thay vì NDCG biên tập.
-  \item \textbf{Thiếu một chỉ số chính xác độc lập, không gây tranh cãi.} GT tương
-        tự âm nhạc hiện chỉ có $n=52$ hạt giống và một bộ chấm; cần mở rộng (nhiều
-        hạt giống hơn, nhiều bộ chấm + hệ số Krippendorff $\alpha$) để có công suất
-        thống kê.
+  \item \textbf{Độ tin cậy của ground truth tương tự âm nhạc.} GT được kiểm chứng
+        bằng \emph{hai bộ chấm độc lập} (qwen3:8b cục bộ và gpt-4o-mini của OpenAI):
+        trên 1048 cặp, hai bộ chấm đồng thuận gần như tuyệt đối (Spearman
+        $\rho = 0.946$, Cohen $\kappa = 0.958$) --- GT không phải tạo tác của một bộ
+        chấm. Hạn chế còn lại là cỡ mẫu ($n=52$ hạt giống); tăng số hạt giống để có
+        thêm công suất thống kê là hướng phát triển.
   \item \textbf{Lựa chọn backbone âm thanh.} So sánh công bằng (chuyển backbone
         thật + tối ưu lại trọng số fusion riêng cho mỗi backbone bằng 5-fold CV trên
         GT tương tự âm nhạc) cho thấy MuQ ngang-hoặc-hơn MERT: hoà trên NDCG CV
