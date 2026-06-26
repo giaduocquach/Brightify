@@ -81,11 +81,4 @@ def measure_all_methods(catalog: Any, seed_indices: Sequence[int], n: int = 200)
         colors, n=n,
     )
 
-    # recommend_by_lyrics_keywords
-    keywords = ['tình yêu', 'nỗi buồn', 'hy vọng', 'cô đơn', 'hạnh phúc']
-    results['recommend_by_lyrics_keywords'] = latency_percentiles(
-        lambda kw: rec.recommend_by_lyrics_keywords(kw, top_k=10),
-        keywords, n=n,
-    )
-
     return results

@@ -473,32 +473,6 @@ class MultimodalEmotionFusion:
             self.audio_weight /= total
             self.lyrics_weight /= total
 
-    def fuse_emotions(self,
-                     audio_valence: float,
-                     audio_energy: float,
-                     lyrics_valence: float,
-                     lyrics_arousal: float,
-                     audio_confidence: float = 1.0,
-                     lyrics_confidence: float = 1.0) -> Tuple[float, float]:
-
-        # Adaptive weighting based on confidence
-        audio_w = self.audio_weight * audio_confidence
-        lyrics_w = self.lyrics_weight * lyrics_confidence
-
-        total_w = audio_w + lyrics_w
-        if total_w > 0:
-            audio_w /= total_w
-            lyrics_w /= total_w
-        else:
-            audio_w = 0.5
-            lyrics_w = 0.5
-
-        # Fuse valence and energy/arousal
-        final_valence = audio_w * audio_valence + lyrics_w * lyrics_valence
-        final_energy = audio_w * audio_energy + lyrics_w * lyrics_arousal
-
-        return (np.clip(final_valence, 0, 1), np.clip(final_energy, 0, 1))
-
     def get_emotion_label(self, valence: float, energy: float) -> str:
 
         # Quadrant-based classification

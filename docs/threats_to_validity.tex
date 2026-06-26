@@ -1,0 +1,78 @@
+% ============================================================================
+% Threats to Validity / Hạn chế — dán vào chương Đánh giá hoặc Kết luận.
+% Soạn 2026-06-24 từ docs/EVAL_FINDINGS.md. Số liệu đã đo lại live trên cấu hình
+% hiện tại (backbone MuQ, lyrics e5-large, nhãn emotion_labels_v6i).
+% ============================================================================
+
+\section{Hạn chế và các mối đe doạ đến tính hợp lệ (Threats to Validity)}
+\label{sec:threats}
+
+Hệ thống được đánh giá hoàn toàn bằng các chỉ số ngoại tuyến (offline). Theo
+Dacrema và cộng sự (2021), tương quan giữa chỉ số offline và mức độ hài lòng thực
+tế của người dùng chỉ vào khoảng $r \approx 0.28$; do đó các kết quả dưới đây là
+\emph{đại lượng thay thế} (proxy), không phải bảo chứng trải nghiệm người dùng.
+Chúng tôi nêu rõ các hạn chế sau để bảo đảm tính trung thực khoa học.
+
+\subsection{Đối với gợi ý theo bài hát (similar-song)}
+\begin{itemize}
+  \item \textbf{Ground truth dạng playlist biên tập là thước đo không phù hợp.}
+        Trên tập GT playlist biên tập, một baseline \emph{popularity} (10 bài theo
+        tần suất nghệ sĩ) đạt NDCG@10 $=0.091$, cao hơn hệ sản phẩm ($0.066$). Đây
+        không phải do hệ kém: GT loại này thưởng cho độ phổ biến và đồng-xuất-hiện,
+        đồng thời \emph{phạt} chính cơ chế đa dạng nghệ sĩ (MMR) và lọc bản cover mà
+        hệ cố ý áp dụng (Dacrema 2019). Vì vậy chúng tôi dùng GT \emph{tương tự âm
+        nhạc} (được chấm theo thang 0--3) cùng các chỉ số nội tại (MoodCoherence
+        $=0.94$, TempoCoherence $=0.84$) làm thước đo chính, thay vì NDCG biên tập.
+  \item \textbf{Độ tin cậy của ground truth tương tự âm nhạc.} GT được kiểm chứng
+        bằng \emph{hai bộ chấm độc lập} (qwen3:8b cục bộ và gpt-4o-mini của OpenAI):
+        trên 1048 cặp, hai bộ chấm đồng thuận gần như tuyệt đối (Spearman
+        $\rho = 0.946$, Cohen $\kappa = 0.958$) --- GT không phải tạo tác của một bộ
+        chấm. Hạn chế còn lại là cỡ mẫu ($n=52$ hạt giống); tăng số hạt giống để có
+        thêm công suất thống kê là hướng phát triển.
+  \item \textbf{Lựa chọn backbone âm thanh.} So sánh công bằng (chuyển backbone
+        thật + tối ưu lại trọng số fusion riêng cho mỗi backbone bằng 5-fold CV trên
+        GT tương tự âm nhạc) cho thấy MuQ ngang-hoặc-hơn MERT: hoà trên NDCG CV
+        ($0.7345$ vs $0.7343$) và audio-only ($0.7476$ vs $0.7424$, không ý nghĩa);
+        MuQ \emph{vượt trội có ý nghĩa thống kê} ở phép chuyển giao sang bộ chấm độc
+        lập (GPT-GT: $0.806$ vs $0.771$, CI $[+0.014, +0.056]$); color-TE coi như
+        hoà. Lựa chọn MuQ là hợp lý. Lưu ý phương pháp: trọng số CV-tối-ưu hội tụ về
+        gần như chỉ-âm-thanh (lyrics/V-A đóng góp $\approx 0$ vào NDCG trên pool đã
+        chấm); trọng số sản phẩm $0.76/0.16/0.08$ đánh đổi một chút NDCG để tăng độ
+        nhất quán cảm xúc (MoodCoherence).
+\end{itemize}
+
+\subsection{Đối với gợi ý theo màu (recommend-by-color)}
+\begin{itemize}
+  \item \textbf{Chỉ số Targeting Error mang tính tự quy chiếu một phần.} Nhãn V-A
+        vừa là đầu vào của bộ gợi ý vừa là chuẩn so trong cùng không gian phân vị,
+        nên TE thấp ($\approx 0.0242$) chỉ là điều kiện cần. Bằng chứng \emph{độc lập}
+        mạnh hơn là: tương quan giữa độ sáng/độ bão hoà của màu với BPM thực đo
+        (librosa) đạt $\rho = +0.41$ và $+0.66$ (Whiteford 2018), và tương quan
+        valence của màu với chuẩn người ICEAS đạt $r = 0.97$.
+  \item \textbf{Cơ sở dữ liệu màu--cảm xúc không bao gồm Việt Nam.} Chuẩn ICEAS
+        (Jonauskaite 2020) khảo sát 30 quốc gia nhưng không có Việt Nam, và chỉ neo
+        ở $n=12$ màu cố định, dẫn tới khoảng tin cậy rộng (valence $r$ Fisher-z
+        $[0.89, 0.99]$; arousal chỉ $0.69$). Không tồn tại bộ dữ liệu màu--cảm xúc
+        bản địa tiếng Việt để hiệu chỉnh.
+  \item \textbf{Một số màu cho cảm giác phản trực giác.} Màu nâu/hồng ánh xạ sang
+        arousal trung-cao theo mô hình Whiteford (ấm + bão hoà $\leftrightarrow$
+        nhanh); đây là sự trung thành với mô hình màu$\leftrightarrow$nhạc, không
+        phải lỗi.
+  \item \textbf{Một số góc phần tư cảm xúc thưa dữ liệu.} Tương quan dương giữa
+        valence và arousal trong tập nhạc khiến các vùng ``bình yên'' (V cao, A thấp)
+        và ``căng thẳng'' (V thấp, A cao) ít bài, nên màu ấm phải nhắm vào phần đuôi
+        arousal cao mỏng ($\approx 22\%$ tập nhạc). Đây là thuộc tính của dữ liệu.
+\end{itemize}
+
+\subsection{Hạn chế chung}
+\begin{itemize}
+  \item \textbf{Chưa có nghiên cứu nghe thực tế (human listening study)} do ràng
+        buộc không thu thập dữ liệu người dùng; mọi chỉ số đều là proxy ngoại tuyến.
+  \item \textbf{Valence chuyển giao yếu qua biên giới văn hoá.} Trong phạm vi
+        nhạc phương Tây, phép chuyển giao DEAM$\to$PMEmo khá tốt ($\rho = 0.69$ cho
+        valence, $0.65$ cho arousal --- đo lại 2026-06-24). Tuy nhiên khi áp bộ dò
+        audio huấn luyện trên DEAM sang tập nhạc Việt thì valence rất yếu
+        ($R^2 \approx 0.06$), nên valence chủ yếu dựa vào từ điển cảm xúc tiếng Việt
+        ($84\%$ trọng số) thay vì âm thanh --- một lựa chọn đúng nhưng phụ thuộc
+        chất lượng từ điển.
+\end{itemize}

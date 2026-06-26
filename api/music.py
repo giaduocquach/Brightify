@@ -668,10 +668,22 @@ async def get_similar_songs(
         
         results = _recommender.recommend_by_song(resolved_idx, top_k=count, exclude_ids=exclude_ids)
         df_results = results
+        # Per-rec "why this song" (display only) — mirrors recommend_by_color's why chip.
+        from core import explain as _explain
+        seed_row = _recommender.df.iloc[resolved_idx]
+        whys = _explain.build_song_why(
+            df_results,
+            seed_emotion=seed_row.get('fused_emotion'),
+            seed_va=_recommender.song_va[resolved_idx],
+            seed_tempo=seed_row.get('tempo'),
+            emo_vi=_recommender._EMO_VI,
+        ) if not df_results.empty else []
         songs = []
-        for idx, row in df_results.iterrows():
+        for i, (idx, row) in enumerate(df_results.iterrows()):
             s = _song_to_dict(row, row.get('original_index', idx))
             s['similarity_score'] = round(float(row.get('similarity_score', 0)), 4)
+            if i < len(whys):
+                s['why'] = whys[i]
             songs.append(s)
 
         # Source song info for context
@@ -683,34 +695,6 @@ async def get_similar_songs(
             "songs": songs,
             "source_song_id": song_id,
             "source_song_name": source_name,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/track/info/{song_index}")
-async def get_track_info(song_index: str):
-    """Get track info with local audio availability. Accepts track_id or integer index."""
-    try:
-        df = _recommender.df
-        idx = _ser.resolve_track_id_to_index(song_index, df)
-        track = df.iloc[idx]
-        track_id = str(track.get('track_id', ''))
-        file_path = _music_path / f"{track_id}.mp3"
-        has_local = file_path.exists()
-
-        return {
-            "success": True,
-            "song_index": song_index,
-            "track_name": str(track.get('track_name', 'Unknown')),
-            "artist": str(track.get('primary_artist', 'Unknown')),
-            "track_id": track_id,
-            "has_local_audio": has_local,
-            "audio_url": f"/api/audio/stream/{track_id}" if has_local else None,
-            "color_hex": str(track.get('color_hex', '#6366f1')),
-            "mood": str(track.get('mood_quadrant', 'Unknown')),
-            "valence": float(track.get('valence', 0.5)),
-            "energy": float(track.get('energy', 0.5)),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -768,17 +752,6 @@ async def get_batch_audio_status(track_ids: str = Query(..., description="Comma-
     ids = [tid.strip() for tid in track_ids.split(",") if tid.strip()]
     result = {tid: (tid in _mp3_cache) for tid in ids[:100]}
     return {"status": result, "available_count": sum(result.values()), "total": len(result)}
-
-
-@router.get("/audio/stats")
-async def get_audio_stats():
-    """Get local music library statistics"""
-    mp3_files = list(_music_path.glob("*.mp3"))
-    total_size = sum(f.stat().st_size for f in mp3_files)
-    return {
-        "total_files": len(mp3_files),
-        "total_size_mb": round(total_size / (1024 * 1024), 2),
-    }
 
 
 @router.get("/album-art/{track_id}")

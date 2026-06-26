@@ -217,7 +217,13 @@ class SongArtist(Base):
 # ============================================================================
 
 class SongEmbedding(Base):
-    """PhoBERT 768-dim lyrics embedding for similarity search."""
+    """Legacy PhoBERT 768-dim lyrics-embedding table — NOT used at serving.
+
+    Similarity runs on precomputed multilingual-e5-large vectors
+    (``data/lyrics_e5large.npy``, 1024-dim); PhoBERT is never invoked on any
+    request path (``SKIP_PHOBERT_LOAD=True``). Kept only for schema/migration
+    history; do not treat the 768-dim / phobert default as the active embedding.
+    """
     __tablename__ = "song_embeddings"
 
     track_id = Column(String(64), ForeignKey("songs.track_id"), primary_key=True)

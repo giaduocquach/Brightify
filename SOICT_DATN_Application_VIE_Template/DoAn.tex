@@ -24,6 +24,7 @@
 \usepackage[ruled,vlined]{algorithm2e}  % Hỗ trợ viết các giải thuật
 \usepackage{capt-of} % Cho phép sử dụng caption lớn đối với landscape page
 \usepackage{multirow} % Merge cells
+\usepackage{booktabs} % Bảng chuyên nghiệp: \toprule \midrule \bottomrule
 \usepackage{fancyhdr} % Cho phép tùy biến header và footer
 % \usepackage[natbib,backend=biber,style=ieee]{biblatex} % Giúp chèn tài liệu tham khảo
 \usepackage{appendix}
@@ -35,7 +36,7 @@
 \usepackage{subcaption}
 \usepackage{xurl}
 \usepackage{tikz} % Vẽ biểu đồ use case
-\usetikzlibrary{positioning,shapes.geometric,arrows.meta}
+\usetikzlibrary{positioning,shapes.geometric,arrows.meta,calc,fit,backgrounds,shapes.multipart}
 
 % Khung giữ chỗ cho ảnh chụp màn hình giao diện. Sinh viên thay khối này bằng
 % \includegraphics khi đã chụp được ảnh thực tế của ứng dụng đang chạy.
@@ -339,9 +340,15 @@
     {{\bfseries{\scshape} \thecontentslabel.\ }} % numbered format
     {}         % unnumbered format
     {\titlerule*[0.3pc]{.}\contentspage}         % filler-page-format, e.g dots
-\chapter{HƯỚNG DẪN VIẾT ĐỒ ÁN TỐT NGHIỆP}
-\subfile{Chuong/Phu_luc_A}
-\newpage
 \chapter{ĐẶC TẢ USE CASE}
 \subfile{Chuong/Phu_luc_B}
+\newpage
+\chapter{VÍ DỤ YÊU CẦU VÀ PHẢN HỒI API}
+\subfile{Chuong/Phu_luc_C}
+\newpage
+\chapter{BẢNG THAM SỐ VÀ TRỌNG SỐ}
+\subfile{Chuong/Phu_luc_D}
+\newpage
+\chapter{LƯỢC ĐỒ KHO ĐẶC TRƯNG}
+\subfile{Chuong/Phu_luc_E}
 \end{document}

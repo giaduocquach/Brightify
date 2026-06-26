@@ -190,9 +190,14 @@ class MusicRecommender:
         # path: in Docker CWD=/app and the .npy lives in the mounted serving release, so the
         # old hardcoded path silently failed → MuQ never loaded → the app fell back to the
         # MERT backbone, giving DIFFERENT recommendations than local. (Same bug class as clean_bpm.)
-        _muq_file = globals().get("MUQ_EMBEDDINGS_FILE", "data/muq_embeddings.npy")
-        _muq_meta = globals().get("MUQ_METADATA_FILE", "data/muq_metadata.json")
-        if str(globals().get("AUDIO_BACKBONE", "mert")).lower() == "muq" \
+        # Read these from the `config` MODULE at runtime (not the engine-module globals bound
+        # at `from config import *`), so an offline A/B that patches config.AUDIO_BACKBONE before
+        # constructing a recommender actually switches the backbone. Production is unchanged
+        # (config.AUDIO_BACKBONE = "muq"); env override still applies at config import time.
+        import config as _cfg
+        _muq_file = getattr(_cfg, "MUQ_EMBEDDINGS_FILE", "data/muq_embeddings.npy")
+        _muq_meta = getattr(_cfg, "MUQ_METADATA_FILE", "data/muq_metadata.json")
+        if str(getattr(_cfg, "AUDIO_BACKBONE", "mert")).lower() == "muq" \
                 and os.path.exists(_muq_file):
             try:
                 import json as _json
@@ -312,32 +317,28 @@ class MusicRecommender:
         - color_lab: (n_songs, 3) - LAB color space for CIEDE2000
         """
         # Emotion labels — derived from color mapper profiles to stay in sync
+        # (used by recommend_by_colors + the backtest Catalog/calibration metric).
         self.emotion_labels = sorted(self.color_mapper.emotion_color_profiles.keys())
         n_emotions = len(self.emotion_labels)
 
-        # Pre-allocate arrays
         self.song_va = np.zeros((self.n_songs, 2))  # valence, arousal
+        # Per-song colour→emotion distribution. NOT read on the serving request path, but the
+        # backtest Catalog (tools/backtest_v2/catalog.py → metrics/property.py calibration_error)
+        # reads recommender.song_emotion_vec, so it is KEPT (not dead). color_hex is synthesised
+        # from each song's own V-A, so this vec is a re-encoding of V-A used only by that metric.
+        # (The separate `color_hsl` array was removed 2026-06-24 — it was written here but read
+        # nowhere, grep-confirmed recursively across the repo.)
         self.song_emotion_vec = np.zeros((self.n_songs, n_emotions))
-        self.color_hsl = np.zeros((self.n_songs, 3))
-
-        # Emotion vector from color_hex — NOTE: color_hex is SYNTHESIZED from the song's
-        # own audio V-A/tempo/mode (tools/process_data.apply_color_mapping), NOT extracted
-        # from album art. So this vec is a redundant non-linear re-encoding of V-A.
-        # Kept only as the emotion signal for recommend_by_colors display.
         for idx in range(self.n_songs):
             color = self.colors[idx]
             if pd.isna(color):
-                self.color_hsl[idx] = [0, 0, 50]
                 continue
             try:
-                hsl = self.color_mapper.hex_to_hsl(color)
-                self.color_hsl[idx] = hsl
                 emotion_probs = self.color_mapper.color_to_emotion_probs(color)
                 for i, emo in enumerate(self.emotion_labels):
                     self.song_emotion_vec[idx, i] = emotion_probs.get(emo, 0)
             except Exception:
-                self.color_hsl[idx] = [0, 0, 50]
-
+                pass
         row_sums = self.song_emotion_vec.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         self.song_emotion_vec = self.song_emotion_vec / row_sums
@@ -429,6 +430,10 @@ class MusicRecommender:
                 except (ValueError, KeyError, OSError):
                     pass  # fall through to the label-derived computation
 
+        # DEFENSIVE FALLBACK ONLY — not the production path. With USE_RELABELED_EMOTIONS=True
+        # and emotion_labels_v6i.json present (the shipped config), the block above returns the
+        # frozen per-song V-A directly. Everything below (Russell-centroid + Essentia blend) runs
+        # only if that file is missing/corrupt, so it is dead on the served catalog.
         _RUSSELL_V = {"happy": 0.90, "excited": 0.70, "peaceful": 0.78, "calm": 0.72,
                       "melancholic": 0.30, "sad": 0.15, "tense": 0.35, "angry": 0.15}
         _RUSSELL_A = {"happy": 0.75, "excited": 0.90, "peaceful": 0.20, "calm": 0.15,
@@ -731,19 +736,6 @@ class MusicRecommender:
             # F3: cross-mood penalty removed — the heteroscedastic V-A RBF already
             # makes large mood-distance songs score near-zero without explicit rules.
 
-            # A3 (V27): calibration bonus — boost underrepresented target quadrant.
-            # Addresses catalog Q3-skew (35.5% sad) by giving songs in the same
-            # V-A quadrant as the query color a small additive boost before ranking.
-            if COLOR_CALIBRATION_RERANK:
-                qv, qa = float(per_color_va[0][0]), float(per_color_va[0][1])
-                in_target = (
-                    (match_va[:, 0] >= 0.5) == (qv >= 0.5)
-                ) & (
-                    (match_va[:, 1] >= 0.5) == (qa >= 0.5)
-                )
-                alpha = COLOR_CALIBRATION_ALPHA
-                final_scores = (1.0 - alpha) * final_scores + alpha * in_target.astype(float)
-
             # Endless-radio exclusion: sink already-played songs below every legit
             # score (scores ≥ 0) so all three selectors below skip them — mirrors the
             # reference-song exclusion in recommend_by_song (final_scores[idx] = -1).
@@ -933,15 +925,6 @@ class MusicRecommender:
         return _explain.build_color_why(original_indices, cva, va_s, src_hex,
                                         song_va=self.song_va, fused_emotion=fe, emo_vi=self._EMO_VI)
 
-    def _build_similar_why(self, seed_idx: int, rec_indices: list) -> list:
-        """Per-rec "why this song" for recommend_by_song — delegates to core.explain."""
-        fe = self.df['fused_emotion'] if 'fused_emotion' in self.df.columns else None
-        return _explain.build_similar_why(
-            seed_idx, rec_indices,
-            song_va=self.song_va, mert_matrix=self.mert_matrix,
-            lyrics_emb=self.embeddings_normalized, fused_emotion=fe, emo_vi=self._EMO_VI,
-            sigma_v=RECO_SONG_VA_SIGMA_V, sigma_a=RECO_SONG_VA_SIGMA_A)
-
     def color_emotion_bridge(self, color_hexes):
         """Colour→emotion bridge for UI display (no song matching) — delegates to
         core.explain.build_bridge (Palmer/PLOS: emotion mediates the colour↔music link)."""
@@ -954,7 +937,10 @@ class MusicRecommender:
                          diversity_penalty=DIVERSITY_PENALTY,
                          exclude_ids=None):
         """
-        Multi-faceted song similarity with 7 complementary signals.
+        Multi-faceted song similarity. The active serving fusion is
+        ``0.76*cos(MuQ audio) + 0.16*sim(V-A) + 0.08*cos(lyrics, multilingual-e5-large)``
+        (see config.RECO_SONG_WEIGHTS). The 8-slot weight vector below keeps legacy
+        signal slots for rollback, but only those three carry non-zero weight at serving.
 
         Research basis:
         - Berenzweig et al. (2004) "A Large-Scale Evaluation of Acoustic and
@@ -978,14 +964,15 @@ class MusicRecommender:
           Genre Classification": Artist diversity is essential for evaluation
           validity.
 
-        Signals:
-        1. Timbral similarity   — energy, loudness, acousticness, etc.
-        2. Rhythmic similarity  — tempo, danceability, liveness
-        3. Tonal similarity     — valence, key, mode
-        4. Lyrics semantic sim  — PhoBERT embedding cosine
-        5. V-A proximity        — Gaussian RBF on Circumplex distance
-        6. Emotion profile sim  — Emotion vector cosine
-        7. Mood category match  — Bonus for same fused_emotion label
+        Signals (slot order in the weight vector; * = active at serving):
+        1. Timbral similarity   — legacy Essentia sub-space (weight 0)
+        2. Rhythmic similarity  — legacy Essentia sub-space (weight 0)
+        3. Tonal similarity     — legacy Essentia sub-space (weight 0)
+        4. Lyrics semantic sim* — multilingual-e5-large embedding cosine (0.08)
+        5. V-A proximity*       — Gaussian RBF on Circumplex distance (0.16)
+        6. Emotion profile sim  — emotion-vector cosine (weight 0)
+        7. Mood category match  — same-fused_emotion bonus (weight 0)
+        8. Audio similarity*    — MuQ backbone cosine (0.76)
         """
         if isinstance(song_id_or_name, int):
             song_idx = song_id_or_name
@@ -1032,17 +1019,24 @@ class MusicRecommender:
             tonal_sim = 0.0
 
         # === Signal 4: Lyrics semantic similarity (Hu & Downie 2010) ===
-        # All songs guaranteed to have lyrics (data contract); embeddings always loaded.
-        query_lyrics = self.embeddings_normalized[song_idx]
-        lyrics_sim = self.embeddings_normalized @ query_lyrics
-        lyrics_sim = (lyrics_sim + 1) / 2
+        # Guarded like signals 1-3: skip when the lyrics weight is 0, AND degrade
+        # gracefully when lyrics embeddings were disabled at init (shape mismatch /
+        # missing file → embeddings_normalized is None; __init__ logs "audio + color
+        # only"). Without this guard the None case crashed every recommend_by_song call.
+        if w[3] and self.embeddings_normalized is not None:
+            query_lyrics = self.embeddings_normalized[song_idx]
+            lyrics_sim = self.embeddings_normalized @ query_lyrics
+            lyrics_sim = (lyrics_sim + 1) / 2
+        else:
+            lyrics_sim = 0.0
 
         # === Signal 5: V-A proximity (Russell 1980 Circumplex) ===
         # Heteroscedastic Gaussian RBF: per-axis σ reflecting reliability of each dim.
         # Delbouys 2018: arousal ~80% audio-predictable (σ_A narrow = trust it);
         #               valence ~17% audio-predictable (σ_V wide = lenient).
         # Note: E-VA-SPLIT 2026-06 tested σ_A=0.14 at VA weight=0.032 → REJECTED
-        # (too small weight for σ change to surface). Now weight=0.10 — retested 2026-06-09.
+        # (too small weight for σ change to surface). Production VA weight is now 0.16
+        # (MuQ backbone, RECO_SONG_WEIGHTS_MERT["with_lyrics"]); 0.12 for the MERT rollback.
         query_va = self.song_va[song_idx]
         _sv = RECO_SONG_VA_SIGMA_V
         _sa = RECO_SONG_VA_SIGMA_A

@@ -2,7 +2,6 @@
 Pure JSON-safe formatters extracted from MusicRecommender (behaviour-preserving).
 The recommender passes its arrays + the colour mapper + the emotion-VI map in
 (no engine/config import → one-directional)."""
-import numpy as np
 import pandas as pd
 
 
@@ -37,80 +36,42 @@ def build_color_why(original_indices, cva, va_s, src_hex, *, song_va, fused_emot
     return out
 
 
-def build_similar_why(seed_idx, rec_indices, *, song_va, mert_matrix, lyrics_emb,
-                      fused_emotion, emo_vi, sigma_v, sigma_a):
-    """Per-rec "why this song" for recommend_by_song (audio / mood / lyrics signals)."""
-    _sv = sigma_v
-    _sa = sigma_a
-    _has_fe = fused_emotion is not None
+def build_song_why(results, *, seed_emotion, seed_va, seed_tempo, emo_vi):
+    """Per-rec "why this song" for recommend-by-song.
 
-    seed_emo = ''
-    if _has_fe:
-        _fe = fused_emotion.iloc[seed_idx]
-        seed_emo = '' if pd.isna(_fe) else str(_fe).lower()
-
-    seed_mert = mert_matrix[seed_idx] if mert_matrix is not None else None
-    seed_lyrics = lyrics_emb[seed_idx] if lyrics_emb is not None else None
-    seed_va = song_va[seed_idx]
-
+    Honest about the fusion: similarity is audio-dominant (MuQ 0.76) + V-A mood (0.16)
+    + lyrics (0.08), so the primary signal is always acoustic; mood-match and tempo
+    proximity are surfaced when they corroborate. `results` is the result DataFrame
+    (has fused_emotion / valence / arousal / tempo / similarity_score per row)."""
+    import numpy as np
+    sv, sa = (float(seed_va[0]), float(seed_va[1])) if seed_va is not None else (None, None)
+    se = (str(seed_emotion).lower() if seed_emotion else '')
     out = []
-    for i in rec_indices:
-        i = int(i)
-
-        mert_score = 0.5
-        if seed_mert is not None:
-            raw = float(mert_matrix[i] @ seed_mert)
-            mert_score = round((raw + 1.0) / 2.0, 3)   # [-1,1] → [0,1]
-
-        dv = float(song_va[i, 0] - seed_va[0])
-        da = float(song_va[i, 1] - seed_va[1])
-        va_score = round(float(np.exp(-0.5 * ((dv / _sv)**2 + (da / _sa)**2))), 3)
-
-        lyrics_score = 0.5
-        if seed_lyrics is not None:
-            raw_l = float(lyrics_emb[i] @ seed_lyrics)
-            lyrics_score = round((raw_l + 1.0) / 2.0, 3)
-
-        rec_emo = ''
-        if _has_fe:
-            _fe2 = fused_emotion.iloc[i]
-            rec_emo = '' if pd.isna(_fe2) else str(_fe2).lower()
-
-        seed_emo_vi = emo_vi.get(seed_emo, seed_emo)
-        rec_emo_vi = emo_vi.get(rec_emo, rec_emo)
-
-        same_mood = (seed_emo and rec_emo and seed_emo == rec_emo)
-        if mert_score >= 0.95:
-            if same_mood:
-                reason = f"Âm nhạc rất gần — cùng tâm trạng {rec_emo_vi or ''} và chất nhạc"
-            else:
-                reason = "Âm nhạc rất tương đồng (timbre, nhịp điệu, hòa âm)"
-            top_signal = "audio"
-        elif va_score >= 0.70 and same_mood:
-            reason = f"Cùng tâm trạng {rec_emo_vi or ''} và phong cách âm nhạc tương tự"
-            top_signal = "mood"
-        elif mert_score >= 0.90:
-            reason = "Phong cách âm nhạc tương tự — cùng thể loại và cảm giác"
-            top_signal = "audio"
-        elif lyrics_score >= 0.85 and mert_score >= 0.88:
-            reason = "Cùng phong cách nhạc và chủ đề lời bài hát"
-            top_signal = "audio+lyrics"
-        else:
-            reason = "Âm nhạc và tâm trạng tương tự"
-            top_signal = "audio"
-
-        out.append({
-            'reason':        reason,
-            'top_signal':    top_signal,
-            'audio_score':   mert_score,
-            'mood_score':    va_score,
-            'lyrics_score':  lyrics_score,
-            'seed_emotion':  seed_emo,
-            'seed_emotion_vi': seed_emo_vi,
-            'song_emotion':  rec_emo,
-            'song_emotion_vi': rec_emo_vi,
-            'same_mood':     same_mood,
-        })
+    for _, row in results.iterrows():
+        emo = row.get('fused_emotion')
+        emo = '' if (emo is None or pd.isna(emo)) else str(emo).lower()
+        same_mood = bool(emo) and emo == se
+        reason = 'Chất âm (giai điệu, hoà âm) tương đồng với bài gốc'
+        if same_mood:
+            reason = f"Chất âm tương đồng và cùng tâm trạng ({emo_vi.get(emo, emo)})"
+        why = {
+            'reason': reason,
+            'top_signal': 'audio',
+            'similarity': round(float(row.get('similarity_score', 0.0)), 3),
+            'same_mood': same_mood,
+            'song_emotion': emo,
+            'song_emotion_vi': emo_vi.get(emo, emo),
+        }
+        # Tempo proximity (display only) when both BPMs are known.
+        st = row.get('tempo')
+        if seed_tempo is not None and st is not None and not pd.isna(st) and not pd.isna(seed_tempo):
+            why['tempo_delta'] = round(abs(float(st) - float(seed_tempo)), 1)
+        if sv is not None:
+            rv, ra = row.get('valence'), row.get('arousal')
+            if rv is not None and ra is not None and not pd.isna(rv) and not pd.isna(ra):
+                why['mood_match'] = round(float(np.exp(-0.5 * (
+                    ((float(rv) - sv) / 0.22) ** 2 + ((float(ra) - sa) / 0.14) ** 2))), 3)
+        out.append(why)
     return out
 
 
