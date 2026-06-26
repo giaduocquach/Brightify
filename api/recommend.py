@@ -27,7 +27,13 @@ def init(recommender):
 # ============================================================================
 
 class ColorRecommendationRequest(BaseModel):
-    colors: List[str] = Field(..., description="List of hex colors (e.g., ['#FF5733'])")
+    # 1–2 colours only: 1 = static mood, 2 = mood JOURNEY (A→B, Iso-Principle). 3+
+    # caused "mood whiplash" (V23) and the core caps to [:2] anyway — reject explicitly
+    # here (422) instead of silently dropping the extras / 500-ing on an empty list.
+    colors: List[str] = Field(
+        ..., min_items=1, max_items=2,
+        description="1–2 hex colors (e.g., ['#FF5733']); 2 = mood journey A→B",
+    )
     top_k: int = Field(default=10, ge=1, le=50)
     # No `weights`: recommend-by-color is pure V-A (rank-space RBF) — there are no
     # multi-signal weights to set (F2/F3 ablation removed lyric/emotion signals).
@@ -66,13 +72,18 @@ _dataframe_to_dict = dataframe_to_dict
 
 @router.post("/color", response_model=RecommendationResponse)
 async def recommend_by_color(request: ColorRecommendationRequest):
-    """Recommend songs by color(s) using CIEDE2000 perceptual color distance"""
+    """Recommend songs by color(s): color -> Oklab -> V-A (ICEAS valence + Whiteford
+    arousal), retrieved via anisotropic Gaussian RBF in quantile/CDF space with MuQ
+    acoustic-coherence tightening. Two colors -> iso-principle mood journey."""
     # Skip the cache for endless-radio extension calls: each carries a different,
     # growing exclude set, so caching would just fill with single-use entries.
     use_cache = not request.exclude_ids
+    # Colour ORDER matters: 2 colours = a directional A→B journey, so [A,B] and [B,A]
+    # are different playlists — do NOT sort (sorting collided the two directions onto one
+    # cache entry, so a reversed journey returned the wrong direction + wrong from/to).
     cache_key = make_key(
         "reco:color",
-        colors=sorted(request.colors),
+        colors=request.colors,
         top_k=request.top_k,
         diversity_penalty=request.diversity_penalty,
     )

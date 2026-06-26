@@ -22,7 +22,7 @@ Chúng tôi nêu rõ các hạn chế sau để bảo đảm tính trung thực 
         đồng thời \emph{phạt} chính cơ chế đa dạng nghệ sĩ (MMR) và lọc bản cover mà
         hệ cố ý áp dụng (Dacrema 2019). Vì vậy chúng tôi dùng GT \emph{tương tự âm
         nhạc} (được chấm theo thang 0--3) cùng các chỉ số nội tại (MoodCoherence
-        $=0.96$, TempoCoherence $=0.84$) làm thước đo chính, thay vì NDCG biên tập.
+        $=0.94$, TempoCoherence $=0.84$) làm thước đo chính, thay vì NDCG biên tập.
   \item \textbf{Độ tin cậy của ground truth tương tự âm nhạc.} GT được kiểm chứng
         bằng \emph{hai bộ chấm độc lập} (qwen3:8b cục bộ và gpt-4o-mini của OpenAI):
         trên 1048 cặp, hai bộ chấm đồng thuận gần như tuyệt đối (Spearman
@@ -45,9 +45,9 @@ Chúng tôi nêu rõ các hạn chế sau để bảo đảm tính trung thực 
 \begin{itemize}
   \item \textbf{Chỉ số Targeting Error mang tính tự quy chiếu một phần.} Nhãn V-A
         vừa là đầu vào của bộ gợi ý vừa là chuẩn so trong cùng không gian phân vị,
-        nên TE thấp ($\approx 0.027$) chỉ là điều kiện cần. Bằng chứng \emph{độc lập}
+        nên TE thấp ($\approx 0.0242$) chỉ là điều kiện cần. Bằng chứng \emph{độc lập}
         mạnh hơn là: tương quan giữa độ sáng/độ bão hoà của màu với BPM thực đo
-        (librosa) đạt $\rho = +0.46$ và $+0.66$ (Whiteford 2018), và tương quan
+        (librosa) đạt $\rho = +0.41$ và $+0.66$ (Whiteford 2018), và tương quan
         valence của màu với chuẩn người ICEAS đạt $r = 0.97$.
   \item \textbf{Cơ sở dữ liệu màu--cảm xúc không bao gồm Việt Nam.} Chuẩn ICEAS
         (Jonauskaite 2020) khảo sát 30 quốc gia nhưng không có Việt Nam, và chỉ neo

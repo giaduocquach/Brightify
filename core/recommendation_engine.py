@@ -937,7 +937,10 @@ class MusicRecommender:
                          diversity_penalty=DIVERSITY_PENALTY,
                          exclude_ids=None):
         """
-        Multi-faceted song similarity with 7 complementary signals.
+        Multi-faceted song similarity. The active serving fusion is
+        ``0.76*cos(MuQ audio) + 0.16*sim(V-A) + 0.08*cos(lyrics, multilingual-e5-large)``
+        (see config.RECO_SONG_WEIGHTS). The 8-slot weight vector below keeps legacy
+        signal slots for rollback, but only those three carry non-zero weight at serving.
 
         Research basis:
         - Berenzweig et al. (2004) "A Large-Scale Evaluation of Acoustic and
@@ -961,14 +964,15 @@ class MusicRecommender:
           Genre Classification": Artist diversity is essential for evaluation
           validity.
 
-        Signals:
-        1. Timbral similarity   — energy, loudness, acousticness, etc.
-        2. Rhythmic similarity  — tempo, danceability, liveness
-        3. Tonal similarity     — valence, key, mode
-        4. Lyrics semantic sim  — PhoBERT embedding cosine
-        5. V-A proximity        — Gaussian RBF on Circumplex distance
-        6. Emotion profile sim  — Emotion vector cosine
-        7. Mood category match  — Bonus for same fused_emotion label
+        Signals (slot order in the weight vector; * = active at serving):
+        1. Timbral similarity   — legacy Essentia sub-space (weight 0)
+        2. Rhythmic similarity  — legacy Essentia sub-space (weight 0)
+        3. Tonal similarity     — legacy Essentia sub-space (weight 0)
+        4. Lyrics semantic sim* — multilingual-e5-large embedding cosine (0.08)
+        5. V-A proximity*       — Gaussian RBF on Circumplex distance (0.16)
+        6. Emotion profile sim  — emotion-vector cosine (weight 0)
+        7. Mood category match  — same-fused_emotion bonus (weight 0)
+        8. Audio similarity*    — MuQ backbone cosine (0.76)
         """
         if isinstance(song_id_or_name, int):
             song_idx = song_id_or_name
@@ -1015,10 +1019,16 @@ class MusicRecommender:
             tonal_sim = 0.0
 
         # === Signal 4: Lyrics semantic similarity (Hu & Downie 2010) ===
-        # All songs guaranteed to have lyrics (data contract); embeddings always loaded.
-        query_lyrics = self.embeddings_normalized[song_idx]
-        lyrics_sim = self.embeddings_normalized @ query_lyrics
-        lyrics_sim = (lyrics_sim + 1) / 2
+        # Guarded like signals 1-3: skip when the lyrics weight is 0, AND degrade
+        # gracefully when lyrics embeddings were disabled at init (shape mismatch /
+        # missing file → embeddings_normalized is None; __init__ logs "audio + color
+        # only"). Without this guard the None case crashed every recommend_by_song call.
+        if w[3] and self.embeddings_normalized is not None:
+            query_lyrics = self.embeddings_normalized[song_idx]
+            lyrics_sim = self.embeddings_normalized @ query_lyrics
+            lyrics_sim = (lyrics_sim + 1) / 2
+        else:
+            lyrics_sim = 0.0
 
         # === Signal 5: V-A proximity (Russell 1980 Circumplex) ===
         # Heteroscedastic Gaussian RBF: per-axis σ reflecting reliability of each dim.

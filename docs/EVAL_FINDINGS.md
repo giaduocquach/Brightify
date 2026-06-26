@@ -122,7 +122,7 @@ Cột "Xử lý": ✅ đã sửa · 🔧 cần đo lại/công sức · 📋 cô
 | 1 | 🔴 | Similar-song thua popularity trên editorial GT (0.066 < 0.091) | 📋 đổi yardstick → musical GT; công bố Dacrema |
 | 2 | 🟠 | Số headline cũ "0.0739>0.0708" không tái lập (nhưng đo lại công bằng: MuQ ≥ MERT, thắng GPT transfer SIG → hướng đúng) | ✅ sửa comment config về số đo lại |
 | 3 | 🔴 | TE color tự-quy-chiếu (GT V-A là input engine, match cùng quantile-space) | 📋 hạ TE xuống phụ; headline = Whiteford-BPM + ICEAS r=0.97 + `color_llm_gt` (ít vòng tròn) |
-| 4 | 🔴 | TE tăng 0.0225→0.0268 khi bật V38 (bản đúng hơn) | 📋 công bố: giới hạn cung (đuôi high-arousal ~22% catalog) |
+| 4 | 🔴 | TE tăng 0.0213→0.0242 khi bật V38 (bản đúng hơn; số canonical đo lại live trên config V38 = 0.0242 CI[0.0219,0.0263]) | 📋 công bố: giới hạn cung (đuôi high-arousal ~22% catalog) |
 | 5 | 🟢 | Similar-song GT chỉ 1 judge (lo single-judge artifact) | ✅ ĐÃ XỬ LÝ: re-chấm bằng gpt-4o-mini, qwen3↔gpt **κ=0.958** (§1.4) → GT robust. Còn lại: tăng n seed (power) là future work |
 | 6 | 🟠 | Không có human listening study (offline↔online r≈0.28) | 📋 future work; tùy chọn pilot XAB n=5–10 |
 | 7 | 🟠 | Việt Nam ∉ ICEAS (30 nước); n=12 màu → CI rộng | 📋 threats-to-validity (chuẩn mực) |

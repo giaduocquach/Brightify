@@ -3,6 +3,14 @@
 > **Base URL**: `http://localhost:8000`  
 > **Auto-generated docs**: `/docs` (Swagger UI) | `/redoc` (ReDoc)
 
+> ⚠️ **Partially outdated — `/docs` (Swagger) is the source of truth.** Several routes
+> documented below were removed in the dead-code cleanup (e.g. `/api/recommend/lyrics`,
+> `/api/recommend/image`, `/api/recommend/emotion-journey`, `/api/recommend/context-mix`,
+> `/api/recommend/musical-dna`, `/api/songs/by-mood/{mood}`, `/api/songs/time-of-day`,
+> `/api/image/*`, `/api/auth/*`, `/api/backtest/run`). The live surface is ~22 routes across
+> `api/music.py`, `api/recommend.py`, `api/system.py`. For architecture see `README.md` and
+> `.claude/rules/ai-ml.md`.
+
 ---
 
 ## 1. Music Browse & Discovery

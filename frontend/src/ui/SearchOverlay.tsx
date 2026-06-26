@@ -52,7 +52,9 @@ export default function SearchOverlay() {
       listRef.current?.children[prev]?.scrollIntoView({ block: 'nearest' });
     } else if (e.key === 'Enter') {
       const song = searchResults[active];
-      if (song) { playSong(song, searchResults); closeSearch(); }
+      // Only play when the track actually has audio — mirrors SongRow/list gating so
+      // Enter on a no-audio result doesn't kick off a stream that 404s.
+      if (song?.has_audio) { playSong(song, searchResults); closeSearch(); }
     } else if (e.key === 'Escape') {
       closeSearch();
     }
@@ -119,14 +121,18 @@ export default function SearchOverlay() {
           role="listbox"
           aria-label="Kết quả tìm kiếm"
         >
-          {searchResults.map((song, i) => (
+          {searchResults.map((song, i) => {
+            const noAudio = !song.has_audio;
+            return (
             <li
               key={song.track_id}
               id={`search-opt-${i}`}
-              className={`search-result-item${i === active ? ' is-active' : ''}`}
+              className={`search-result-item${i === active ? ' is-active' : ''}${noAudio ? ' is-disabled' : ''}`}
               role="option"
               aria-selected={i === active}
-              onClick={() => { playSong(song, searchResults); closeSearch(); }}
+              aria-disabled={noAudio || undefined}
+              title={noAudio ? 'Chưa có audio' : undefined}
+              onClick={() => { if (!noAudio) { playSong(song, searchResults); closeSearch(); } }}
               onMouseEnter={() => setActive(i)}
             >
               {song.album_art_url && (
@@ -148,7 +154,8 @@ export default function SearchOverlay() {
                 {BADGE_LABEL[song.match_type] ?? song.match_type}
               </span>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         {/* Footer */}

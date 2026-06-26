@@ -754,6 +754,9 @@ body[data-listening="1"] .mode-badge {
 }
 .search-result-item:hover,
 .search-result-item.is-active { background: var(--overlay-hover); }
+/* No audio file for this track → not playable (mirrors SongRow's disabled state). */
+.search-result-item.is-disabled { opacity: 0.45; cursor: not-allowed; }
+.search-result-item.is-disabled:hover { background: transparent; }
 
 .search-result-art {
   width: 40px;
