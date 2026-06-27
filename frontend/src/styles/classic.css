@@ -89,26 +89,43 @@
   transition: background var(--dur-fast), color var(--dur-fast);
 }
 .classic-nav button:hover { background: var(--overlay-hover); color: var(--text); }
+.classic-nav button.is-active { background: color-mix(in srgb, var(--accent-2) 16%, transparent); color: var(--text); }
 .classic-nav button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
 
-/* ── Mood picker (12 swatch cards — salvaged from the legacy color-emotion grid) ── */
-.mood-picker { border-top: 1px solid var(--border-soft); padding-top: 16px; }
-.mood-picker-head h3 { font-family: var(--font-display); font-size: var(--fs-md); margin-bottom: 4px; }
-.mood-picker-hint { font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: 12px; line-height: 1.4; }
-.mood-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* ── Mood picker ──────────────────────────────────────────────────────────────
+   Two layouts share the swatch styling: `hero` (the home's headline control) and
+   `strip` (a slim re-pick row above colour results). */
+.mood-picker-hint { font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: 18px; line-height: 1.45; }
+
+.mood-picker--hero .mood-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.mood-picker--strip .mood-grid {
+  display: grid; grid-auto-flow: column; grid-auto-columns: max-content;
+  gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 18px;
+  scrollbar-width: thin;
+}
+
 .mood-swatch {
-  display: flex; flex-direction: column; gap: 7px;
-  padding: 9px; border-radius: var(--r-md);
+  display: flex; align-items: center; gap: 11px;
+  padding: 12px; border-radius: var(--r-md);
   background: var(--overlay-hover); border: 1px solid transparent; text-align: left;
   transition: border-color var(--dur-fast), background var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
 }
 .mood-swatch:hover { background: var(--overlay-active); transform: translateY(-2px); }
-.mood-swatch.is-on { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); }
+.mood-swatch.is-on { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 16%, transparent); }
 .mood-swatch:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-.mood-chip { height: 26px; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
-.mood-label { display: flex; flex-direction: column; min-width: 0; }
-.mood-name { font-size: var(--fs-sm); font-weight: 600; }
-.mood-emotion { font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mood-chip {
+  flex-shrink: 0; width: 42px; height: 42px; border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+}
+.mood-name { font-size: var(--fs-md); font-weight: 600; min-width: 0; }
+
+/* Strip variant: compact pills, label hidden emotion line, smaller chip. */
+.mood-picker--strip .mood-swatch { padding: 8px 12px 8px 8px; }
+.mood-picker--strip .mood-chip { width: 24px; height: 24px; }
+.mood-picker--strip .mood-name { font-size: var(--fs-sm); white-space: nowrap; }
 
 /* ── Main content ──────────────────────────────────────────────────────────── */
 .classic-main {
@@ -143,12 +160,41 @@
   width: min(720px, calc(100% - 32px)); max-height: 60vh; z-index: 55;
 }
 
-/* ── Browse library ────────────────────────────────────────────────────────── */
-.browse { display: flex; flex-direction: column; gap: 30px; }
-.browse-section { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 12px; }
-.browse-h { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; }
+/* ── Home (the two ways to listen) ─────────────────────────────────────────── */
+.home { display: flex; flex-direction: column; gap: 34px; max-width: 1000px; }
+.home-intro h1 { font-family: var(--font-display); font-size: clamp(1.6rem, 2.4vw, 2.1rem); font-weight: 700; line-height: 1.15; }
+.home-intro p { margin-top: 8px; color: var(--text-dim); font-size: var(--fs-md); line-height: 1.5; max-width: 64ch; }
+.home-feature { display: flex; flex-direction: column; gap: 14px; }
+.home-feature-head { display: flex; align-items: center; gap: 10px; color: var(--accent-2); }
+.home-feature-head h2 { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; color: var(--text); }
+.home-similar { padding: 18px; border-radius: var(--r-lg); background: var(--overlay-hover); border: 1px solid var(--panel-border); }
+.home-similar-text { color: var(--text-dim); font-size: var(--fs-sm); line-height: 1.5; max-width: 64ch; }
+.home-similar-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; margin-top: 4px;
+  padding: 10px 18px; border-radius: var(--r-pill);
+  background: var(--accent-2); color: #0b0b16; font-weight: 700; font-size: var(--fs-sm);
+  transition: filter var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.home-similar-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.home-similar-btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+/* ── Library (the real catalogue) ──────────────────────────────────────────── */
+.library { display: flex; flex-direction: column; gap: 16px; }
+.browse-h { font-family: var(--font-display); font-size: var(--fs-2xl); font-weight: 700; }
 .browse-empty { color: var(--text-dim); font-size: var(--fs-sm); padding: 8px 2px; }
-.browse-all-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.library-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.library-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.library-search {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px; border-radius: var(--r-pill);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border); color: var(--text-dim);
+  transition: border-color var(--dur-fast);
+}
+.library-search:focus-within { border-color: var(--accent-2); color: var(--text); }
+.library-search input {
+  width: 220px; max-width: 48vw; background: none; border: none; color: var(--text);
+  font-family: var(--font-body); font-size: var(--fs-sm); outline: none;
+}
 .browse-sort {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: var(--fs-sm); color: var(--text-dim);
@@ -171,29 +217,19 @@
 .browse-pager button:hover:not(:disabled) { background: var(--overlay-active); }
 .browse-pager button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Horizontal card strips (featured / new releases) */
-.card-strip {
-  display: grid; grid-auto-flow: column; grid-auto-columns: 150px;
-  gap: 14px; overflow-x: auto; padding-bottom: 8px;
-  scrollbar-width: thin;
+/* ── Library row + trailing "Tương tự" action ──────────────────────────────── */
+.result-row-wrap { display: flex; align-items: stretch; gap: 8px; }
+.result-row-wrap .result-row { flex: 1; min-width: 0; }
+.result-similar {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 14px; border-radius: var(--r-md);
+  background: var(--overlay-hover); border: 1px solid var(--panel-border);
+  color: var(--text-dim); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
 }
-.song-card2 {
-  display: flex; flex-direction: column; gap: 8px; text-align: left;
-  padding: 10px; border-radius: var(--r-lg);
-  background: var(--overlay-hover); border: 1px solid transparent;
-  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
-}
-.song-card2:hover:not(:disabled) { background: var(--overlay-active); transform: translateY(-3px); }
-.song-card2:disabled { opacity: 0.4; cursor: not-allowed; }
-.song-card2.is-active { border-color: var(--mood); box-shadow: 0 0 0 1px var(--mood); }
-.song-card2:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-.song-card2-art {
-  aspect-ratio: 1; width: 100%; border-radius: var(--r-md); overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
-}
-.song-card2-art img { width: 100%; height: 100%; object-fit: cover; }
-.song-card2-title { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.song-card2-artist { font-size: var(--fs-xs); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.result-similar:hover:not(:disabled) { background: var(--overlay-active); color: var(--accent-2); border-color: var(--accent-2); }
+.result-similar:disabled { opacity: 0.35; cursor: not-allowed; }
+.result-similar:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 
 /* ── Responsive: collapse to one column; sidebar becomes a top strip ──────────── */
 @media (max-width: 720px) {
@@ -205,7 +241,7 @@
   }
   .classic-nav { flex-direction: row; flex-wrap: wrap; }
   .classic-nav button { width: auto; }
-  .mood-grid { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 140px; overflow-x: auto; padding-bottom: 6px; }
+  .mood-picker--hero .mood-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
   .classic-main { overflow: visible; }
 }
 @media (max-width: 640px) {
@@ -218,6 +254,6 @@
 
 /* Reduced motion: drop the spring/lift transitions (transforms). */
 @media (prefers-reduced-motion: reduce) {
-  .skin-toggle, .mood-swatch, .song-card2, .pane-back { transition: none; }
-  .skin-toggle:hover, .mood-swatch:hover, .song-card2:hover:not(:disabled) { transform: none; }
+  .skin-toggle, .mood-swatch, .pane-back, .home-similar-btn { transition: none; }
+  .skin-toggle:hover, .mood-swatch:hover, .home-similar-btn:hover { transform: none; }
 }

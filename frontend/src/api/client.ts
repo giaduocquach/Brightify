@@ -246,16 +246,6 @@ export const api = {
     };
   },
 
-  async getFeatured(count = 12): Promise<Song[]> {
-    const data = await getJSON<{ songs?: RawSong[] }>(`/api/songs/featured?count=${count}`);
-    return (data.songs || []).map(normalizeSong);
-  },
-
-  async getNewReleases(count = 12): Promise<Song[]> {
-    const data = await getJSON<{ songs?: RawSong[] }>(`/api/songs/new-releases?count=${count}`);
-    return (data.songs || []).map(normalizeSong);
-  },
-
   streamUrl: (trackId: string) => `/api/audio/stream/${trackId}`,
   albumArtUrl: (trackId: string) => `/api/album-art/${trackId}`,
 };
