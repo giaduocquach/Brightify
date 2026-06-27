@@ -91,7 +91,7 @@ Kho nhạc phục vụ gồm \textbf{5.138 bài hát nhạc Việt}, mỗi bài 
 \label{fig:va-dist}
 \end{figure}
 
-\textbf{Lưu trữ đặc trưng.} Các đặc trưng nặng được tính sẵn và lưu ra tệp để pha phục vụ nạp vào bộ nhớ (Bảng~\ref{table:features}). Đặc trưng MuQ được lưu ở \texttt{muq\_embeddings.npy} dưới dạng ma trận $5138 \times 1024$ (số thực 32-bit, đã chuẩn hóa L2) kèm tệp siêu dữ liệu căn theo thứ tự kho nhạc. Lược đồ đầy đủ được trình bày trong Phụ lục~\ref{appendix:schema}.
+\textbf{Lưu trữ đặc trưng.} Các đặc trưng nặng được tính sẵn và lưu ra tệp để pha phục vụ nạp vào bộ nhớ (Bảng~\ref{table:features}). Đặc trưng MuQ được lưu ở \texttt{muq\_embeddings.npy} dưới dạng ma trận $5138 \times 1024$ (số thực 32-bit, đã chuẩn hóa L2) kèm tệp siêu dữ liệu căn theo thứ tự kho nhạc; mô hình thực thể--quan hệ của kho đặc trưng đã được trình bày ở Hình~\ref{fig:erd}.
 
 \begin{longtable}{|p{4.2cm}|p{5.4cm}|p{2.8cm}|}
 \caption{Các tệp đặc trưng tính sẵn được pha phục vụ nạp lên}\label{table:features}\\
@@ -143,7 +143,7 @@ GET & \texttt{/api/audio/stream/\{id\}} & Phát tệp âm thanh (hoặc chuyển
 \hline
 \end{longtable}
 
-Mỗi bài trong kết quả gồm: chỉ số (\texttt{song\_index}), định danh (\texttt{track\_id}), tên bài, nghệ sĩ, mã màu tâm trạng (\texttt{color\_hex}), các giá trị Valence/Arousal/Energy và nhãn góc phần tư cảm xúc (\texttt{mood\_quadrant}). Với gợi ý theo màu, mỗi bài kèm một đối tượng giải thích \texttt{why} gồm: câu giải thích tiếng Việt (\texttt{reason}), tín hiệu mạnh nhất (\texttt{top\_signal}), điểm khớp cảm xúc (\texttt{mood\_match}) và tọa độ V-A của bài (\texttt{song\_va}) so với của màu (\texttt{color\_va}). Với gợi ý bài tương tự, mỗi bài kèm điểm \texttt{similarity\_score} cùng cờ và đường dẫn phát âm thanh. Quan hệ màu$\rightarrow$cảm xúc tổng quát được trả riêng ở khối siêu dữ liệu \texttt{query.bridge} (và \texttt{query.journey} khi chọn hai màu), \textit{không} nằm trong từng \texttt{why}. Một ví dụ đầy đủ về yêu cầu và phản hồi JSON được trình bày trong Phụ lục~\ref{appendix:api}.
+Mỗi bài trong kết quả gồm: chỉ số (\texttt{song\_index}), định danh (\texttt{track\_id}), tên bài, nghệ sĩ, mã màu tâm trạng (\texttt{color\_hex}), các giá trị Valence/Arousal/Energy và nhãn góc phần tư cảm xúc (\texttt{mood\_quadrant}). Với gợi ý theo màu, mỗi bài kèm một đối tượng giải thích \texttt{why} gồm: câu giải thích tiếng Việt (\texttt{reason}), tín hiệu mạnh nhất (\texttt{top\_signal}), điểm khớp cảm xúc (\texttt{mood\_match}) và tọa độ V-A của bài (\texttt{song\_va}) so với của màu (\texttt{color\_va}). Với gợi ý bài tương tự, mỗi bài kèm điểm \texttt{similarity\_score} cùng cờ và đường dẫn phát âm thanh. Quan hệ màu$\rightarrow$cảm xúc tổng quát được trả riêng ở khối siêu dữ liệu \texttt{query.bridge} (và \texttt{query.journey} khi chọn hai màu), \textit{không} nằm trong từng \texttt{why}.
 
 \textbf{Xử lý lỗi ở biên.} Hệ thống xác thực đầu vào và xử lý các trường hợp biên một cách tường minh: mã màu không hợp lệ (không đúng dạng \texttt{\#RRGGBB}) bị từ chối bằng lỗi xác thực đầu vào; bài hát không tồn tại trả về mã 404; bài thiếu lời thì trường lời trả về rỗng (không phải lỗi); bài thiếu một đặc trưng âm thanh thì trường tương ứng trả về rỗng thay vì gây lỗi; định danh sai định dạng khi phát trả về mã 400 và tệp âm thanh không có trả về 404. Các endpoint gợi ý có giới hạn tần suất để tránh quá tải.
 
