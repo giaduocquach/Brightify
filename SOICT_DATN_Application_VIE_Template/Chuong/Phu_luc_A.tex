@@ -55,10 +55,9 @@ Việc sử dụng danh sách trong LaTeX khá đơn giản và không yêu cầ
 \end{itemize}
 Chú ý các nội dung trình bày trong cả hai môi trường liệt kê theo sau lệnh \verb$\item$. Ngoài ra LaTeX còn cung cấp một số kiểu liệt kê khác, sinh viên có thể tham khảo tại \url{https://www.overleaf.com/learn/latex/Lists}
 \section{Cách thêm bảng}
-\begin{table}[h!]
-\centering
-\begin{tabular}{||c c c c||} 
- \hline
+\begin{longtable}{||c c c c||}
+\caption{Table to test captions and labels.}\label{table:1}\\
+\hline
  Col1 & Col2 & Col2 & Col3 \\ [0.5ex] 
  \hline\hline
  1 & 6 & 87837 & 787 \\ 
@@ -67,10 +66,7 @@ Chú ý các nội dung trình bày trong cả hai môi trường liệt kê the
  4 & 545 & 18744 & 7560 \\
  5 & 88 & 788 & 6344 \\ [1ex] 
  \hline
-\end{tabular}
-\caption{Table to test captions and labels.}
-\label{table:1}
-\end{table}
+\end{longtable}
 Bảng \ref{table:1} là ví dụ về cách tạo bảng. Tất cả các bảng biểu phải được đề cập đến trong phần nội dung và phải được phân tích và bình luận.  Chú ý: Tạo bảng trong Latex khá phức tạp và mất thời gian, vì vậy sinh viên có thể sử dụng các công cụ hỗ trợ tạo bảng (Ví dụ: \url{https://www.tablesgenerator.com/}).
 Sinh viên có thể tìm hiểu sâu hơn về cách chèn ảnh trong Latex tại link \url{https://www.overleaf.com/learn/latex/Tables}.
 

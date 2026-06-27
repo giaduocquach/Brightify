@@ -3,25 +3,29 @@
 \section{Kết luận}
 Đồ án đã xây dựng được hệ thống Brightify --- một hệ thống gợi ý nhạc Việt dựa trên cảm xúc với \textbf{hai chức năng chính}: gợi ý bài hát tương tự một bài cho trước, và gợi ý danh sách bài hát theo một (hoặc hai) màu sắc do người dùng chọn. Cả hai chức năng được thống nhất trên một không gian cảm xúc Valence--Arousal, cho phép màu và nhạc gặp nhau trên cùng hệ tọa độ.
 
-Về mặt kỹ thuật, đồ án đã thiết kế một \textbf{kiến trúc hai pha offline/serving}: pha ngoại tuyến gán tọa độ cảm xúc, trích embedding âm thanh MuQ và tính sẵn mọi ma trận biểu diễn cho $5.138$ bài hát; pha phục vụ chỉ thực hiện các phép nhân ma trận nên đáp ứng truy vấn trong vài mili-giây. Hệ thống được \textbf{đánh giá bằng nhiều tầng độ đo ngoại tuyến} có kiểm định thống kê (baseline mạnh, hiệu chỉnh FDR, khoảng tin cậy bootstrap) và các kiểm chứng độc lập (nhịp độ thật, chuẩn ICEAS, chuyển miền PMEmo), kèm một khảo sát so sánh mô hình để bảo đảm mỗi thành phần là lựa chọn tốt nhất theo độ đo cuối. So với các hệ thống gợi ý thương mại dựa trên lọc cộng tác, Brightify không phụ thuộc dữ liệu người dùng và cho phép truy vấn trực tiếp theo cảm xúc và theo màu --- một hướng mà các nền tảng hiện có chưa hỗ trợ. Năm đóng góp nổi bật của đồ án đã được phân tích chi tiết ở Chương~\ref{chapter:SolutionAndContribution}.
+Về mặt kỹ thuật, đồ án đã thiết kế một \textbf{kiến trúc hai pha offline/serving}: pha ngoại tuyến gán tọa độ cảm xúc, trích embedding âm thanh MuQ và tính sẵn mọi ma trận biểu diễn cho $5.138$ bài hát; pha phục vụ chỉ thực hiện các phép nhân ma trận nên đáp ứng truy vấn trong vài mili-giây. Hệ thống được \textbf{đánh giá bằng nhiều tầng độ đo ngoại tuyến} có kiểm định thống kê (phương pháp nền mạnh, hiệu chỉnh FDR, khoảng tin cậy bootstrap) và các kiểm chứng độc lập (nhịp độ thật, chuẩn ICEAS, chuyển miền PMEmo), kèm một khảo sát so sánh mô hình để bảo đảm mỗi thành phần là lựa chọn tốt nhất theo độ đo cuối. So với các hệ thống gợi ý thương mại dựa trên lọc cộng tác, Brightify không phụ thuộc dữ liệu người dùng và cho phép truy vấn trực tiếp theo cảm xúc và theo màu --- một hướng mà các nền tảng hiện có chưa hỗ trợ. Năm đóng góp nổi bật của đồ án đã được phân tích chi tiết ở Chương~\ref{chapter:SolutionAndContribution}.
 
-Để khẳng định mức hoàn thành một cách kiểm chứng được, Bảng~\ref{table:goal-achievement} đối chiếu bốn mục tiêu kiểm chứng đặt ra ở mục~\ref{section:1.2} với mức đạt được và bằng chứng tương ứng. Cả bốn mục tiêu đều đạt, mỗi mục được hậu thuẫn bằng một số liệu cụ thể có thể tái lập ở Chương~\ref{chapter:Experiment}; điều này cho thấy đồ án không chỉ hoàn thành về mặt chức năng mà còn chứng minh được mức hoàn thành bằng các độ đo định lượng.
+Để khẳng định mức hoàn thành một cách kiểm chứng được, Bảng~\ref{table:goal-achievement} đối chiếu bốn mục tiêu kiểm chứng đặt ra ở mục~\ref{section:1.2} với mức đạt được và bằng chứng tương ứng. Cả bốn mục tiêu đều đạt, mỗi mục được hậu thuẫn bằng một số liệu cụ thể có thể tái lập ở Chương~\ref{chapter:Evaluation}; điều này cho thấy đồ án không chỉ hoàn thành về mặt chức năng mà còn chứng minh được mức hoàn thành bằng các độ đo định lượng.
 
-\begin{table}[h!]
-\centering
-\caption{Đối chiếu mục tiêu đề ra (mục~\ref{section:1.2}) với mức đạt được}
-\label{table:goal-achievement}
-\begin{tabular}{p{5.0cm} p{1.8cm} p{5.6cm}}
-\toprule
+\begin{longtable}{|p{5.0cm}|p{1.8cm}|p{5.6cm}|}
+\caption{Đối chiếu mục tiêu đề ra (mục~\ref{section:1.2}) với mức đạt được}\label{table:goal-achievement}\\
+\hline
 \textbf{Mục tiêu} & \textbf{Mức đạt} & \textbf{Bằng chứng (tham chiếu)} \\
-\midrule
+\hline
+\endfirsthead
+\hline
+\textbf{Mục tiêu} & \textbf{Mức đạt} & \textbf{Bằng chứng (tham chiếu)} \\
+\hline
+\endhead
 (i) Gán tọa độ V-A tái lập, có cơ sở khoa học & Đạt & Tái lập $\rho=1.00$; hội tụ GPT độc lập $\rho=0.63$ (mục~\ref{subsection:4.2.1}) \\
-(ii) Ánh xạ màu + truy hồi vượt baseline & Đạt & TE $0.0242$, vượt 4/4 baseline thực, $p_{\text{FDR}}=0.00031$ (mục~\ref{subsection:eval-color}) \\
+\hline
+(ii) Ánh xạ màu + truy hồi vượt phương pháp nền & Đạt & TE $0.0242$, vượt 4/4 phương pháp nền thực, $p_{\text{FDR}}=0.00031$ (mục~\ref{subsection:eval-color}) \\
+\hline
 (iii) Kết quả nhất quán âm thanh & Đạt & MoodCoherence $\approx 0.94$; nhất quán màu $0.02\to0.23$ (mục~\ref{section:eval}) \\
+\hline
 (iv) Thời gian phản hồi đủ thấp để tương tác & Đạt & $3.1$--$4.1$ ms mỗi truy vấn đơn (mục~\ref{subsec:latency}) \\
-\bottomrule
-\end{tabular}
-\end{table}
+\hline
+\end{longtable}
 
 Nhìn lại toàn bộ quá trình, một đặc điểm xuyên suốt đáng để suy ngẫm là đồ án nhất quán \textit{ưu tiên tính kiểm chứng được hơn là độ chính xác tối đa}. Trong bối cảnh nhiều hệ thống hiện nay nghiêng về việc dùng mô hình ngôn ngữ lớn cho hầu hết các khâu, đồ án chọn một hướng có phần ngược lại: mọi tín hiệu đều truy nguồn được tới tài liệu đã công bố, mọi trọng số đều kiểm chứng được bằng phân tích độ nhạy, mọi nhãn đều tái lập được, và không có mô hình nào được suy luận lúc phục vụ. Lựa chọn này đánh đổi một phần độ chính xác tuyệt đối để có được một hệ thống minh bạch, nhẹ và dễ bảo vệ về mặt khoa học --- điều đặc biệt phù hợp với một đồ án tốt nghiệp, nơi việc \textit{hiểu và chứng minh được vì sao hệ thống hoạt động} quan trọng không kém việc nó hoạt động tốt. Đây cũng là tinh thần mà các hạn chế và hướng phát triển dưới đây được nhìn nhận.
 
