@@ -220,9 +220,9 @@ def fig_ewe_weights():
             weights = obj.get("weights", obj)
             break
     if not weights:
-        # Deployed EWE reliability weights (config.py: vn_lex .30 / vn_sent .31 /
-        # emobank .28 / MuQ-valence .12) — 3 lyric signals dominate, audio is auxiliary.
-        weights = {"vn_lex": 0.30, "vn_sent": 0.31, "emobank": 0.28, "muq": 0.12}
+        # Deployed EWE reliability weights (build_labels_repro: vn_lex .35 / vn_sent .22 /
+        # emobank .34 / MuQ-valence .09) — 3 lyric signals dominate, audio is auxiliary.
+        weights = {"vn_lex": 0.35, "vn_sent": 0.218, "emobank": 0.341, "muq": 0.091}
     order = ["vn_lex", "emobank", "vn_sent", "muq"]
     names = {"vn_lex": "Từ điển\nNRC-VAD", "emobank": "XLM-R\nEmoBank",
              "vn_sent": "ViSoBERT\nUIT-VSMEC", "muq": "MuQ\n(âm thanh)"}

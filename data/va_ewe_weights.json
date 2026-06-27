@@ -1,0 +1,9 @@
+{
+ "weights": {
+  "vn_lex": 0.35,
+  "vn_sent": 0.218,
+  "emobank": 0.341,
+  "muq": 0.091
+ },
+ "source": "tools/build_labels_repro.py EWE reliability"
+}
