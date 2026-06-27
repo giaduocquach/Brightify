@@ -306,7 +306,7 @@ Hai sơ đồ tuần tự trong Hình~\ref{fig:seq-uc01} và Hình~\ref{fig:seq-
     \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
   }
   \draw[msg] (0,-0.9) -- node[above]{chọn bài hát} (2.9,-0.9);
-  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{GET /song/\{id\}/similar}} (5.8,-1.6);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{GET /api/song/\{id\}/similar}} (5.8,-1.6);
   \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_song()}} (8.4,-2.3);
   % thanh kích hoạt trên lifeline Engine + ghi chú đặt BÊN PHẢI (không che mũi tên)
   \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.3);
@@ -330,7 +330,7 @@ Hai sơ đồ tuần tự trong Hình~\ref{fig:seq-uc01} và Hình~\ref{fig:seq-
     \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
   }
   \draw[msg] (0,-0.9) -- node[above]{chọn 1--2 màu} (2.9,-0.9);
-  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{POST /recommend/color}} (5.8,-1.6);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{POST /api/recommend/color}} (5.8,-1.6);
   \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_colors()}} (8.4,-2.3);
   % thanh kích hoạt + ghi chú đặt BÊN PHẢI lifeline Engine
   \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.7);
