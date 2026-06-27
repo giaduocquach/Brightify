@@ -1,0 +1,354 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Chương~\ref{chapter:Methodology} đã trình bày các nền tảng lý thuyết và công nghệ. Chương này trình bày cách các nền tảng đó được tổ chức thành kiến trúc hệ thống và thiết kế chi tiết cho hai chức năng cốt lõi: gán tọa độ cảm xúc Valence--Arousal cho bài hát, ánh xạ màu sắc sang cùng không gian cảm xúc, và thuật toán truy hồi--chấm điểm--sắp xếp.
+
+\section{Thiết kế kiến trúc}
+\label{section:4.1}
+
+\subsection{Kiến trúc tổng thể}
+\label{subsection:4.1.1}
+Hệ thống được tổ chức theo hai pha tách biệt nhằm đáp ứng yêu cầu phản hồi nhanh: pha ngoại tuyến (offline) và pha phục vụ (serving). Pha ngoại tuyến chịu trách nhiệm trích xuất mọi đặc trưng nặng: embedding âm thanh từ mô hình MuQ, các tín hiệu Valence từ lời, nhịp độ và độ to, rồi tính sẵn tọa độ cảm xúc và các ma trận biểu diễn cho toàn bộ kho nhạc. Pha phục vụ chỉ thực hiện các phép nhân ma trận và xếp hạng trên các đặc trưng đã tính sẵn, nên truy vấn của người dùng được trả về nhanh. Kiến trúc gồm ba tầng theo thứ tự phụ thuộc một chiều (Hình~\ref{fig:arch}): tầng dữ liệu và đặc trưng ở dưới cùng, tầng động cơ gợi ý ở giữa, và tầng giao diện ứng dụng trang đơn ở trên cùng. Tầng trên chỉ gọi xuống tầng dưới qua một giao diện lập trình ứng dụng, không có phụ thuộc ngược.
+
+Việc tách hai pha mang lại nhiều lợi ích cụ thể. Về \textit{hiệu năng}, mọi chi phí tính toán đắt (chạy mô hình học sâu để trích embedding, tính tín hiệu cảm xúc) chỉ phải trả một lần ở pha ngoại tuyến; pha phục vụ chỉ còn các phép đại số tuyến tính nên đáp ứng truy vấn trong vài mili-giây (mục~\ref{subsec:latency}). Về \textit{tính tất định}, vì nhãn cảm xúc đã được đóng băng thành bảng tra cứu và không có mô hình nào được suy luận lúc phục vụ, cùng một truy vấn luôn cho cùng kết quả --- đáp ứng yêu cầu NFR04. Về \textit{khả năng triển khai}, máy chủ phục vụ không cần GPU hay bộ nhớ lớn để chạy mô hình, chỉ cần đủ RAM giữ các ma trận đặc trưng, nên có thể triển khai trên hạ tầng khiêm tốn. Về \textit{khả năng bảo trì}, ranh giới rõ ràng giữa ba tầng cho phép thay thế một thành phần (ví dụ đổi mô hình embedding âm thanh) mà không ảnh hưởng tầng giao diện, miễn là định dạng tệp đặc trưng được giữ nguyên.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\small,
+   tier/.style={draw, rounded corners, align=center, minimum width=11cm, minimum height=1.3cm},
+   arr/.style={-{Stealth[length=2.5mm]}, very thick},
+   lbl/.style={font=\scriptsize\itshape, gray}]
+  \node[tier, fill=green!7] (ui) at (0,4.0) {\textbf{Tầng giao diện (SPA React)}\\\footnotesize 2 giao diện: ``đắm chìm'' 3D \& ``classic'' 2D --- dùng chung logic};
+  \node[tier, fill=blue!7] (eng) at (0,2.0) {\textbf{Tầng động cơ gợi ý (FastAPI + NumPy)}\\\footnotesize gợi ý theo màu, gợi ý bài tương tự, tra cứu cảm xúc};
+  \node[tier, fill=black!5] (data) at (0,0.0) {\textbf{Tầng dữ liệu \& đặc trưng (tệp .npy / .json)}\\\footnotesize embedding MuQ, embedding lời, tọa độ V-A, nhịp độ, chỉ mục cover};
+  \draw[arr] (ui) -- node[lbl, right] {gọi API (REST/JSON)} (eng);
+  \draw[arr] (eng) -- node[lbl, right] {nạp \& tra cứu} (data);
+  \node[lbl, right=0.1cm of ui.east, text width=2.2cm] {pha phục vụ};
+  \node[lbl, right=0.1cm of data.east, text width=2.2cm] {pha ngoại tuyến chuẩn bị};
+\end{tikzpicture}
+\caption{Kiến trúc ba tầng của Brightify với phụ thuộc một chiều từ trên xuống}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Pha ngoại tuyến và luồng dữ liệu}
+\label{subsection:4.1.2}
+Pha ngoại tuyến là một chuỗi xử lý biến kho nhạc thô thành bộ đặc trưng phục vụ. Hình~\ref{fig:offline} mô tả luồng dữ liệu: từ tệp âm thanh và lời, hệ thống trích song song embedding MuQ, các tín hiệu Valence từ lời, nhịp độ sạch và độ to; các tín hiệu này được tổ hợp thành tọa độ Valence--Arousal; cuối cùng mọi ma trận biểu diễn được đóng gói thành một bản phát hành phục vụ.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\small,
+   io/.style={draw, rounded corners, align=center, fill=black!4, text width=2.0cm, minimum height=0.8cm},
+   proc/.style={draw, align=center, fill=blue!6, text width=2.4cm, minimum height=0.8cm},
+   store/.style={draw, align=center, fill=green!7, text width=2.2cm, minimum height=0.8cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[io] (audio) at (0,1.7) {Tệp âm thanh};
+  \node[io] (lyr) at (0,-1.9) {Lời bài hát};
+  \node[proc] (muq) at (3.4,2.5) {Embedding MuQ};
+  \node[proc] (bpm) at (3.4,0.9) {Nhịp độ + độ to};
+  \node[proc] (vsig) at (3.4,-1.9) {Tín hiệu Valence (4 nguồn)};
+  \node[proc, text width=2.4cm] (va) at (7.0,0.1) {Tổ hợp V-A (EWE + Arousal)};
+  \node[store] (feat) at (10.4,0.1) {Bản phát hành đặc trưng};
+  \draw[arr] (audio.east) -- (muq.west);
+  \draw[arr] (audio.east) -- (bpm.west);
+  \draw[arr] (lyr.east) -- (vsig.west);
+  \draw[arr] (muq.east) -- (va.west);
+  \draw[arr] (bpm.east) -- (va.west);
+  \draw[arr] (vsig.east) -- (va.west);
+  \draw[arr] (va.east) -- (feat.west);
+  % MuQ cũng được lưu trực tiếp vào bản phát hành (đường vòng phía trên, không cắt hộp khác)
+  \draw[arr] (muq.north) -- ++(0,0.5) -| node[above, pos=0.25, font=\scriptsize] {lưu trực tiếp} (feat.north);
+\end{tikzpicture}
+\caption{Luồng dữ liệu pha ngoại tuyến: trích đặc trưng song song, tổ hợp tọa độ cảm xúc, đóng gói bản phát hành phục vụ}
+\label{fig:offline}
+\end{figure}
+
+\subsection{Pha phục vụ và triển khai}
+\label{subsection:4.1.3}
+Ở pha phục vụ, động cơ gợi ý nạp toàn bộ đặc trưng vào bộ nhớ một lần lúc khởi động, sau đó mỗi truy vấn chỉ là các phép nhân ma trận. Hình~\ref{fig:deploy} mô tả sơ đồ triển khai: trình duyệt chạy ứng dụng trang đơn, gọi máy chủ FastAPI qua REST; máy chủ giữ các ma trận đặc trưng trong bộ nhớ; tệp âm thanh được phục vụ tĩnh (hoặc chuyển hướng qua mạng phân phối nội dung). Bản phát hành đặc trưng do một máy trạm chạy pha ngoại tuyến sinh ra và nạp lên máy chủ.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\small,
+   node/.style={draw, rounded corners, align=center},
+   db/.style={draw, cylinder, shape border rotate=90, aspect=0.25, align=center, fill=black!4, minimum height=1.1cm, minimum width=1.8cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[node, fill=green!7, text width=2.6cm, minimum height=1.0cm] (br) at (0,0) {\textbf{Trình duyệt}\\\footnotesize SPA React};
+  \node[node, fill=blue!7, text width=3.0cm, minimum height=1.0cm] (api) at (5.0,0) {\textbf{Máy chủ FastAPI}\\\footnotesize ma trận đặc trưng trong RAM};
+  \node[db] (feat) at (9.4,0) {Tệp đặc trưng\\.npy/.json};
+  \node[node, text width=2.4cm, minimum height=0.9cm] (work) at (9.4,-2.2) {Máy trạm\\(pha ngoại tuyến)};
+  \draw[arr] (br) -- node[above, font=\scriptsize] {REST/JSON} (api);
+  \draw[arr] (api) -- node[above, font=\scriptsize] {nạp} (feat);
+  \draw[arr] (work) -- node[right, font=\scriptsize] {sinh \& triển khai} (feat);
+  \draw[arr, dashed] (api.south) to[out=-90,in=-90,looseness=1.1] node[below, font=\scriptsize, pos=0.5] {âm thanh tĩnh / CDN} (br.south);
+\end{tikzpicture}
+\caption{Sơ đồ triển khai: trình duyệt $\leftrightarrow$ máy chủ FastAPI (giữ đặc trưng trong RAM); bản phát hành đặc trưng do máy trạm ngoại tuyến sinh ra}
+\label{fig:deploy}
+\end{figure}
+
+Về tổ chức mã nguồn, hệ thống được chia thành các gói theo trách nhiệm (Hình~\ref{fig:component}): gói \texttt{core} chứa động cơ gợi ý và ánh xạ màu; gói con \texttt{core.ranking} chứa các bước truy hồi, nhất quán, đa dạng và hành trình; gói \texttt{api} cung cấp các endpoint; gói \texttt{frontend} là ứng dụng trang đơn; gói \texttt{data} lưu các tệp đặc trưng; và gói \texttt{tools} chứa các script ngoại tuyến và đánh giá.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\small,
+   pkg/.style={draw, rounded corners, align=center, fill=black!3, minimum width=2.4cm, minimum height=0.85cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[pkg, fill=green!7] (fe) at (0,2.4) {\texttt{frontend} (SPA)};
+  \node[pkg, fill=blue!7] (api) at (0,1.0) {\texttt{api} (FastAPI)};
+  \node[pkg, fill=blue!10, minimum width=3.0cm] (core) at (-2.0,-0.6) {\texttt{core} (engine)};
+  \node[pkg, minimum width=3.0cm] (rank) at (-2.0,-2.0) {\texttt{core.ranking}};
+  \node[pkg] (data) at (2.6,-0.6) {\texttt{data}};
+  \node[pkg] (tools) at (2.6,-2.0) {\texttt{tools}};
+  \draw[arr] (fe) -- (api);
+  \draw[arr] (api) -- (core);
+  \draw[arr] (core) -- (rank);
+  \draw[arr] (core) -- (data);
+  \draw[arr] (tools) -- (data);
+\end{tikzpicture}
+\caption{Sơ đồ gói: phụ thuộc một chiều giữa các thành phần mã nguồn}
+\label{fig:component}
+\end{figure}
+
+\subsection{Thiết kế lớp động cơ gợi ý}
+\label{subsection:4.1.5}
+Trung tâm của tầng động cơ là lớp \texttt{MusicRecommender}, giữ trạng thái kho nhạc và các ma trận đặc trưng, đồng thời cung cấp hai phương thức gợi ý chính. Lớp này ủy thác các bước hậu xử lý cho các hàm trong gói \texttt{core.ranking} (Hình~\ref{fig:class}). Cách tách này giữ cho \texttt{MusicRecommender} chỉ điều phối, còn từng bước (truy hồi, nhất quán, đa dạng, hành trình) là các hàm thuần có thể kiểm thử độc lập.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize,
+   class/.style={draw, rectangle split, rectangle split parts=2, align=left, fill=blue!5, text width=6.0cm},
+   helper/.style={draw, rounded corners, align=left, fill=black!4, text width=4.6cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[class] (mr) at (0,0) {
+    \textbf{MusicRecommender}
+    \nodepart{two}
+    + df, song\_va, muq\_emb, lyrics\_emb\\
+    + color\_mapper\\
+    + recommend\_by\_colors(hex, top\_k)\\
+    + recommend\_by\_song(idx, top\_k)\\
+    + \_precompute\_all\_features()};
+  \node[helper, text width=6.2cm] (rk) at (0,-3.6) {
+    \textbf{core.ranking}\\
+    retrieval $\cdot$ coherence $\cdot$ diversity\\
+    journey $\cdot$ artist (MMR, RRF, waypoint)};
+  \node[helper, text width=3.4cm] (cm) at (7.4,0) {
+    \textbf{AdvancedColorMapper}\\
+    hsl\_to\_va() $\cdot$ hex\_to\_hsl()};
+  \draw[arr] (mr.south) -- node[right, font=\scriptsize] {ủy thác} (rk.north);
+  \draw[arr] (mr.east) -- node[above, font=\scriptsize] {dùng} (cm.west);
+\end{tikzpicture}
+\caption{Sơ đồ lớp rút gọn: \texttt{MusicRecommender} điều phối và ủy thác hậu xử lý cho \texttt{core.ranking}}
+\label{fig:class}
+\end{figure}
+
+\subsection{Mô hình dữ liệu kho đặc trưng}
+\label{subsection:4.1.6}
+Dữ liệu phục vụ được tổ chức quanh thực thể trung tâm là \textit{Bài hát}, mỗi bài liên kết với các đặc trưng đã tính sẵn (Hình~\ref{fig:erd}). Quan hệ cover là quan hệ nhiều--nhiều giữa các bài (1124 bài gom thành 979 cặp). Các đặc trưng nặng (embedding âm thanh, embedding lời) được lưu thành ma trận căn theo thứ tự bài, còn tọa độ cảm xúc và nhịp độ lưu theo khóa định danh bài.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize,
+   ent/.style={draw, rounded corners, align=center, fill=blue!5, minimum width=2.4cm, minimum height=0.8cm},
+   attr/.style={draw, align=center, fill=black!3, text width=2.4cm, minimum height=0.7cm},
+   rel/.style={-{Stealth[length=2mm]}, thick}]
+  \node[ent] (song) at (0,0) {\textbf{Bài hát}\\\footnotesize track\_id (PK)};
+  \node[attr] (muq) at (-4.2,1.4) {Embedding MuQ\\$1024$ chiều};
+  \node[attr] (lyr) at (-4.2,-1.4) {Embedding lời\\$1024$ chiều};
+  \node[attr] (va) at (4.2,1.4) {Tọa độ V-A\\(valence, arousal)};
+  \node[attr] (bpm) at (4.2,-1.4) {Nhịp độ (BPM)\\+ độ to};
+  \node[attr] (cov) at (0,-2.2) {Cặp cover\\(track\_a, track\_b)};
+  \draw[rel] (song) -- node[above, font=\scriptsize] {1--1} (muq);
+  \draw[rel] (song) -- node[below, font=\scriptsize] {1--1} (lyr);
+  \draw[rel] (song) -- node[above, font=\scriptsize] {1--1} (va);
+  \draw[rel] (song) -- node[below, font=\scriptsize] {1--1} (bpm);
+  \draw[rel] (song) -- node[right, font=\scriptsize] {$n$--$n$} (cov);
+\end{tikzpicture}
+\caption{Lược đồ thực thể--quan hệ rút gọn của kho đặc trưng phục vụ}
+\label{fig:erd}
+\end{figure}
+
+\section{Thiết kế chi tiết hai chức năng cốt lõi}
+\label{section:4.2}
+
+\subsection{Gán tọa độ cảm xúc cho bài hát}
+\label{subsection:4.2.1}
+Mỗi bài hát được gán một cặp Valence và Arousal, dùng chung cho cả hai chức năng. Valence được tính bằng tổ hợp EWE (Evaluator Weighted Estimator) \cite{grimm2005ewe} của bốn tín hiệu, trong đó trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu (Bảng~\ref{table:ewe}). Bộ trọng số được ước lượng \textit{một lần} ở pha ngoại tuyến bằng bình phương tối thiểu không âm (Non-Negative Least Squares, NNLS) khớp với một bộ tham chiếu V-A độc lập, rồi \textit{đóng băng}; nhờ vậy đường phục vụ hoàn toàn không gọi mô hình ngôn ngữ lớn. Có thể thấy ba tín hiệu lời chiếm phần lớn trọng số, còn tín hiệu âm thanh chỉ đóng vai trò bổ trợ, phản ánh đúng việc Valence nằm chủ yếu ở nội dung lời. Hình~\ref{fig:ewe-weights} trực quan hóa các trọng số này.
+
+\begin{longtable}{|p{2.9cm}|p{4.5cm}|p{5.2cm}|}
+\caption{Các tín hiệu Valence và vai trò trong tổ hợp EWE (trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu)}\label{table:ewe}\\
+\hline
+\textbf{Tín hiệu Valence} & \textbf{Vai trò trong tổ hợp EWE} & \textbf{Nguồn} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Tín hiệu Valence} & \textbf{Vai trò trong tổ hợp EWE} & \textbf{Nguồn} \\
+\hline
+\endhead
+vn\_lex (từ điển) & Lời --- trọng số lớn & NRC-VAD-VN \cite{mohammad2018nrcvad} + VnEmoLex \cite{doan2022vnemolex} \\
+\hline
+emobank & Lời (liên ngữ) --- trọng số lớn & XLM-R \cite{conneau2020xlmr} + EmoBank \cite{buechel2017emobank} \\
+\hline
+vn\_sent & Lời (ngữ cảnh VN) --- trọng số vừa & ViSoBERT \cite{nguyen2023visobert} + UIT-VSMEC \cite{ho2020vsmec} \\
+\hline
+muq (âm thanh) & Bổ trợ --- trọng số nhỏ nhất & MuQ \cite{zhu2025muq} \\
+\hline
+\end{longtable}
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=0.62\textwidth]{Hinhve/fig_ewe_weights.png}
+\caption{Trọng số tổ hợp Valence theo độ tin cậy (EWE): ba tín hiệu lời chiếm phần lớn, tín hiệu âm thanh bổ trợ}
+\label{fig:ewe-weights}
+\end{figure}
+
+Arousal được tính từ một tổ hợp ba đặc trưng âm thanh: đặc trưng MuQ chiếm 0.574, nhịp độ (số nhịp trên phút) chiếm 0.35 và độ to chiếm 0.076. Phần trọng số giữa MuQ và độ to được hồi quy trên tập DEAM do con người gán nhãn \cite{aljanaki2017deam}, còn trọng số nhịp độ được \textit{nâng có chủ đích} (tinh chỉnh trên DEAM) vì biểu diễn MuQ nắm bắt độ to tốt nhưng nắm bắt nhịp độ yếu. Khi kiểm chứng chéo trên DEAM, tổ hợp này đạt hệ số tương quan 0.69, cao hơn mức 0.647 của biểu diễn MERT trước đó, và tương quan giữa Arousal với nhịp độ đo được đạt 0.47. Thuật toán~\ref{alg:valabel} tóm tắt toàn bộ quy trình gán nhãn.
+
+\begin{algorithm}[H]
+\caption{Gán tọa độ cảm xúc Valence--Arousal cho mỗi bài hát}
+\label{alg:valabel}
+\KwIn{Lời $\ell$, embedding MuQ $\mathbf{m}$, nhịp độ $t$, độ to $\rho$ của bài hát}
+\KwOut{Cặp $(v, a)$ trong $[0,1]^2$}
+$v_{\text{lex}} \leftarrow$ điểm từ điển NRC-VAD-VN/VnEmoLex trên $\ell$\;
+$v_{\text{sent}} \leftarrow$ đầu dò ViSoBERT($\ell$);\quad $v_{\text{emo}} \leftarrow$ đầu dò XLM-R($\ell$);\quad $v_{\text{muq}} \leftarrow$ đầu dò MuQ($\mathbf{m}$)\;
+$v \leftarrow \text{EWE}(v_{\text{lex}}, v_{\text{sent}}, v_{\text{emo}}, v_{\text{muq}})$ \tcp*{trọng số = độ tin cậy, Pt.~\eqref{eq:ewe}}
+$a_{\text{muq}} \leftarrow$ đầu dò Arousal MuQ($\mathbf{m}$)\;
+$a \leftarrow \text{chuẩn-hóa-hạng}\big(0.574\,\text{rank}(a_{\text{muq}}) + 0.35\,\text{rank}(t) + 0.076\,\text{rank}(\rho)\big)$ \tcp*{MuQ/độ-to fit DEAM; nhịp độ chỉnh tay}
+\Return chuẩn hóa $(v, a)$ về $[0,1]^2$\;
+\end{algorithm}
+
+Bộ nhãn V-A này được kiểm hai tính chất. \textit{Tái lập}: chạy lại toàn bộ quy trình từ các tín hiệu nền bằng \texttt{tools/build\_labels\_repro.py} cho ra đúng bộ nhãn đang phục vụ (tương quan Spearman $\rho = 1.00$ trên cả Valence và Arousal). \textit{Hội tụ độc lập}: đối chiếu với một bộ tham chiếu V-A sinh riêng bằng mô hình GPT-4o-mini chỉ đọc lời bài hát (độ tin cậy test--retest ICC $= 0.99$), bộ nhãn đạt tương quan $\rho = 0.63$ cho Valence và $\rho = 0.41$ cho Arousal trên toàn bộ 5.138 bài --- mức đồng thuận có ý nghĩa với một bộ đánh giá hoàn toàn độc lập, trong đó Arousal thấp hơn là hợp lý vì nó được suy từ âm thanh còn GPT chỉ đọc lời.
+
+\subsection{Ánh xạ màu sắc sang tọa độ cảm xúc}
+\label{subsection:4.2.2}
+Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này. Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền. Hình~\ref{fig:color-flow} tóm tắt luồng ánh xạ này.
+\begin{equation}\label{eq:whiteford}
+    A = 0.373 \cdot \text{redness} + 0.356 \cdot \text{saturation} + 0.271 \cdot \text{lightness} - 0.10
+\end{equation}
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\small,
+   blk/.style={draw, rounded corners, align=center, minimum height=0.8cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[blk, fill=black!4, text width=1.8cm] (hex) at (0,0) {Mã màu \texttt{\#RRGGBB}};
+  \node[blk, fill=blue!6, text width=1.8cm] (oklab) at (2.8,0) {Oklab $(L,a,b)$};
+  \node[blk, fill=blue!8, text width=2.6cm] (val) at (6.2,0.9) {Valence: ridge $\rightarrow$ ICEAS};
+  \node[blk, fill=blue!8, text width=2.6cm] (aro) at (6.2,-0.9) {Arousal: Whiteford (Pt.~\ref{eq:whiteford})};
+  \node[blk, fill=green!7, text width=1.8cm] (va) at (9.6,0) {Điểm V-A};
+  \draw[arr] (hex)--(oklab);
+  \draw[arr] (oklab) |- (val);
+  \draw[arr] (oklab) |- (aro);
+  \draw[arr] (val) -| (va);
+  \draw[arr] (aro) -| (va);
+\end{tikzpicture}
+\caption{Luồng ánh xạ màu sắc sang tọa độ Valence--Arousal}
+\label{fig:color-flow}
+\end{figure}
+
+Tính đúng đắn của công thức Arousal được kiểm chứng độc lập bằng nhịp độ thật của các bài được truy hồi: tương quan giữa độ sáng của màu với nhịp độ đạt 0.41 và giữa độ bão hòa với nhịp độ đạt 0.66, đúng theo hướng màu sáng và bão hòa hơn ứng với nhạc nhanh hơn.
+
+\subsection{Truy hồi, chấm điểm và sắp xếp}
+\label{subsection:4.2.3}
+Với chức năng gợi ý theo màu, hệ thống chấm điểm độ gần cảm xúc bằng một hàm Gaussian RBF dị hướng (Phương trình~\eqref{eq:rbf}) với độ rộng trên trục Valence là $\sigma_V = 0.20$ và trên trục Arousal là $\sigma_A = 0.14$, do phân bố Arousal của kho nhạc nén hơn. Việc so khớp được thực hiện trong không gian phân vị (CDF) của kho nhạc (Phương trình~\eqref{eq:cdf}) để các màu khác nhau thực sự kéo về các vùng cảm xúc khác nhau.
+\begin{equation}\label{eq:rbf}
+    s(\mathbf{q}, \mathbf{p}) = \exp\!\left(-\frac{(q_V - p_V)^2}{2\sigma_V^2} - \frac{(q_A - p_A)^2}{2\sigma_A^2}\right)
+\end{equation}
+\begin{equation}\label{eq:cdf}
+    \mathbf{q} = \big(F_V(c_V),\, F_A(c_A)\big), \qquad
+    F_X(x) = \frac{1}{N}\big|\{\, i : X_i \le x \,\}\big|
+\end{equation}
+trong đó $\mathbf{q}$ là đích phân vị của màu (qua hàm phân phối tích lũy thực nghiệm $F$ của kho nhạc) và $\mathbf{p}$ là phân vị V-A của một bài. Để các bài trong cùng một màu nghe đồng nhất, hệ thống lấy dư một tập ứng viên rồi chọn cụm có độ nhất quán âm thanh cao nhất, đo bằng cosine trên biểu diễn MuQ đã được trừ trung bình để khử dị hướng \cite{ethayarajh2019anisotropy, mu2018allbutthetop}. Trọng số giữa độ khớp cảm xúc và độ nhất quán âm thanh được đặt ở mức 0.55. Việc đa dạng hóa theo nghệ sĩ \textit{không} dùng một bước MMR riêng mà được thực hiện ngay trong quá trình chọn cụm: mỗi khi một bài được chọn, các bài còn lại cùng nghệ sĩ bị phạt giảm điểm. Cuối cùng, danh sách được sắp xếp thành chuỗi chuyển cảm xúc mượt theo nguyên lý đồng cảm \cite{starcke2021iso}. Thuật toán~\ref{alg:color} trình bày toàn bộ quy trình.
+
+\begin{algorithm}[H]
+\caption{Gợi ý danh sách phát theo màu}
+\label{alg:color}
+\KwIn{Một hoặc hai mã màu, số kết quả $k$}
+\KwOut{Danh sách $k$ bài khớp cảm xúc và nhất quán âm thanh}
+Ánh xạ mỗi màu sang điểm V-A (Hình~\ref{fig:color-flow})\;
+\eIf{hai màu}{
+  Sinh chuỗi điểm đích theo nguyên lý đồng cảm giữa hai màu (iso-principle)\;
+}{
+  Quy màu về đích phân vị $\mathbf{q}$ trong không gian CDF (Pt.~\eqref{eq:cdf})\;
+}
+Chấm điểm mọi bài bằng RBF dị hướng (Pt.~\eqref{eq:rbf}); lấy dư tập ứng viên $C$\;
+Chọn tham lam cụm con của $C$ có độ nhất quán âm thanh cao nhất (cosine MuQ đã trừ trung bình, trọng số 0.55), đồng thời phạt giảm điểm các bài trùng nghệ sĩ ngay trong khi chọn để đa dạng hóa\;
+\Return danh sách đã sắp theo trật tự cảm xúc mượt\;
+\end{algorithm}
+
+Với chức năng gợi ý bài tương tự, điểm tương đồng giữa hai bài là tổ hợp tuyến tính của ba thành phần như trong Phương trình~\eqref{eq:fusion}: tương đồng âm thanh trên biểu diễn MuQ chiếm trọng số 0.76, độ gần cảm xúc chiếm 0.16 và tương đồng nội dung lời chiếm 0.08. Các bản cover và trùng được loại bằng một danh sách dựng sẵn; sau đó kết quả được đa dạng hóa bằng MMR \cite{carbonell1998mmr} trên biểu diễn lời (e5-large) (hệ số $\lambda = 0.7$, cân bằng độ liên quan với bài nguồn và độ khác biệt giữa các kết quả). Vì các bài cùng một nghệ sĩ thường nằm sát nhau trong không gian biểu diễn, bước MMR này cũng \textit{gián tiếp} giảm hiện tượng một nghệ sĩ chiếm nhiều vị trí. Ngoài ra hệ thống hỗ trợ một tùy chọn vận hành giới hạn cứng số bài tối đa mỗi nghệ sĩ, nhưng tùy chọn này \textit{mặc định tắt} (Thuật toán~\ref{alg:similar}).
+\begin{equation}\label{eq:fusion}
+    \text{score} = 0.76 \cdot \cos(\text{MuQ}) + 0.16 \cdot \text{sim}(\text{V-A}) + 0.08 \cdot \cos(\text{lyrics})
+\end{equation}
+
+\begin{algorithm}[H]
+\caption{Gợi ý bài hát tương tự}
+\label{alg:similar}
+\KwIn{Chỉ số bài nguồn $s$, số kết quả $k$, tập loại trừ $E$ (chế độ đài)}
+\KwOut{Danh sách $k$ bài tương tự}
+\ForEach{bài $i \neq s$, $i \notin E$}{
+  Tính $\text{score}(s, i)$ theo Pt.~\eqref{eq:fusion}\;
+}
+Loại các bản cover/trùng của $s$ theo chỉ mục cover dựng sẵn\;
+Đa dạng hóa bằng MMR trên biểu diễn lời (e5-large), $\lambda = 0.7$ (Pt.~\eqref{eq:mmr}) --- gián tiếp giảm trùng nghệ sĩ\;
+\textit{(Tùy chọn, mặc định tắt)} giới hạn cứng số bài tối đa mỗi nghệ sĩ\;
+\Return $k$ bài điểm cao nhất\;
+\end{algorithm}
+
+Hai sơ đồ tuần tự trong Hình~\ref{fig:seq-uc01} và Hình~\ref{fig:seq-uc02} mô tả tương tác giữa các thành phần khi thực thi hai chức năng cốt lõi.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize,
+   hd/.style={draw, rounded corners, fill=black!4, align=center, minimum width=2.2cm, minimum height=0.6cm},
+   msg/.style={-{Stealth[length=1.8mm]}, thick}]
+  \def\ya{0} \def\yb{-6.3}
+  \foreach \x/\n in {0/Người nghe, 2.9/SPA, 5.8/API, 8.4/Engine} {
+    \node[hd] (h\n) at (\x,\ya) {\n};
+    \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
+  }
+  \draw[msg] (0,-0.9) -- node[above]{chọn bài hát} (2.9,-0.9);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{GET /song/\{id\}/similar}} (5.8,-1.6);
+  \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_song()}} (8.4,-2.3);
+  % thanh kích hoạt trên lifeline Engine + ghi chú đặt BÊN PHẢI (không che mũi tên)
+  \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.3);
+  \node[draw, rounded corners, fill=blue!6, align=center, text width=3.0cm, font=\scriptsize, anchor=west] at (8.75,-3.3) {xử lý nội bộ: tổ hợp điểm $+$ loại cover $+$ MMR};
+  \draw[msg] (8.4,-4.3) -- node[above]{danh sách top-$k$} (5.8,-4.3);
+  \draw[msg] (5.8,-5.1) -- node[above]{JSON} (2.9,-5.1);
+  \draw[msg] (2.9,-5.9) -- node[above]{hiển thị} (0,-5.9);
+\end{tikzpicture}
+\caption{Sơ đồ tuần tự UC01 --- gợi ý bài tương tự}
+\label{fig:seq-uc01}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize,
+   hd/.style={draw, rounded corners, fill=black!4, align=center, minimum width=2.2cm, minimum height=0.6cm},
+   msg/.style={-{Stealth[length=1.8mm]}, thick}]
+  \def\ya{0} \def\yb{-6.7}
+  \foreach \x/\n in {0/Người nghe, 2.9/SPA, 5.8/API, 8.4/Engine} {
+    \node[hd] (g\n) at (\x,\ya) {\n};
+    \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
+  }
+  \draw[msg] (0,-0.9) -- node[above]{chọn 1--2 màu} (2.9,-0.9);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{POST /recommend/color}} (5.8,-1.6);
+  \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_colors()}} (8.4,-2.3);
+  % thanh kích hoạt + ghi chú đặt BÊN PHẢI lifeline Engine
+  \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.7);
+  \node[draw, rounded corners, fill=blue!6, align=center, text width=3.2cm, font=\scriptsize, anchor=west] at (8.75,-3.5) {xử lý nội bộ: map $\rightarrow$ CDF $\rightarrow$ RBF $\rightarrow$ chọn cụm nhất quán (phạt nghệ sĩ)};
+  \draw[msg] (8.4,-4.7) -- node[above]{danh sách phát + \texttt{why}/\texttt{bridge}} (5.8,-4.7);
+  \draw[msg] (5.8,-5.5) -- node[above]{JSON} (2.9,-5.5);
+  \draw[msg] (2.9,-6.3) -- node[above]{hiển thị} (0,-6.3);
+\end{tikzpicture}
+\caption{Sơ đồ tuần tự UC02 --- gợi ý theo màu}
+\label{fig:seq-uc02}
+\end{figure}
+
+\subsection{Ví dụ minh họa}
+\label{subsection:4.2.4}
+Để làm rõ cách hai chức năng vận hành, mục này trình bày hai ví dụ với số liệu thật từ hệ thống. Xét truy vấn gợi ý theo \textbf{màu lam} (\texttt{\#0067A5}). Hệ thống ánh xạ màu này sang tọa độ cảm xúc $(V, A) = (0.565,\ 0.358)$: Valence trên mức trung bình và Arousal dưới mức trung bình, tức rơi vào góc phần tư ``thư thái / bình yên'' (Q4). Tọa độ này được quy về đích phân vị trong phân bố kho nhạc, rồi hàm RBF dị hướng chấm điểm mọi bài theo độ gần với đích; hệ thống lấy dư một tập ứng viên, chọn cụm có độ nhất quán âm thanh cao nhất trên biểu diễn MuQ đã trừ trung bình, và đa dạng hóa theo nghệ sĩ. Kết quả là một danh sách phát gồm các bài nhẹ nhàng, năng lượng thấp, nghe đồng nhất với nhau. Ngược lại, nếu người dùng chọn \textbf{màu vàng} (\texttt{\#F3C300}) với $(V, A) = (0.767,\ 0.696)$ --- Valence và Arousal đều cao, thuộc góc ``vui vẻ / phấn khích'' (Q1) --- hệ thống trả về các bài sôi động, vui tươi. Sự tương phản rõ rệt giữa hai danh sách phát này chính là biểu hiện trực quan của độ tách biệt giữa các màu mà mục~\ref{subsection:eval-color} đo định lượng.
+
+Với chức năng gợi ý bài tương tự, giả sử bài nguồn là một bản ballad có tọa độ cảm xúc gần $(V, A) = (0.54,\ 0.46)$. Hệ thống tính điểm tổ hợp (Phương trình~\eqref{eq:fusion}) giữa bài nguồn và mọi bài khác: trọng số lớn nhất dành cho tương đồng âm thanh trên MuQ (nên kết quả ``nghe giống'' về hòa âm, nhịp điệu), bổ sung bởi độ gần cảm xúc và tương đồng lời. Trước khi trả về, các bản cover/trùng của bài nguồn bị loại theo chỉ mục dựng sẵn (tránh trả về chính bài nguồn dưới một bản phối khác), và bước đa dạng hóa MMR trên biểu diễn lời (e5-large) giúp danh sách không bị một nghệ sĩ chiếm trọn (vì các bài cùng nghệ sĩ nằm gần nhau trong không gian biểu diễn nên bị MMR trải ra). Nếu người nghe tiếp tục yêu cầu (chế độ ``đài''), tập loại trừ $E$ được nối thêm các bài đã phát để danh sách không lặp lại.
+
+Các thiết kế chi tiết trên là cơ sở cho quá trình xây dựng và triển khai được trình bày ở Chương~\ref{chapter:Implementation}.
+
+\end{document}

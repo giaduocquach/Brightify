@@ -1,0 +1,204 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+Dựa trên thiết kế ở Chương~\ref{chapter:Design}, chương này trình bày quá trình xây dựng và triển khai hệ thống: công cụ và mô hình sử dụng, dữ liệu và kho nhạc cùng data pipeline thu thập--xử lý tự động có checkpoint, giao diện lập trình ứng dụng và giao diện người dùng kèm player có crossfade.
+
+\section{Công cụ và mô hình sử dụng}
+\label{section:4.3}
+Bảng~\ref{table:tools} liệt kê các công cụ và mô hình chính được sử dụng. Toàn bộ mô hình học máy được dùng ở dạng đóng băng; phần huấn luyện duy nhất là các đầu dò tuyến tính (hồi quy ridge) trên các tập dữ liệu công khai. Phần phục vụ được hiện thực bằng FastAPI; giao diện là một ứng dụng trang đơn React. Tầng dữ liệu dùng PostgreSQL~17 kèm pgvector và pg\_trgm (truy cập qua SQLAlchemy 2.0, lược đồ quản lý bằng Alembic) để lưu siêu dữ liệu, hạt giống và dữ liệu phụ cho crossfade, cùng tìm kiếm mờ tiếng Việt. Tuy nhiên cần nói rõ: \textit{đường phục vụ truy vấn là file-based} --- các đặc trưng tính sẵn được nạp từ tệp \texttt{.npy}/\texttt{.json} vào bộ nhớ, nên cơ sở dữ liệu \textit{không} nằm trên đường truy vấn nóng (chỉ nạp một lần lúc khởi động, có cơ chế lùi an toàn nếu thiếu). Toàn hệ thống được đóng gói bằng Docker; pha thu thập dữ liệu ngoại tuyến dùng ytmusicapi, yt-dlp và LRCLIB.
+
+\begin{longtable}{|p{4.2cm}|p{4.0cm}|p{3.2cm}|}
+\caption{Danh sách công cụ và mô hình chính}\label{table:tools}\\
+\hline
+\textbf{Mục đích} & \textbf{Công cụ / mô hình} & \textbf{Nguồn} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Mục đích} & \textbf{Công cụ / mô hình} & \textbf{Nguồn} \\
+\hline
+\endhead
+Ngôn ngữ và xử lý dữ liệu & Python, NumPy, scikit-learn & --- \\
+\hline
+Biểu diễn âm nhạc & MuQ & \cite{zhu2025muq} \\
+\hline
+Cảm xúc lời (ngữ cảnh VN) & ViSoBERT & \cite{nguyen2023visobert} \\
+\hline
+Cảm xúc lời (liên ngữ) & XLM-R & \cite{conneau2020xlmr} \\
+\hline
+Tương đồng lời & multilingual-e5-large & \cite{wang2024e5} \\
+\hline
+Từ điển Valence & NRC-VAD, VnEmoLex & \cite{mohammad2018nrcvad, doan2022vnemolex} \\
+\hline
+Phục vụ (API) & FastAPI (Python) & --- \\
+\hline
+Giao diện & Ứng dụng trang đơn React & --- \\
+\hline
+Tầng dữ liệu \& tìm kiếm & PostgreSQL 17 + pgvector + pg\_trgm & --- \\
+\hline
+ORM \& di trú lược đồ & SQLAlchemy 2.0, Alembic & --- \\
+\hline
+Đóng gói \& triển khai & Docker (compose) & --- \\
+\hline
+Thu thập dữ liệu & ytmusicapi, yt-dlp, LRCLIB & --- \\
+\hline
+\end{longtable}
+
+\section{Dữ liệu và kho nhạc}
+\label{section:data}
+Kho nhạc phục vụ gồm \textbf{5.138 bài hát nhạc Việt}, mỗi bài có tệp âm thanh, siêu dữ liệu (tên bài, nghệ sĩ, album) và lời bài hát. Đây là số bài thực tế mà động cơ gợi ý nạp lên và là cỡ tập đánh giá trong các thực nghiệm ở mục~\ref{section:eval}.
+
+\textbf{Nguồn dữ liệu.} Dữ liệu được thu thập và xử lý tự động qua một \textit{quy trình bảy pha có điểm kiểm tra} (checkpoint) --- thu thập, lọc, tải, lấy lời, trích đặc trưng, xử lý nhãn, nạp kho --- cho phép chạy lại từng pha độc lập và tiếp tục khi gián đoạn mà không làm lại từ đầu, hoàn toàn không sử dụng dữ liệu người dùng (Hình~\ref{fig:collect}): (i) khám phá nghệ sĩ Việt từ siêu dữ liệu Spotify, khởi đầu từ 353 nghệ sĩ hạt giống; (ii) lấy danh sách bài hát, siêu dữ liệu và lời từ YouTube Music; (iii) tải tệp âm thanh bằng \texttt{yt-dlp} theo bốn mức dự phòng (ưu tiên bản nhạc khớp thời lượng) kèm cắt khoảng lặng đầu/cuối; (iv) bổ sung lời bài hát từ dịch vụ LRCLIB. Như vậy Spotify chỉ phục vụ khám phá/định danh nghệ sĩ, còn âm thanh và lời lấy từ YouTube Music và LRCLIB.
+
+\begin{figure}[tbp]
+\centering
+\begin{tikzpicture}[font=\footnotesize,
+   stg/.style={draw, rounded corners, align=center, fill=black!3, text width=2.3cm, minimum height=0.85cm},
+   arr/.style={-{Stealth[length=2mm]}, thick}]
+  \node[stg] (seed) at (0,0) {353 nghệ sĩ hạt giống (Spotify)};
+  \node[stg] (yt) at (3.0,0) {YT Music: bài + lời + siêu dữ liệu};
+  \node[stg] (dl) at (6.0,0) {\texttt{yt-dlp} tải âm thanh (4 mức dự phòng)};
+  \node[stg] (lrc) at (9.0,0) {LRCLIB bổ sung lời};
+  \node[stg, fill=green!7] (out) at (11.7,0) {5.138 bài + chỉ mục cover};
+  \draw[arr] (seed)--(yt); \draw[arr] (yt)--(dl); \draw[arr] (dl)--(lrc); \draw[arr] (lrc)--(out);
+\end{tikzpicture}
+\caption{Quy trình thu thập dữ liệu tự động, không dùng dữ liệu người dùng}
+\label{fig:collect}
+\end{figure}
+
+\textbf{Tiền xử lý âm thanh.} Trước khi trích embedding, mỗi tệp âm thanh được cắt khoảng lặng ở đầu và cuối để tránh nhiễu cho biểu diễn; việc tải ưu tiên bản nhạc có thời lượng khớp với siêu dữ liệu nhằm loại các bản remix hoặc bản kéo dài bất thường. Nhịp độ được trích bằng phương pháp dò phách (downbeat) của thư viện librosa thay vì dùng giá trị nhịp độ thô, vì giá trị thô dễ bị nhân đôi hoặc chia đôi (nhầm 60 BPM thành 120 BPM); nhịp độ ``sạch'' này quan trọng vì nó là một trong ba thành phần của trục Arousal (mục~\ref{subsection:4.2.1}). Các đặc trưng âm thanh từ mô hình Essentia ở tần số lấy mẫu cao bị suy biến nên không được dùng; chỉ giữ lại các đặc trưng tín hiệu số đáng tin như nhịp độ và độ to.
+
+\textbf{Lời bài hát và xử lý bài thiếu lời.} Trên kho hiện tại, \textbf{toàn bộ 5.138/5.138 bài (100\%) đều có lời} (cờ \texttt{has\_lyrics}). Hệ thống vẫn có cơ chế dự phòng cho trường hợp thiếu lời: khi một bài không có lời, tín hiệu Valence từ lời không khả dụng nên tọa độ cảm xúc được suy từ các đặc trưng âm thanh (valence/\allowbreak arousal/\allowbreak energy) thay thế. Vì kho hiện tại phủ lời 100\%, cơ chế này không phải kích hoạt trong thực tế nhưng vẫn bảo đảm hệ thống không gãy khi mở rộng kho.
+
+\textbf{Xử lý bài trùng và cover.} Các phiên bản trùng/cover được phát hiện ở pha ngoại tuyến và lưu thành một chỉ mục dựng sẵn (\texttt{cover\_index.json}). Việc phát hiện lấy \textit{lời làm tín hiệu chính} (độ tương đồng cosine của lời rất cao tương ứng cùng nội dung) kết hợp khớp tiêu đề đã chuẩn hóa (bắt được cả phiên bản song ngữ cùng bài). Kết quả hiện tại: \textbf{1.124 bài} có quan hệ cover, gom thành \textbf{979 cặp}. Khi gợi ý bài tương tự, các cover của bài nguồn bị loại để không lãng phí vị trí và tránh trả về ``cùng một bài''.
+
+\textbf{Phân bố cảm xúc của kho nhạc.} Hình~\ref{fig:scatter} biểu diễn phân bố Valence--Arousal của toàn bộ 5.138 bài, còn Hình~\ref{fig:hist} cho thấy phân bố của từng trục. Có thể thấy trục Arousal nén hơn trục Valence (độ lệch chuẩn $\approx 0.13$ so với $\approx 0.18$); đây chính là lý do hàm RBF dùng độ rộng nhỏ hơn trên trục Arousal ($\sigma_A = 0.14 < \sigma_V = 0.20$). Vùng năng lượng cao (Arousal lớn) thưa hơn, một hạn chế được nêu lại ở Chương~\ref{chapter:conclusion}.
+
+\begin{figure}[tbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{Hinhve/fig_va_scatter.png}
+\caption{Phân bố V-A (5.138 bài)}
+\label{fig:scatter}
+\end{subfigure}\hfill
+\begin{subfigure}{0.5\textwidth}
+\centering
+\includegraphics[width=\textwidth]{Hinhve/fig_va_hist.png}
+\caption{Histogram Valence và Arousal}
+\label{fig:hist}
+\end{subfigure}
+\caption{Phân bố cảm xúc của kho nhạc: trục Arousal nén hơn trục Valence}
+\label{fig:va-dist}
+\end{figure}
+
+\textbf{Lưu trữ đặc trưng.} Các đặc trưng nặng được tính sẵn và lưu ra tệp để pha phục vụ nạp vào bộ nhớ (Bảng~\ref{table:features}). Đặc trưng MuQ được lưu ở \texttt{muq\_embeddings.npy} dưới dạng ma trận $5138 \times 1024$ (số thực 32-bit, đã chuẩn hóa L2) kèm tệp siêu dữ liệu căn theo thứ tự kho nhạc. Lược đồ đầy đủ được trình bày trong Phụ lục~\ref{appendix:schema}.
+
+\begin{longtable}{|p{4.2cm}|p{5.4cm}|p{2.8cm}|}
+\caption{Các tệp đặc trưng tính sẵn được pha phục vụ nạp lên}\label{table:features}\\
+\hline
+\textbf{Đặc trưng} & \textbf{Tệp lưu trữ} & \textbf{Kích thước} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Đặc trưng} & \textbf{Tệp lưu trữ} & \textbf{Kích thước} \\
+\hline
+\endhead
+Embedding âm thanh MuQ & \texttt{muq\_embeddings.npy} & $5138 \times 1024$ \\
+\hline
+Embedding nội dung lời & \texttt{lyrics\_e5large.npy} & $5138 \times 1024$ \\
+\hline
+Tọa độ cảm xúc (V-A) & \texttt{emotion\_\allowbreak labels\_\allowbreak v6i.json} & 5138 mục \\
+\hline
+Nhịp độ sạch (BPM) & \texttt{clean\_bpm.json} & theo bài \\
+\hline
+Chỉ mục cover/trùng & \texttt{cover\_index.json} & 1124 bài \\
+\hline
+\end{longtable}
+
+\section{Giao diện lập trình ứng dụng}
+\label{section:api}
+Tầng phục vụ được hiện thực bằng FastAPI và cung cấp một tập endpoint cho ứng dụng trang đơn (Bảng~\ref{table:api}). Các phản hồi dùng một phong bì JSON nhất quán với trường \texttt{success} và phần dữ liệu (\texttt{results}/\texttt{songs}/\texttt{song}), kèm \texttt{message} khi cần.
+
+\begin{longtable}{|p{1.8cm}|p{5.8cm}|p{6.0cm}|}
+\caption{Các endpoint cốt lõi của giao diện lập trình ứng dụng (toàn hệ thống có khoảng 22 endpoint)}\label{table:api}\\
+\hline
+\textbf{Phương thức} & \textbf{Đường dẫn} & \textbf{Chức năng} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Phương thức} & \textbf{Đường dẫn} & \textbf{Chức năng} \\
+\hline
+\endhead
+POST & \texttt{/api/recommend/color} & Gợi ý danh sách phát theo 1--2 màu (UC02) \\
+\hline
+GET & \texttt{/api/song/\{id\}/similar} & Gợi ý bài tương tự (UC01) \\
+\hline
+GET & \texttt{/api/song/\{id\}} & Chi tiết + thông tin cảm xúc của bài (UC04) \\
+\hline
+GET & \texttt{/api/songs} & Duyệt/lọc/sắp xếp kho nhạc (UC03) \\
+\hline
+GET & \texttt{/api/search} & Tìm kiếm theo tên/nghệ sĩ/lời/cảm giác \\
+\hline
+GET & \texttt{/api/audio/stream/\{id\}} & Phát tệp âm thanh (hoặc chuyển hướng CDN) \\
+\hline
+\end{longtable}
+
+Mỗi bài trong kết quả gồm: chỉ số (\texttt{song\_index}), định danh (\texttt{track\_id}), tên bài, nghệ sĩ, mã màu tâm trạng (\texttt{color\_hex}), các giá trị Valence/Arousal/Energy và nhãn góc phần tư cảm xúc (\texttt{mood\_quadrant}). Với gợi ý theo màu, mỗi bài kèm một đối tượng giải thích \texttt{why} gồm: câu giải thích tiếng Việt (\texttt{reason}), tín hiệu mạnh nhất (\texttt{top\_signal}), điểm khớp cảm xúc (\texttt{mood\_match}) và tọa độ V-A của bài (\texttt{song\_va}) so với của màu (\texttt{color\_va}). Với gợi ý bài tương tự, mỗi bài kèm điểm \texttt{similarity\_score} cùng cờ và đường dẫn phát âm thanh. Quan hệ màu$\rightarrow$cảm xúc tổng quát được trả riêng ở khối siêu dữ liệu \texttt{query.bridge} (và \texttt{query.journey} khi chọn hai màu), \textit{không} nằm trong từng \texttt{why}. Một ví dụ đầy đủ về yêu cầu và phản hồi JSON được trình bày trong Phụ lục~\ref{appendix:api}.
+
+\textbf{Xử lý lỗi ở biên.} Hệ thống xác thực đầu vào và xử lý các trường hợp biên một cách tường minh: mã màu không hợp lệ (không đúng dạng \texttt{\#RRGGBB}) bị từ chối bằng lỗi xác thực đầu vào; bài hát không tồn tại trả về mã 404; bài thiếu lời thì trường lời trả về rỗng (không phải lỗi); bài thiếu một đặc trưng âm thanh thì trường tương ứng trả về rỗng thay vì gây lỗi; định danh sai định dạng khi phát trả về mã 400 và tệp âm thanh không có trả về 404. Các endpoint gợi ý có giới hạn tần suất để tránh quá tải.
+
+\section{Giao diện người dùng}
+\label{section:ui}
+Giao diện là một ứng dụng trang đơn React, cung cấp \textbf{hai giao diện (skin) dùng chung một logic gợi ý}: (i) giao diện ``đắm chìm'' 3D mô phỏng hệ mặt trời, trong đó mỗi màu là một hành tinh và hành trình hai màu là một chuyến bay; và (ii) giao diện ``classic'' 2D theo phong cách trình phát nhạc quen thuộc. Người dùng đổi qua lại giữa hai giao diện và lựa chọn được lưu cục bộ.
+
+Các màn hình chính gồm: màn chọn màu (bảng 12 màu/hành tinh), màn kết quả danh sách phát theo màu, màn duyệt và chọn bài hát, màn kết quả bài tương tự (chế độ ``đài''), bảng lời bài hát, thanh phát nhạc, ô tìm kiếm và lớp hướng dẫn sử dụng. Tâm trạng (Valence--Arousal) của mỗi bài được thể hiện trực quan qua màu nền ảnh bìa và một nhãn tâm trạng ngắn hiện khi đổi bài. Hai giao diện này không phải hai ứng dụng tách biệt mà là hai ``lớp da'' (skin) khác nhau trên cùng một logic gợi ý và cùng một tầng dữ liệu: mọi lời gọi API, mọi kết quả và cách xử lý đều dùng chung, chỉ khác ở cách trình bày. Giao diện 3D phù hợp với trải nghiệm khám phá giàu cảm xúc (mỗi màu là một hành tinh, hành trình hai màu là một chuyến bay), trong khi giao diện 2D quen thuộc với người dùng đã quen các trình phát nhạc thông thường. Việc chia sẻ logic giữa hai giao diện vừa giảm trùng lặp mã nguồn vừa bảo đảm hành vi gợi ý nhất quán bất kể người dùng chọn giao diện nào.
+
+Ngoài ra, trình phát hỗ trợ chuyển bài mượt (crossfade) dựa trên các điểm cue và độ to (LUFS) đã tính sẵn: hệ thống bắt đầu làm mờ bài đang phát và đưa bài kế tiếp vào tại các điểm chuyển hợp lý, đồng thời cân bằng độ to giữa hai bài để tránh chênh lệch âm lượng đột ngột. Đây là tính năng phát nhạc bổ trợ, không nằm trong hai chức năng cốt lõi của đồ án.
+
+Cần nêu rõ một điểm trung thực về mức hoàn thiện: dữ liệu cảm xúc đã được tính và \textit{cung cấp đầy đủ qua API} (tọa độ V-A, nhãn tâm trạng, đối tượng \texttt{why}, cầu nối màu$\rightarrow$cảm xúc), nhưng một \textit{màn chi tiết hiển thị tọa độ Valence--Arousal dạng số} và một \textit{bảng giải thích ``vì sao bài được gợi ý''} chưa được dựng thành màn riêng trong giao diện hiện tại; chúng được xem là hướng hoàn thiện trình bày ở Chương~\ref{chapter:conclusion}. Các màn hình chính được minh họa lần lượt như sau: với chức năng gợi ý theo màu là màn chọn màu (Hình~\ref{fig:ui-color}) và màn kết quả danh sách phát theo màu với ảnh bìa nhuộm theo tâm trạng (Hình~\ref{fig:ui-color-results}); với chức năng gợi ý bài tương tự là màn duyệt/chọn bài hát (Hình~\ref{fig:ui-browse}) và màn kết quả bài tương tự ở chế độ ``đài'' nối tiếp (Hình~\ref{fig:ui-similar}); ngoài ra là màn thông tin cảm xúc của bài hát (Hình~\ref{fig:ui-detail}) và phần giải thích ngắn ``vì sao bài được gợi ý'' (Hình~\ref{fig:ui-why}). Do hệ thống chạy tương tác (đặc biệt là giao diện 3D), ảnh chụp màn hình thực tế được chèn ở các vị trí tương ứng.
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Màn chọn màu (bảng 12 màu / hành tinh)}
+\caption{Màn chọn màu để gợi ý danh sách phát (UC02)}
+\label{fig:ui-color}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Kết quả danh sách phát theo màu --- danh sách bài kèm ảnh bìa nhuộm theo tâm trạng}
+\caption{Màn kết quả danh sách phát theo màu (UC02, UC03)}
+\label{fig:ui-color-results}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Màn duyệt/chọn bài hát (thư viện, bài nổi bật, mới phát hành)}
+\caption{Màn chọn bài hát để tìm bài tương tự (UC01)}
+\label{fig:ui-browse}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Kết quả bài tương tự --- hàng đợi ``đài'' nối tiếp}
+\caption{Màn kết quả bài tương tự (UC01, UC03)}
+\label{fig:ui-similar}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Thông tin cảm xúc của bài hát --- màu nền theo V-A, nhãn tâm trạng, lời bài hát (màn V-A dạng số là hướng hoàn thiện)}
+\caption{Màn thông tin cảm xúc của bài hát (UC04)}
+\label{fig:ui-detail}
+\end{figure}
+
+\begin{figure}[tbp]
+\centering
+\uiscreenshot{Giải thích ngắn vì sao bài được gợi ý (đối tượng \texttt{why} từ API --- hiển thị trong giao diện là hướng hoàn thiện)}
+\caption{Giải thích lý do gợi ý dựa trên cảm xúc}
+\label{fig:ui-why}
+\end{figure}
+
+Hệ thống sau khi xây dựng được thử nghiệm và đánh giá ở Chương~\ref{chapter:Evaluation}.
+
+\end{document}

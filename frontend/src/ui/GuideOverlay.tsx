@@ -4,18 +4,30 @@ import { EMOTION_COLORS } from '../data/colors';
 import { useStore } from '../state/store';
 import { useFocusTrap } from './hooks/useFocusTrap';
 
-// Usage guide — teaches *how to use* the app (planets are the picker, 1 vs 2 planets,
-// the radio button, controls). Deliberately no emotion/algorithm reasoning. Always
-// reachable from the "?" button; auto-opens once on first visit. A11y/focus handling
-// mirrors SearchOverlay: role=dialog + aria-modal, Esc to close, focus restored on close.
+// Usage guide — teaches *how to use* the app. Skin-aware: the classic skin frames the picker as
+// colour swatches (bấm ô màu / chọn 2 màu / dùng tìm kiếm); the immersive skin frames it as planets
+// (chạm hành tinh / kéo xoay-zoom). Deliberately no algorithm reasoning beyond the colour legend.
+// Always reachable from the "?" button; auto-opens once on first visit. A11y mirrors SearchOverlay:
+// role=dialog + aria-modal, Esc to close, focus restored on close.
 export default function GuideOverlay() {
   const guideOpen = useStore((s) => s.guideOpen);
   const closeGuide = useStore((s) => s.closeGuide);
+  const isClassic = useStore((s) => s.uiSkin === 'classic');
 
   // Trap Tab + restore focus on close (WCAG 2.1.2 / 2.4.3); initial focus → the card itself.
   const dialogRef = useFocusTrap<HTMLDivElement>(guideOpen);
 
   if (!guideOpen) return null;
+
+  // Legend rows: colours (classic — same order as the picker) or planets (immersive). Both pair a
+  // swatch with the colour's mood text from EMOTION_COLORS.
+  const legend = isClassic
+    ? EMOTION_COLORS.map((c) => ({ hex: c.hex, name: c.label, emotion: c.emotion }))
+    : BODIES.map((b) => ({
+        hex: b.hex,
+        name: b.name,
+        emotion: EMOTION_COLORS.find((x) => x.hex === b.hex)?.emotion ?? '',
+      }));
 
   return (
     <div className="guide-backdrop" onClick={closeGuide} role="presentation">
@@ -36,47 +48,67 @@ export default function GuideOverlay() {
 
         <div className="guide-body">
           <section className="guide-step">
-            <h3 className="guide-step-title"><span aria-hidden="true">🪐</span> Mỗi hành tinh là một cảm xúc</h3>
+            <h3 className="guide-step-title">
+              <span aria-hidden="true">{isClassic ? '🎨' : '🪐'}</span>{' '}
+              {isClassic ? 'Mỗi màu là một cảm xúc' : 'Mỗi hành tinh là một cảm xúc'}
+            </h3>
             <p className="guide-step-text">
-              12 hành tinh, mỗi cái mang một màu = một cảm xúc. <strong>Chạm một hành tinh</strong> để
-              nghe những bài hát hợp tâm trạng đó.
+              {isClassic ? (
+                <>12 màu, mỗi màu thể hiện một cảm xúc. <strong>Bấm một ô màu</strong> để nghe những
+                bài hát hợp tâm trạng đó.</>
+              ) : (
+                <>12 hành tinh, mỗi cái mang một màu = một cảm xúc. <strong>Chạm một hành tinh</strong> để
+                nghe những bài hát hợp tâm trạng đó.</>
+              )}
             </p>
-            <ul className="guide-legend" aria-label="Bảng hành tinh và cảm xúc">
-              {BODIES.map((b) => {
-                const c = EMOTION_COLORS.find((x) => x.hex === b.hex);
-                return (
-                  <li className="guide-legend-item" key={b.hex}>
-                    <span className="guide-swatch" style={{ background: b.hex }} aria-hidden="true" />
-                    <span className="guide-legend-text">
-                      <span className="guide-legend-name">{b.name}</span>
-                      <span className="guide-legend-emotion">{c?.emotion ?? ''}</span>
-                    </span>
-                  </li>
-                );
-              })}
+            <ul className="guide-legend" aria-label={isClassic ? 'Bảng màu và cảm xúc' : 'Bảng hành tinh và cảm xúc'}>
+              {legend.map((item) => (
+                <li className="guide-legend-item" key={item.hex}>
+                  <span className="guide-swatch" style={{ background: item.hex }} aria-hidden="true" />
+                  <span className="guide-legend-text">
+                    <span className="guide-legend-name">{item.name}</span>
+                    <span className="guide-legend-emotion">{item.emotion}</span>
+                  </span>
+                </li>
+              ))}
             </ul>
           </section>
 
           <section className="guide-step">
-            <h3 className="guide-step-title"><span aria-hidden="true">🚀</span> Chọn 2 hành tinh để du hành</h3>
+            <h3 className="guide-step-title">
+              <span aria-hidden="true">{isClassic ? '🧭' : '🚀'}</span>{' '}
+              {isClassic ? 'Chọn 2 màu để tạo hành trình' : 'Chọn 2 hành tinh để du hành'}
+            </h3>
             <p className="guide-step-text">
-              Chọn thêm hành tinh thứ hai → một <strong>chuyến du hành</strong> chuyển dần từ cảm xúc này
-              sang cảm xúc kia. Chỉnh nhanh hay chậm ở bảng <em>Du hành</em>.
+              {isClassic ? (
+                <>Bấm thêm màu thứ hai → một <strong>hành trình cảm xúc</strong> chuyển dần từ tâm trạng
+                này sang tâm trạng kia (A → B).</>
+              ) : (
+                <>Chọn thêm hành tinh thứ hai → một <strong>chuyến du hành</strong> chuyển dần từ cảm xúc này
+                sang cảm xúc kia. Chỉnh nhanh hay chậm ở bảng <em>Du hành</em>.</>
+              )}
             </p>
           </section>
 
           <section className="guide-step">
-            <h3 className="guide-step-title"><Radio size={16} aria-hidden="true" /> Nút radio — nghe bài tương tự</h3>
+            <h3 className="guide-step-title"><Radio size={16} aria-hidden="true" /> Nghe bài tương tự</h3>
             <p className="guide-step-text">
-              Đang nghe một bài? Bấm nút radio <Radio className="guide-ico" size={15} aria-hidden="true" /> ở
-              thanh phát để nối dài những bài cùng cảm xúc — phát mãi không hết.
+              {isClassic ? (
+                <>Thích một bài? Bấm <strong>Tương tự</strong> ở bài đó trong <em>Thư viện</em> (hoặc nút
+                radio <Radio className="guide-ico" size={15} aria-hidden="true" /> ở thanh phát) để nối dài
+                những bài cùng cảm xúc — phát mãi không hết.</>
+              ) : (
+                <>Đang nghe một bài? Bấm nút radio <Radio className="guide-ico" size={15} aria-hidden="true" /> ở
+                thanh phát để nối dài những bài cùng cảm xúc — phát mãi không hết.</>
+              )}
             </p>
           </section>
 
           <section className="guide-step">
             <h3 className="guide-step-title"><span aria-hidden="true">🎧</span> Điều khiển &amp; tìm kiếm</h3>
             <p className="guide-step-text">
-              Kéo để xoay · cuộn để phóng to. Thanh phát:{' '}
+              {!isClassic && <>Kéo để xoay · cuộn để phóng to. </>}
+              Thanh phát:{' '}
               <Play className="guide-ico" size={15} aria-hidden="true" /> phát/dừng,{' '}
               <SkipBack className="guide-ico" size={15} aria-hidden="true" />{' '}
               <SkipForward className="guide-ico" size={15} aria-hidden="true" /> chuyển bài, kéo thanh

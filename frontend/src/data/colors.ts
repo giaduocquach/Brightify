@@ -15,17 +15,20 @@ export interface EmotionColor {
 // v/a = backend hsl_to_va (V38): valence Oklab-ridge-fit to ICEAS (r=0.97); arousal grounded
 // in Whiteford 2018 colour↔MUSIC associations (+redness +saturation +LIGHTNESS) so dark/cool
 // colours = slow/calm music, warm-vivid = energetic. Regenerate after any colour→V-A change.
+// `emotion` is descriptive UI text only (no logic keys off it). It is NOT shown in the colour
+// picker — the picker deliberately shows just the swatch + colour name — but it surfaces in the
+// usage guide (GuideOverlay) and the 3D orb captions/tooltips to explain each colour's mood.
 export const EMOTION_COLORS: EmotionColor[] = [
   { hex: '#BE0032', label: 'Đỏ',         emotion: 'Đam mê · Mãnh liệt',     v: 0.37, a: 0.72 },
   { hex: '#F38400', label: 'Cam',        emotion: 'Vui tươi · Năng động',   v: 0.60, a: 0.73 },
   { hex: '#F3C300', label: 'Vàng',       emotion: 'Vui vẻ · Lạc quan',      v: 0.77, a: 0.70 },
-  { hex: '#FFB7C5', label: 'Hồng',       emotion: 'Ngọt ngào · Tươi vui',   v: 0.68, a: 0.86 },
+  { hex: '#FFB7C5', label: 'Hồng',       emotion: 'Ngọt ngào · Rộn ràng',   v: 0.68, a: 0.86 },
   { hex: '#008856', label: 'Xanh lá',    emotion: 'Tươi mát · Cân bằng',    v: 0.62, a: 0.34 },
   { hex: '#3AB09E', label: 'Ngọc',       emotion: 'Thư thái · Tươi mát',    v: 0.67, a: 0.21 },
   { hex: '#0067A5', label: 'Xanh dương', emotion: 'Sâu lắng · Êm dịu',      v: 0.56, a: 0.36 },
   { hex: '#9C4F96', label: 'Tím',        emotion: 'Trầm tư · Hoài niệm',    v: 0.46, a: 0.43 },
   { hex: '#F2F3F4', label: 'Trắng',      emotion: 'Thanh thản · Tinh khôi', v: 0.59, a: 0.37 },
   { hex: '#848482', label: 'Xám',        emotion: 'U hoài · Trầm lắng',     v: 0.41, a: 0.23 },
-  { hex: '#80461B', label: 'Nâu',        emotion: 'Trầm mặc · Bất an',      v: 0.39, a: 0.57 },
+  { hex: '#80461B', label: 'Nâu',        emotion: 'Khắc khoải · Day dứt',   v: 0.39, a: 0.57 },
   { hex: '#222222', label: 'Đen',        emotion: 'U tối · Trầm buồn',      v: 0.25, a: 0.12 },
 ];

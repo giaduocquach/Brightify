@@ -91,6 +91,7 @@ interface State {
   // view
   mode: Mode;
   uiSkin: UiSkin;   // 'immersive' (3D) | 'classic' (plain player) — persisted, top-right toggle
+  classicTab: 'home' | 'library';   // classic-skin left-nav destination (3D skin ignores it)
 
   // selection + recommendations
   selectedColors: string[];
@@ -143,6 +144,7 @@ interface State {
   // actions — selection
   enterSystem: () => void;
   setSkin: (s: UiSkin) => void;
+  setClassicTab: (t: 'home' | 'library') => void;
   // opts.noTransitions: skip the 3D-only boarding camera sequence (classic skin has no camera).
   toggleColor: (hex: string, opts?: { noTransitions?: boolean }) => void;
   clearColors: () => void;
@@ -180,6 +182,7 @@ interface State {
 export const useStore = create<State>((set, get) => ({
   mode: 'intro',
   uiSkin: readSkin(),
+  classicTab: 'home',
 
   selectedColors: [],
   results: [],
@@ -229,6 +232,8 @@ export const useStore = create<State>((set, get) => ({
     try { localStorage.setItem(SKIN_KEY, s); } catch { /* ignore */ }
     set({ uiSkin: s });
   },
+
+  setClassicTab: (t) => set({ classicTab: t }),
 
   toggleColor: (hex, opts) => {
     // Cancel any pending boarding→journey transition from a previous pick so a stale
