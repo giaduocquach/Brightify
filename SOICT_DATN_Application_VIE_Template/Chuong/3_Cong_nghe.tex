@@ -80,7 +80,7 @@ Q_4\ (\text{thư thái--bình yên}) & v \ge 0.5,\ a < 0.5
   \text{redness} = \frac{1 + \cos h}{2}, \qquad h = \operatorname{atan2}(b, a)
 \end{equation}
 
-Thứ hai, trục Valence của màu được hồi quy về các chuẩn liên kết màu--cảm xúc của con người trong khảo sát ICEAS \cite{jonauskaite2020universal}, một khảo sát quy mô lớn trên nhiều quốc gia (Hình~\ref{fig:iceas-wheel}). Thứ ba, trục Arousal của màu được suy ra theo quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color}: nhạc nhanh, sôi động gắn với màu sáng và bão hòa hơn. Đặc biệt, độ đỏ và độ bão hòa được đặt trên trục Arousal, phù hợp với phát hiện rằng độ bão hòa là yếu tố chính chi phối Arousal của màu \cite{valdez1994effects}. Hình~\ref{fig:oklab} minh họa hướng tăng của hai trục cảm xúc trong mặt phẳng màu. Lựa chọn dùng Whiteford thay vì chỉ dùng quan hệ màu đơn thuần xuất phát từ việc cần đúng cấu trúc màu--âm nhạc, vì hệ thống ánh xạ màu sang nhạc chứ không phải mô tả cảm nhận màu độc lập; công thức Arousal cụ thể được trình bày ở mục~\ref{subsection:4.2.2}.
+Thứ hai, trục Valence của màu được hồi quy về các chuẩn liên kết màu--cảm xúc của con người trong khảo sát ICEAS \cite{jonauskaite2020universal}, một khảo sát quy mô lớn trên nhiều quốc gia (Hình~\ref{fig:iceas-heatmap}). Thứ ba, trục Arousal của màu được suy ra theo quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color}: nhạc nhanh, sôi động gắn với màu sáng và bão hòa hơn. Đặc biệt, độ đỏ và độ bão hòa được đặt trên trục Arousal, phù hợp với phát hiện rằng độ bão hòa là yếu tố chính chi phối Arousal của màu \cite{valdez1994effects}. Hình~\ref{fig:oklab} minh họa hướng tăng của hai trục cảm xúc trong mặt phẳng màu. Lựa chọn dùng Whiteford thay vì chỉ dùng quan hệ màu đơn thuần xuất phát từ việc cần đúng cấu trúc màu--âm nhạc, vì hệ thống ánh xạ màu sang nhạc chứ không phải mô tả cảm nhận màu độc lập; công thức Arousal cụ thể được trình bày ở mục~\ref{subsection:4.2.2}.
 
 Việc chọn không gian màu không phải là chi tiết kỹ thuật nhỏ. RGB là không gian thiết bị, không đồng đều về tri giác và trộn lẫn độ sáng với màu sắc. CIELAB cải thiện tính đồng đều nhưng vẫn có hiện tượng không đồng đều ở vùng xanh lam. Oklab \cite{ottosson2020oklab} là một cải tiến gần đây được thiết kế riêng để khoảng cách Euclid khớp tốt hơn với khác biệt cảm nhận, đồng thời tách bạch độ sáng ($L$) khỏi sắc độ ($a, b$) --- điều quan trọng vì hai trục cảm xúc của màu phụ thuộc vào các thành phần tri giác khác nhau (Valence gắn nhiều với độ sáng, Arousal gắn nhiều với độ bão hòa). Về phía cảm xúc, khảo sát ICEAS \cite{jonauskaite2020universal} thu thập liên kết màu--cảm xúc trên hàng nghìn người ở khoảng ba mươi quốc gia, cung cấp một chuẩn định lượng đáng tin cho trục Valence của màu. Riêng trục Arousal, ngoài Whiteford, phát hiện của Valdez và Mehrabian \cite{valdez1994effects} trên khoảng bảy mươi sáu màu Munsell cho thấy \textit{độ bão hòa} là yếu tố chi phối Arousal mạnh hơn cả độ sáng --- đây là cơ sở để công thức Arousal đặt trọng số đáng kể cho độ bão hòa.
 
@@ -108,15 +108,9 @@ Phát hiện Valdez--Mehrabian & Củng cố vai trò của độ bão hòa là 
 
 \begin{figure}[tbp]
 \centering
-% TODO(sinh viên): thay khối giữ chỗ bằng ảnh thật khi đã tải:
-% \includegraphics[width=0.62\textwidth]{Hinhve/iceas_wheel.png}
-\fbox{\begin{minipage}[c][4.6cm][c]{0.62\textwidth}\centering\itshape
-[\,Hình từ tài liệu --- chèn ảnh\,]\\[3pt]
-Bánh xe liên kết màu--cảm xúc (ICEAS)\\[4pt]
-\footnotesize\upshape(tải theo hướng dẫn ở Phụ lục; lưu \texttt{Hinhve/iceas\_wheel.png})
-\end{minipage}}
-\caption{Bánh xe liên kết màu--cảm xúc từ khảo sát ICEAS trên gần ba mươi quốc gia (Nguồn: Jonauskaite và cộng sự, 2020 \cite{jonauskaite2020universal})}
-\label{fig:iceas-wheel}
+\includegraphics[width=0.72\textwidth]{Hinhve/iceas_heatmap.png}
+\caption{Bản đồ nhiệt liên kết màu--cảm xúc từ khảo sát ICEAS trên khoảng ba mươi quốc gia: mỗi ô là xác suất Bayes liên kết một cảm xúc (hàng) với một màu (cột); ô càng cam/đỏ đậm thì liên kết càng mạnh (Nguồn: Jonauskaite và cộng sự, 2020 \cite{jonauskaite2020universal})}
+\label{fig:iceas-heatmap}
 \end{figure}
 
 \begin{figure}[tbp]
