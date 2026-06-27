@@ -155,48 +155,34 @@ Các màn hình chính gồm: màn chọn màu (bảng 12 màu/hành tinh), màn
 
 Ngoài ra, trình phát hỗ trợ chuyển bài mượt (crossfade) dựa trên các điểm cue và độ to (LUFS) đã tính sẵn: hệ thống bắt đầu làm mờ bài đang phát và đưa bài kế tiếp vào tại các điểm chuyển hợp lý, đồng thời cân bằng độ to giữa hai bài để tránh chênh lệch âm lượng đột ngột. Đây là tính năng phát nhạc bổ trợ, không nằm trong hai chức năng cốt lõi của đồ án.
 
-Cần nêu rõ một điểm trung thực về mức hoàn thiện: dữ liệu cảm xúc đã được tính và \textit{cung cấp đầy đủ qua API} (tọa độ V-A, nhãn tâm trạng, đối tượng \texttt{why}, cầu nối màu$\rightarrow$cảm xúc), nhưng một \textit{màn chi tiết hiển thị tọa độ Valence--Arousal dạng số} và một \textit{bảng giải thích ``vì sao bài được gợi ý''} chưa được dựng thành màn riêng trong giao diện hiện tại; chúng được xem là hướng hoàn thiện trình bày ở Chương~\ref{chapter:conclusion}. Các màn hình chính được minh họa lần lượt như sau: với chức năng gợi ý theo màu là màn chọn màu (Hình~\ref{fig:ui-color}) và màn kết quả danh sách phát theo màu với ảnh bìa nhuộm theo tâm trạng (Hình~\ref{fig:ui-color-results}); với chức năng gợi ý bài tương tự là màn duyệt/chọn bài hát (Hình~\ref{fig:ui-browse}) và màn kết quả bài tương tự ở chế độ ``đài'' nối tiếp (Hình~\ref{fig:ui-similar}); ngoài ra là màn thông tin cảm xúc của bài hát (Hình~\ref{fig:ui-detail}) và phần giải thích ngắn ``vì sao bài được gợi ý'' (Hình~\ref{fig:ui-why}). Do hệ thống chạy tương tác (đặc biệt là giao diện 3D), ảnh chụp màn hình thực tế được chèn ở các vị trí tương ứng.
+Cần nêu rõ một điểm trung thực về mức hoàn thiện: dữ liệu cảm xúc đã được tính và \textit{cung cấp đầy đủ qua API} (tọa độ V-A, nhãn tâm trạng, đối tượng \texttt{why}, cầu nối màu$\rightarrow$cảm xúc), nhưng một \textit{màn chi tiết hiển thị tọa độ Valence--Arousal dạng số} và một \textit{bảng giải thích ``vì sao bài được gợi ý''} chưa được dựng thành màn riêng trong giao diện hiện tại; chúng được xem là hướng hoàn thiện trình bày ở Chương~\ref{chapter:conclusion}. Các màn hình chính (ảnh chụp từ bản triển khai thực tế, giao diện ``classic'' 2D) được minh họa lần lượt như sau: với chức năng gợi ý theo màu là màn chọn màu (Hình~\ref{fig:ui-color}) và màn kết quả danh sách phát theo màu với ảnh bìa nhuộm theo tâm trạng (Hình~\ref{fig:ui-color-results}); với chức năng gợi ý bài tương tự là màn duyệt/chọn bài hát (Hình~\ref{fig:ui-browse}) và màn kết quả bài tương tự ở chế độ ``đài'' nối tiếp (Hình~\ref{fig:ui-similar}).
 
 \begin{figure}[tbp]
 \centering
-\uiscreenshot{Màn chọn màu (bảng 12 màu / hành tinh)}
-\caption{Màn chọn màu để gợi ý danh sách phát (UC02)}
+\includegraphics[width=\textwidth]{Hinhve/ui_color.png}
+\caption{Màn chọn màu để gợi ý danh sách phát --- giao diện ``classic'' 2D (UC02)}
 \label{fig:ui-color}
 \end{figure}
 
 \begin{figure}[tbp]
 \centering
-\uiscreenshot{Kết quả danh sách phát theo màu --- danh sách bài kèm ảnh bìa nhuộm theo tâm trạng}
-\caption{Màn kết quả danh sách phát theo màu (UC02, UC03)}
+\includegraphics[width=\textwidth]{Hinhve/ui_color_results.png}
+\caption{Màn kết quả danh sách phát theo màu (ví dụ tâm trạng ``Ngọc'') (UC02, UC03)}
 \label{fig:ui-color-results}
 \end{figure}
 
 \begin{figure}[tbp]
 \centering
-\uiscreenshot{Màn duyệt/chọn bài hát (thư viện, bài nổi bật, mới phát hành)}
-\caption{Màn chọn bài hát để tìm bài tương tự (UC01)}
+\includegraphics[width=\textwidth]{Hinhve/ui_browse.png}
+\caption{Màn duyệt thư viện và chọn bài hát để tìm bài tương tự (UC01, UC03)}
 \label{fig:ui-browse}
 \end{figure}
 
 \begin{figure}[tbp]
 \centering
-\uiscreenshot{Kết quả bài tương tự --- hàng đợi ``đài'' nối tiếp}
-\caption{Màn kết quả bài tương tự (UC01, UC03)}
+\includegraphics[width=\textwidth]{Hinhve/ui_similar.png}
+\caption{Màn kết quả bài tương tự ở chế độ ``đài'' nối tiếp (UC01, UC03)}
 \label{fig:ui-similar}
-\end{figure}
-
-\begin{figure}[tbp]
-\centering
-\uiscreenshot{Thông tin cảm xúc của bài hát --- màu nền theo V-A, nhãn tâm trạng, lời bài hát (màn V-A dạng số là hướng hoàn thiện)}
-\caption{Màn thông tin cảm xúc của bài hát (UC04)}
-\label{fig:ui-detail}
-\end{figure}
-
-\begin{figure}[tbp]
-\centering
-\uiscreenshot{Giải thích ngắn vì sao bài được gợi ý (đối tượng \texttt{why} từ API --- hiển thị trong giao diện là hướng hoàn thiện)}
-\caption{Giải thích lý do gợi ý dựa trên cảm xúc}
-\label{fig:ui-why}
 \end{figure}
 
 Hệ thống sau khi xây dựng được thử nghiệm và đánh giá ở Chương~\ref{chapter:Evaluation}.
