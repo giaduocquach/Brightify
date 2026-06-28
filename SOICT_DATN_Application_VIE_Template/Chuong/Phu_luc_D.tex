@@ -1,0 +1,60 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+\label{appendix:params}
+Phụ lục này tổng hợp các tham số và trọng số chính của hệ thống cùng nguồn gốc của chúng (Bảng~\ref{table:params}). Mọi giá trị đều được đặt trong tệp cấu hình \texttt{config.py} hoặc suy ra từ quá trình hồi quy/tinh chỉnh trên dữ liệu công khai, không có giá trị tự đặt tùy ý --- đáp ứng yêu cầu phi chức năng về tính đúng đắn khoa học (NFR01).
+
+\begin{longtable}{|p{4.6cm}|p{4.0cm}|p{4.6cm}|}
+\caption{Tổng hợp tham số và trọng số chính của hệ thống}\label{table:params}\\
+\hline
+\textbf{Tham số} & \textbf{Giá trị} & \textbf{Nguồn / cách xác định} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Tham số} & \textbf{Giá trị} & \textbf{Nguồn / cách xác định} \\
+\hline
+\endhead
+\multicolumn{3}{|l|}{\textit{Tổ hợp Valence (EWE)}} \\
+\hline
+Trọng số vn\_lex / vn\_sent & 0.35 / 0.22 & Độ tin cậy EWE (\texttt{build\_labels\_repro}) \\
+\hline
+Trọng số emobank / muq & 0.34 / 0.09 & Độ tin cậy EWE (\texttt{build\_labels\_repro}) \\
+\hline
+\multicolumn{3}{|l|}{\textit{Tổ hợp Arousal}} \\
+\hline
+MuQ / nhịp độ / độ to & 0.574 / 0.35 / 0.076 & Hồi quy trên DEAM (người gán nhãn) \\
+\hline
+\multicolumn{3}{|l|}{\textit{Gợi ý theo màu}} \\
+\hline
+RBF $\sigma_V$ / $\sigma_A$ & 0.20 / 0.14 & Theo độ nén phân bố mỗi trục \\
+\hline
+Trọng số nhất quán $\alpha$ & 0.55 & Quét tinh chỉnh coherence/TE \\
+\hline
+Lấy dư ứng viên (overfetch) & $5 \times$ top-$k$ & Tinh chỉnh \\
+\hline
+Phạt cùng nghệ sĩ (chọn cụm) & 0.15 & Đa dạng hóa trong bước chọn cụm nhất quán \\
+\hline
+\multicolumn{3}{|l|}{\textit{Gợi ý bài tương tự}} \\
+\hline
+Trọng số âm thanh/cảm xúc/lời & 0.76 / 0.16 / 0.08 & Tinh chỉnh trên độ đo cuối \\
+\hline
+RBF $\sigma_V$ / $\sigma_A$ & 0.22 / 0.14 & Theo độ tin cậy mỗi trục \\
+\hline
+MMR $\lambda$ & 0.7 & Cân bằng liên quan--đa dạng (trên embedding lời) \\
+\hline
+\multicolumn{3}{|l|}{\textit{Phát hiện cover (ngưỡng cosine)}} \\
+\hline
+Trùng khít / cùng nghệ sĩ & 0.98 / 0.92 & Tinh chỉnh trên cặp đã biết \\
+\hline
+Cover / theo lời & 0.95 / 0.90 & Tinh chỉnh trên cặp đã biết \\
+\hline
+\multicolumn{3}{|l|}{\textit{Công thức Arousal của màu (Whiteford)}} \\
+\hline
+redness / saturation / lightness & 0.373 / 0.356 / 0.271 & Whiteford 2018 (chuẩn hóa) \\
+\hline
+hằng số nền & $-0.10$ & Hiệu chỉnh affine giữ trật tự \\
+\hline
+\end{longtable}
+
+Cơ chế đa dạng hóa khác nhau giữa hai chức năng. Gợi ý theo màu \textit{không} dùng một bước MMR riêng mà phạt giảm điểm các bài cùng nghệ sĩ ngay trong bước chọn cụm nhất quán (hệ số $0.15$); trong khi đó gợi ý bài tương tự dùng MMR ($\lambda = 0.7$) trên biểu diễn lời. (Khi thiếu embedding MuQ, gợi ý theo màu lùi về một bước MMR dự phòng với $\lambda = 0.5$.) Ngoài ra, độ rộng RBF trên trục Valence của gợi ý bài tương tự ($\sigma_V = 0.22$) rộng hơn của gợi ý theo màu ($0.20$) vì Valence của bài nguồn ít tin cậy hơn đích phân vị của màu.
+
+\end{document}

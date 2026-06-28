@@ -210,9 +210,7 @@
 \pagenumbering{gobble}
 \subfile{Chuong/0_3_Tom_tat_noi_dung.tex}
 
-\newpage
-\pagenumbering{gobble}
-\subfile{Chuong/0_4_Tom_tat_noi_dung_English.tex}
+% (Tóm tắt tiếng Anh đã tạm bỏ theo yêu cầu)
 
 % ===================================================
 % \pagestyle{empty} % Header và footer rỗng
@@ -338,11 +336,7 @@
 \label{chapter:conclusion}
 \subfile{Chuong/6_Ket_luan}
 
-\newpage
-%\pagestyle{fancy} % Áp dụng header và footer
-\chapter*{MỘT SỐ LƯU Ý VỀ TÀI LIỆU THAM KHẢO} %Kết luận và hướng phát triển}
-\label{chapter:reference}
-\subfile{Chuong/7_Luu_y_tai_lieu_tham_khao}
+% (Mục "Một số lưu ý về tài liệu tham khảo" đã xóa theo yêu cầu)
 
 
 % ===================================================
@@ -351,31 +345,6 @@
 \printbibliography
 \phantomsection\addcontentsline{toc}{chapter}{TÀI LIỆU THAM KHẢO}
 
-\appendixpage
-\appendices
-\addappheadtotoc
-
-% \chapter*{PHỤ LỤC} %Kết luận và hướng phát triển}
-
-%\mainmatter
-\titleformat{\chapter}[hang]{\centering\bfseries}{ \thechapter.\ }{0pt}{}[]
-\titlespacing*{\chapter}{0pt}{-20pt}{20pt}
-
-\titlecontents{chapter}
-    [0.0cm]             % left margin
-    {\bfseries\vspace{0.3cm}}                  % above code
-    {{\bfseries{\scshape} \thecontentslabel.\ }} % numbered format
-    {}         % unnumbered format
-    {\titlerule*[0.3pc]{.}\contentspage}         % filler-page-format, e.g dots
-\chapter{ĐẶC TẢ USE CASE}
-\subfile{Chuong/Phu_luc_B}
-\newpage
-\chapter{VÍ DỤ YÊU CẦU VÀ PHẢN HỒI API}
-\subfile{Chuong/Phu_luc_C}
-\newpage
-\chapter{BẢNG THAM SỐ VÀ TRỌNG SỐ}
-\subfile{Chuong/Phu_luc_D}
-\newpage
-\chapter{LƯỢC ĐỒ KHO ĐẶC TRƯNG}
-\subfile{Chuong/Phu_luc_E}
+% (Phần phụ lục đặc tả use case phụ trợ đã được bỏ: 6 use case chính đã đặc tả
+%  chi tiết trong Chương 2, các chức năng phụ trợ đã nêu ở bảng Yêu cầu chức năng.)
 \end{document}

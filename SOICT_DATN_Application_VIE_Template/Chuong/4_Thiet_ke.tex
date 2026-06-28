@@ -171,7 +171,7 @@ Dữ liệu phục vụ được tổ chức quanh thực thể trung tâm là \
 
 \subsection{Gán tọa độ cảm xúc cho bài hát}
 \label{subsection:4.2.1}
-Mỗi bài hát được gán một cặp Valence và Arousal, dùng chung cho cả hai chức năng. Valence được tính bằng tổ hợp EWE (Evaluator Weighted Estimator) \cite{grimm2005ewe} của bốn tín hiệu, trong đó trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu (Bảng~\ref{table:ewe}). Bộ trọng số được ước lượng \textit{một lần} ở pha ngoại tuyến bằng bình phương tối thiểu không âm (Non-Negative Least Squares, NNLS) khớp với một bộ tham chiếu V-A độc lập, rồi \textit{đóng băng}; nhờ vậy đường phục vụ hoàn toàn không gọi mô hình ngôn ngữ lớn. Có thể thấy ba tín hiệu lời chiếm phần lớn trọng số, còn tín hiệu âm thanh chỉ đóng vai trò bổ trợ, phản ánh đúng việc Valence nằm chủ yếu ở nội dung lời. Hình~\ref{fig:ewe-weights} trực quan hóa các trọng số này.
+Mỗi bài hát được gán một cặp Valence và Arousal, dùng chung cho cả hai chức năng. Valence được tính bằng tổ hợp EWE (Evaluator Weighted Estimator) \cite{grimm2005ewe} của bốn tín hiệu, trong đó trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu (Bảng~\ref{table:ewe}). Độ tin cậy của mỗi tín hiệu được đo bằng tương quan Spearman giữa tín hiệu đó với \textit{đồng thuận} của các tín hiệu còn lại; trọng số được ước lượng theo lối lặp (Grimm và Kroschel) \textit{một lần} ở pha ngoại tuyến --- \textbf{không khớp với bất kỳ nhãn hay bộ tham chiếu ngoài nào} --- rồi \textit{đóng băng}. Chính vì không có đích ngoài nên cách tổ hợp này \textit{phi vòng tròn} (không ``tự chấm điểm cho chính mình'') và đường phục vụ hoàn toàn không gọi mô hình ngôn ngữ lớn. Có thể thấy ba tín hiệu lời chiếm phần lớn trọng số, còn tín hiệu âm thanh chỉ đóng vai trò bổ trợ, phản ánh đúng việc Valence nằm chủ yếu ở nội dung lời. Hình~\ref{fig:ewe-weights} trực quan hóa các trọng số này.
 
 \begin{longtable}{|p{2.9cm}|p{4.5cm}|p{5.2cm}|}
 \caption{Các tín hiệu Valence và vai trò trong tổ hợp EWE (trọng số tỉ lệ với độ tin cậy đo được của từng tín hiệu)}\label{table:ewe}\\
@@ -183,13 +183,13 @@ Mỗi bài hát được gán một cặp Valence và Arousal, dùng chung cho c
 \textbf{Tín hiệu Valence} & \textbf{Vai trò trong tổ hợp EWE} & \textbf{Nguồn} \\
 \hline
 \endhead
-vn\_lex (từ điển) & Lời --- trọng số lớn & NRC-VAD-VN \cite{mohammad2018nrcvad} + VnEmoLex \cite{doan2022vnemolex} \\
+vn\_lex (từ điển) & Lời --- trọng số lớn ($0.35$) & NRC-VAD-VN \cite{mohammad2018nrcvad} + VnEmoLex \cite{doan2022vnemolex} \\
 \hline
-emobank & Lời (liên ngữ) --- trọng số lớn & XLM-R \cite{conneau2020xlmr} + EmoBank \cite{buechel2017emobank} \\
+emobank & Lời (liên ngữ) --- trọng số lớn ($0.34$) & XLM-R \cite{conneau2020xlmr} + EmoBank \cite{buechel2017emobank} \\
 \hline
-vn\_sent & Lời (ngữ cảnh VN) --- trọng số vừa & ViSoBERT \cite{nguyen2023visobert} + UIT-VSMEC \cite{ho2020vsmec} \\
+vn\_sent & Lời (ngữ cảnh VN) --- trọng số vừa ($0.22$) & ViSoBERT \cite{nguyen2023visobert} + UIT-VSMEC \cite{ho2020vsmec} \\
 \hline
-muq (âm thanh) & Bổ trợ --- trọng số nhỏ nhất & MuQ \cite{zhu2025muq} \\
+muq (âm thanh) & Bổ trợ --- trọng số nhỏ nhất ($0.09$) & MuQ \cite{zhu2025muq} \\
 \hline
 \end{longtable}
 
@@ -219,7 +219,7 @@ Bộ nhãn V-A này được kiểm hai tính chất. \textit{Tái lập}: chạ
 
 \subsection{Ánh xạ màu sắc sang tọa độ cảm xúc}
 \label{subsection:4.2.2}
-Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này. Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền. Hình~\ref{fig:color-flow} tóm tắt luồng ánh xạ này.
+Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này. Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền. Hình~\ref{fig:color-flow} tóm tắt luồng ánh xạ này. Cần lưu ý rằng ánh xạ màu--cảm xúc này dựa trên các chuẩn quốc tế (ICEAS, Whiteford) và \textit{chưa được hiệu chỉnh bằng khảo sát người nghe Việt Nam}; do đó nó được xem là một ánh xạ \textit{mang tính thử nghiệm}, với hạn chế về tính đặc thù văn hóa được phân tích ở mục~\ref{subsection:eval-discussion}.
 \begin{equation}\label{eq:whiteford}
     A = 0.373 \cdot \text{redness} + 0.356 \cdot \text{saturation} + 0.271 \cdot \text{lightness} - 0.10
 \end{equation}
@@ -306,7 +306,7 @@ Hai sơ đồ tuần tự trong Hình~\ref{fig:seq-uc01} và Hình~\ref{fig:seq-
     \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
   }
   \draw[msg] (0,-0.9) -- node[above]{chọn bài hát} (2.9,-0.9);
-  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{GET /song/\{id\}/similar}} (5.8,-1.6);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{GET /api/song/\{id\}/similar}} (5.8,-1.6);
   \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_song()}} (8.4,-2.3);
   % thanh kích hoạt trên lifeline Engine + ghi chú đặt BÊN PHẢI (không che mũi tên)
   \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.3);
@@ -330,7 +330,7 @@ Hai sơ đồ tuần tự trong Hình~\ref{fig:seq-uc01} và Hình~\ref{fig:seq-
     \draw[dashed, gray] (\x,\ya-0.35) -- (\x,\yb);
   }
   \draw[msg] (0,-0.9) -- node[above]{chọn 1--2 màu} (2.9,-0.9);
-  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{POST /recommend/color}} (5.8,-1.6);
+  \draw[msg] (2.9,-1.6) -- node[above]{\texttt{POST /api/recommend/color}} (5.8,-1.6);
   \draw[msg] (5.8,-2.3) -- node[above]{\texttt{recommend\_by\_colors()}} (8.4,-2.3);
   % thanh kích hoạt + ghi chú đặt BÊN PHẢI lifeline Engine
   \fill[blue!12, draw=black] (8.3,-2.3) rectangle (8.5,-4.7);
