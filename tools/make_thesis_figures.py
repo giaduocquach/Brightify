@@ -185,10 +185,10 @@ def fig_pmemo():
 
 
 def fig_latency():
-    # Values == report Table 4.8 (tools/bench_latency.py, Apple Silicon, 1500 iters).
+    # Values == report Table table:latency (tools/bench_latency.py, Apple Silicon, 1000 iters).
     ops = ["Gợi ý 1 màu\n(UC02)", "Gợi ý bài\ntương tự (UC01)", "Hành trình\n2 màu"]
-    median = [3.1, 4.1, 70.0]
-    p95 = [3.6, 4.5, 72.0]
+    median = [3.1, 4.0, 70.0]
+    p95 = [4.4, 4.5, 73.6]
     x = np.arange(len(ops)); w = 0.36
     fig, ax = plt.subplots(figsize=(7.0, 4.2))
     b1 = ax.bar(x - w / 2, median, w, label="Trung vị", color=ACCENT)

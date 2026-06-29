@@ -129,7 +129,7 @@ Trung tâm của tầng động cơ là lớp \texttt{MusicRecommender}, giữ t
   \node[helper, text width=6.2cm] (rk) at (0,-3.6) {
     \textbf{core.ranking}\\
     retrieval $\cdot$ coherence $\cdot$ diversity\\
-    journey $\cdot$ artist (MMR, RRF, waypoint)};
+    journey $\cdot$ artist (MMR, waypoint)};
   \node[helper, text width=3.4cm] (cm) at (7.4,0) {
     \textbf{AdvancedColorMapper}\\
     hsl\_to\_va() $\cdot$ hex\_to\_hsl()};
@@ -219,7 +219,7 @@ Bộ nhãn V-A này được kiểm hai tính chất. \textit{Tái lập}: chạ
 
 \subsection{Ánh xạ màu sắc sang tọa độ cảm xúc}
 \label{subsection:4.2.2}
-Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này. Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền. Hình~\ref{fig:color-flow} tóm tắt luồng ánh xạ này. Cần lưu ý rằng ánh xạ màu--cảm xúc này dựa trên các chuẩn quốc tế (ICEAS, Whiteford) và \textit{chưa được hiệu chỉnh bằng khảo sát người nghe Việt Nam}; do đó nó được xem là một ánh xạ \textit{mang tính thử nghiệm}, với hạn chế về tính đặc thù văn hóa được phân tích ở mục~\ref{subsection:eval-discussion}.
+Màu được chuyển sang không gian Oklab \cite{ottosson2020oklab}, sau đó Valence của màu được suy ra bằng hồi quy ridge khớp với chuẩn ICEAS \cite{jonauskaite2020universal}, đạt hệ số tương quan 0.969 so với chuẩn này (tương quan toàn mẫu; theo kiểm chứng giữ-một-ra LOO-CV thì $r \approx 0.87$). Arousal của màu được tính theo công thức suy từ quan hệ màu--âm nhạc của Whiteford \cite{whiteford2018color} trong Phương trình~\eqref{eq:whiteford}, trong đó độ đỏ và độ bão hòa làm tăng Arousal, còn độ sáng điều chỉnh mức nền. Hình~\ref{fig:color-flow} tóm tắt luồng ánh xạ này. Cần lưu ý rằng ánh xạ màu--cảm xúc này dựa trên các chuẩn quốc tế (ICEAS, Whiteford) và \textit{chưa được hiệu chỉnh bằng khảo sát người nghe Việt Nam}; do đó nó được xem là một ánh xạ \textit{mang tính thử nghiệm}, với hạn chế về tính đặc thù văn hóa được phân tích ở mục~\ref{subsection:eval-discussion}.
 \begin{equation}\label{eq:whiteford}
     A = 0.373 \cdot \text{redness} + 0.356 \cdot \text{saturation} + 0.271 \cdot \text{lightness} - 0.10
 \end{equation}

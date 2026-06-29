@@ -346,7 +346,7 @@ Khi đo tương đồng trên biểu diễn học sâu, các cosine thô bị th
 \label{fig:aniso}
 \end{figure}
 
-Để đa dạng hóa kết quả và tránh lặp nghệ sĩ, đồ án dùng độ liên quan biên cực đại MMR \cite{carbonell1998mmr}: ở mỗi bước, hệ thống chọn ứng viên cân bằng giữa \textit{độ liên quan} với truy vấn và \textit{độ khác biệt} so với các bài đã chọn, theo Phương trình~\eqref{eq:mmr}.
+Để đa dạng hóa kết quả và tránh lặp nghệ sĩ, đồ án dùng độ liên quan biên cực đại MMR \cite{carbonell1998mmr}: ở mỗi bước, hệ thống chọn ứng viên cân bằng giữa \textit{độ liên quan} với truy vấn và \textit{độ khác biệt} so với các bài đã chọn, theo Phương trình~\eqref{eq:mmr}. Cơ chế MMR này được dùng cho gợi ý \textit{bài tương tự}; còn với gợi ý \textit{theo màu}, việc đa dạng hóa nghệ sĩ được lồng trực tiếp vào bước chọn cụm nhất quán (phạt giảm điểm các bài trùng nghệ sĩ) thay vì một bước MMR riêng (chi tiết ở Chương~\ref{chapter:Design}).
 
 \begin{equation}\label{eq:mmr}
   \text{next} = \arg\max_{i \in R \setminus S}\Big[\,\lambda\,\operatorname{rel}(i) - (1-\lambda)\max_{j \in S}\operatorname{sim}(i,j)\,\Big]
@@ -390,7 +390,7 @@ Tổ hợp tín hiệu không tự đặt trọng số (NFR01) & EWE (mục~\ref
 \hline
 Kết quả nhất quán âm thanh (FR02) & Trừ trung bình khử dị hướng (mục~\ref{section:3.5}) \\
 \hline
-Đa dạng hóa \& hành trình mượt (FR03, FR05) & MMR + iso-principle (mục~\ref{section:3.5}) \\
+Đa dạng hóa \& hành trình mượt (FR03, FR05) & MMR (bài tương tự) / phạt nghệ sĩ trong cụm (theo màu) + iso-principle (mục~\ref{section:3.5}) \\
 \hline
 \end{longtable}
 
