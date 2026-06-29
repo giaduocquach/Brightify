@@ -74,6 +74,29 @@ def _build_search_index(df: pd.DataFrame) -> None:
                 lyrics_col or 'no-lyrics')
 
 
+def _filter_by_search(df, query: str, artist_col):
+    """Restrict df to rows whose name/artist match ``query`` (membership only;
+    the caller still applies sort + pagination).
+
+    Prefers pg_trgm (DB): GIN-trigram substring + typo tolerance. Falls back to an
+    in-memory substring filter when Postgres is unavailable, so /songs search still
+    works in the file-only deployment.
+    """
+    try:
+        from db.engine import SessionLocal
+        from db.search import trgm_search_track_ids
+        with SessionLocal() as session:
+            ids = trgm_search_track_ids(session, query, limit=3000)
+        return df[df['track_id'].isin(set(ids))]
+    except Exception as e:
+        logger.warning("pg_trgm search unavailable (%s) — in-memory fallback", e)
+        q = query.lower()
+        mask = df['track_name'].str.lower().str.contains(q, na=False, regex=False)
+        if artist_col:
+            mask = mask | df[artist_col].str.lower().str.contains(q, na=False, regex=False)
+        return df[mask]
+
+
 def init(recommender, music_path: Path, artist_images_path: Path = None):
     global _recommender, _music_path, _artist_images_path, _artist_data
     global _mp3_cache, _artistimg_cache
@@ -246,13 +269,9 @@ async def browse_songs(
     if artist and artist_col:
         df = df[df[artist_col].str.contains(artist, case=False, na=False)]
 
-    # Search by name/artist
+    # Search by name/artist (pg_trgm DB-backed, in-memory fallback)
     if search and search.strip():
-        q = search.strip().lower()
-        mask = df['track_name'].str.lower().str.contains(q, na=False, regex=False)
-        if artist_col:
-            mask = mask | df[artist_col].str.lower().str.contains(q, na=False, regex=False)
-        df = df[mask]
+        df = _filter_by_search(df, search.strip(), artist_col)
 
     total = len(df)
 
@@ -657,16 +676,38 @@ async def get_similar_songs(
     song_id: str,
     count: int = Query(default=10, ge=1, le=30),
     exclude: str = Query(default="", description="CSV of already-played track_ids to skip (endless radio)"),
+    backend: str = Query(default="memory", regex="^(memory|pgvector)$",
+                         description="Candidate retrieval: in-memory fusion (default) or pgvector MuQ ANN"),
 ):
-    """Get songs similar to a given song using multi-faceted AI similarity"""
+    """Get songs similar to a given song using multi-faceted AI similarity.
+
+    backend=pgvector demonstrates the scalable retrieve-then-rerank path: a MuQ
+    HNSW ANN query (pgvector) generates candidates, then the same fusion re-ranks
+    them. Default (memory) ranks the full catalog in RAM — faster at this scale.
+    """
     try:
         exclude_ids = [t for t in exclude.split(",") if t][:120]
         df = _recommender.df
         # Resolve track_id to index (bounds_check=False: an out-of-range integer falls
         # through to the recommender → 500, preserving the original behavior).
         resolved_idx = _ser.resolve_track_id_to_index(song_id, df, bounds_check=False)
-        
-        results = _recommender.recommend_by_song(resolved_idx, top_k=count, exclude_ids=exclude_ids)
+
+        # pgvector path: restrict the fusion ranking to MuQ-nearest candidates from
+        # the HNSW index. Falls back to full in-memory ranking if the DB is down.
+        restrict_to = None
+        if backend == "pgvector":
+            try:
+                from db.engine import SessionLocal
+                from db.search import pgvector_similar_candidates
+                seed_tid = str(df.iloc[resolved_idx]['track_id'])
+                with SessionLocal() as session:
+                    cand_ids = pgvector_similar_candidates(session, seed_tid, n=300)
+                restrict_to = _recommender._resolve_indices(cand_ids) or None
+            except Exception as e:
+                logger.warning("pgvector retrieval failed (%s) — full in-memory ranking", e)
+
+        results = _recommender.recommend_by_song(resolved_idx, top_k=count,
+                                                 exclude_ids=exclude_ids, restrict_to=restrict_to)
         df_results = results
         # Per-rec "why this song" (display only) — mirrors recommend_by_color's why chip.
         from core import explain as _explain

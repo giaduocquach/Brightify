@@ -160,3 +160,6 @@ va_baseline_v5d.json
 # Terraform plan output (may contain sensitive values)
 infra/terraform/tfplan
 *.tfplan
+
+# Thesis — giữ bản local, KHÔNG đưa lên GitHub (repo public)
+SOICT_DATN_Application_VIE_Template/
