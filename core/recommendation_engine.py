@@ -935,7 +935,8 @@ class MusicRecommender:
                          top_k=DEFAULT_TOP_K,
                          weights=None,
                          diversity_penalty=DIVERSITY_PENALTY,
-                         exclude_ids=None):
+                         exclude_ids=None,
+                         restrict_to=None):
         """
         Multi-faceted song similarity. The active serving fusion is
         ``0.76*cos(MuQ audio) + 0.16*sim(V-A) + 0.08*cos(lyrics, multilingual-e5-large)``
@@ -973,6 +974,11 @@ class MusicRecommender:
         6. Emotion profile sim  — emotion-vector cosine (weight 0)
         7. Mood category match  — same-fused_emotion bonus (weight 0)
         8. Audio similarity*    — MuQ backbone cosine (0.76)
+
+        restrict_to: optional positional indices to rank within (the full fusion is
+            still computed for all songs, but only these candidates are eligible).
+            Used by the pgvector retrieve-then-rerank path, where the candidates come
+            from a MuQ HNSW ANN query — the in-memory path leaves it None (rank all).
         """
         if isinstance(song_id_or_name, int):
             song_idx = song_id_or_name
@@ -1102,6 +1108,7 @@ class MusicRecommender:
         # relevant songs can score highly on timbral/rhythmic but not on va/lyrics.
         # max_per_artist is an optional operator hard-cap (default 0 = no cap).
         return self._fast_rank(final_scores, top_k, diversity_penalty,
+                               restrict_to=restrict_to,
                                max_per_artist=MAX_PER_ARTIST_SIMILAR or None)
     def _rrf_candidates(
         self,

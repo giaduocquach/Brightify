@@ -372,6 +372,64 @@ def seed_embeddings(session):
         print(f"    skipped {skipped_missing_song} embeddings for tracks not present in songs")
 
 
+# Vector columns that may be bulk-seeded from a .npy aligned to the processed CSV.
+# Allowlist — the column name is interpolated into the UPDATE, so it must never
+# come from outside this module.
+_SEEDABLE_VECTOR_COLUMNS = {"e5_embedding", "muq_embedding"}
+
+
+def _seed_vector_column(session, npy_name, column, label):
+    """Bulk-populate ``song_embeddings.<column>`` from ``data/<npy_name>``.
+
+    The .npy is row-aligned to ``vietnamese_music_processed_full.csv``, so row i
+    maps to that CSV's i-th track_id. Only rows already present in song_embeddings
+    are updated; the vector is written via pgvector's ``::vector`` cast.
+    """
+    from psycopg2.extras import execute_values
+
+    if column not in _SEEDABLE_VECTOR_COLUMNS:
+        raise ValueError(f"refusing to seed unknown vector column {column!r}")
+
+    emb_file = DATA_DIR / npy_name
+    csv_file = DATA_DIR / "vietnamese_music_processed_full.csv"
+    if not emb_file.exists():
+        print(f"  ⚠ {npy_name} not found, skipping {label} seed")
+        return
+
+    emb = np.load(str(emb_file))
+    track_ids = pd.read_csv(str(csv_file), usecols=["track_id"])["track_id"].astype(str).tolist()
+    if len(track_ids) != emb.shape[0]:
+        print(f"  ⚠ Mismatch: {len(track_ids)} track_ids vs {emb.shape[0]} vectors")
+        return
+
+    existing = {str(t) for (t,) in session.query(SongEmbedding.track_id).all()}
+    pairs = [(t, "[" + ",".join(f"{x:.6f}" for x in emb[i]) + "]")
+             for i, t in enumerate(track_ids) if t in existing]
+
+    cur = session.connection().connection.cursor()
+    execute_values(
+        cur,
+        f"UPDATE song_embeddings se SET {column} = d.v::vector "
+        "FROM (VALUES %s) AS d(tid, v) WHERE se.track_id = d.tid",
+        pairs, template="(%s, %s)", page_size=500,
+    )
+    session.commit()
+    n = session.query(SongEmbedding).filter(getattr(SongEmbedding, column).isnot(None)).count()
+    print(f"  ✓ {column}: {n}/{session.query(SongEmbedding).count()} populated")
+
+
+def seed_e5_embeddings(session):
+    """Populate e5_embedding (multilingual-e5-large, 1024-dim lyrics — the active
+    lyrics signal). The legacy 768-dim `embedding` column is left untouched."""
+    _seed_vector_column(session, "lyrics_e5large.npy", "e5_embedding", "e5")
+
+
+def seed_muq_embeddings(session):
+    """Populate muq_embedding (MuQ, 1024-dim audio — the dominant similar-song
+    signal, weight 0.76), enabling pgvector ANN candidate retrieval."""
+    _seed_vector_column(session, "muq_embeddings.npy", "muq_embedding", "MuQ")
+
+
 def run_seed():
     """Main ETL entry point."""
     print("=" * 60)
@@ -424,6 +482,10 @@ def run_seed():
 
         print("\n6. Seeding embeddings...")
         seed_embeddings(session)
+        print("\n6b. Seeding e5-large lyrics embeddings (active, 1024-dim)...")
+        seed_e5_embeddings(session)
+        print("\n6c. Seeding MuQ audio embeddings (active, 1024-dim)...")
+        seed_muq_embeddings(session)
 
         # 8. Create HNSW index for fast similarity search
         print("\n7. Creating HNSW vector index...")

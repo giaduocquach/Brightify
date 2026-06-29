@@ -228,6 +228,11 @@ class SongEmbedding(Base):
 
     track_id = Column(String(64), ForeignKey("songs.track_id"), primary_key=True)
     embedding = Column(Vector(768), nullable=False)
+    # Active lyrics embedding (multilingual-e5-large, 1024-dim) — what serving actually uses.
+    # The 768-dim `embedding` above is the legacy PhoBERT column (kept for history).
+    e5_embedding = Column(Vector(1024), nullable=True)
+    # Active audio embedding (MuQ, 1024-dim) — the dominant similar-song signal (0.76).
+    muq_embedding = Column(Vector(1024), nullable=True)
     model_name = Column(String(128), default="vinai/phobert-base")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
